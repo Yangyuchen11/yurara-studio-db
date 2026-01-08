@@ -136,7 +136,7 @@ db = next(get_db())
 with st.sidebar:
     # 显示当前登录的前端用户
     current_user = st.session_state.get("current_user_name", "Unknown")
-    st.caption(f"当前操作员: {current_user}")
+    st.caption(f"当前账号: {current_user}")
     
     if st.button("退出登录"):
         st.session_state.authenticated = False

@@ -14,9 +14,11 @@ class Product(Base):
     target_platform = Column(String)
     price_weidian = Column(Float, default=0.0)      # 微店
     price_booth = Column(Float, default=0.0)        # Booth
-    price_offline_jp = Column(Float, default=0.0)   # 日本线下 (新)
-    price_offline_cn = Column(Float, default=0.0)   # 中国线下 (新)
-    price_other = Column(Float, default=0.0)        # 其他 (新)
+    price_offline_jp = Column(Float, default=0.0)   # 日本线下
+    price_offline_cn = Column(Float, default=0.0)   # 中国线下
+    price_instagram = Column(Float, default=0.0)    # ins日本
+    price_other_jpy = Column(Float, default=0.0)    # 其他（日本)
+    price_other = Column(Float, default=0.0)        # 其他 (中国)
     
     # 关联
     costs = relationship("CostItem", back_populates="product")

@@ -11,25 +11,25 @@ def show_product_page(db):
 
     st.header("商品管理")
     
-    # 修改点：增加“编辑产品”标签页
     tab1, tab2, tab3 = st.tabs(["➕ 新建产品", "✏️ 编辑产品", "📋 产品列表"])
     
-    # ================= 模块 1：新建产品 (保持原样，略微优化变量名) =================
+    # ================= 模块 1：新建产品 =================
     with tab1:
         st.subheader("新建 - 基础信息")
         
         c1, c2 = st.columns(2)
         new_name = c1.text_input("产品名称 (如：水母睡裙)", key="create_name")
         
-        platform_options = ["微店", "Booth", "日本线下", "中国线下", "其他"]
+        # 这里的选项可以根据需要增加 Instagram
+        platform_options = ["微店", "Booth", "Instagram", "日本线下", "中国线下", "其他"] 
         new_platform = c2.selectbox("首发平台", platform_options, key="create_platform")
         
         st.divider()
         
-        # --- 颜色配置 (新建模式) ---
+        # --- 颜色配置 (保持原样) ---
         st.subheader("颜色规格")
-        st.caption("输入颜色名称并点击“添加”按钮。")
-        
+        # ... (颜色部分代码未变，省略以节省空间，直接复制你原来的即可) ...
+        # [这里粘贴你原来关于 create_temp_colors 的代码]
         if "create_temp_colors" not in st.session_state:
             st.session_state.create_temp_colors = []
 
@@ -56,14 +56,21 @@ def show_product_page(db):
 
         st.divider()
 
-        # --- 定价策略 (新建模式) ---
+        # --- 定价策略 (修改点：分为CNY和JPY两行，增加新字段) ---
         st.subheader("多平台定价")
-        p1, p2, p3, p4, p5 = st.columns(5)
-        price_w = p1.number_input("微店 (CNY)", min_value=0.0, key="create_p_w")
-        price_b = p2.number_input("Booth (JPY)", min_value=0.0, key="create_p_b")
-        price_jp = p3.number_input("日本线下 (JPY)", min_value=0.0, key="create_p_jp")
-        price_cn = p4.number_input("中国线下 (CNY)", min_value=0.0, key="create_p_cn")
-        price_other = p5.number_input("其他 (CNY)", min_value=0.0, key="create_p_other")
+        
+        st.caption("🇨🇳 人民币 (CNY) 定价")
+        p_cn1, p_cn2, p_cn3 = st.columns(3)
+        price_w = p_cn1.number_input("微店 (CNY)", min_value=0.0, key="create_p_w")
+        price_cn = p_cn2.number_input("中国线下 (CNY)", min_value=0.0, key="create_p_cn")
+        price_other = p_cn3.number_input("其他 (CNY)", min_value=0.0, key="create_p_other")
+
+        st.caption("🇯🇵 日元 (JPY) 定价")
+        p_jp1, p_jp2, p_jp3, p_jp4 = st.columns(4)
+        price_b = p_jp1.number_input("Booth (JPY)", min_value=0.0, key="create_p_b")
+        price_insta = p_jp2.number_input("Instagram (JPY)", min_value=0.0, key="create_p_insta") # === 新增 ===
+        price_jp = p_jp3.number_input("日本线下 (JPY)", min_value=0.0, key="create_p_jp")
+        price_other_jpy = p_jp4.number_input("其他 (JPY)", min_value=0.0, key="create_p_other_jpy") # === 新增 ===
         
         st.divider()
         
@@ -82,6 +89,9 @@ def show_product_page(db):
                     price_offline_jp=price_jp,
                     price_offline_cn=price_cn,
                     price_other=price_other,
+                    # === 新增字段写入 ===
+                    price_instagram=price_insta,
+                    price_other_jpy=price_other_jpy,
                     total_quantity=0
                 )
                 db.add(new_prod)
@@ -97,51 +107,44 @@ def show_product_page(db):
                 st.session_state["toast_msg"] = (f"产品《{new_name}》创建成功！", "✅")
                 st.rerun()
 
-    # ================= 模块 2：编辑产品 (新增功能) =================
+    # ================= 模块 2：编辑产品 =================
     with tab2:
         st.subheader("修改现有产品信息")
         
-        # 1. 获取所有产品用于选择
         all_products = db.query(Product).order_by(Product.id.desc()).all()
         
         if not all_products:
             st.info("暂无产品可编辑，请先新建产品。")
         else:
-            # 生成选择映射字典 {id: name}
             prod_options = {p.id: f"{p.name} (ID: {p.id})" for p in all_products}
             selected_prod_id = st.selectbox("选择要编辑的产品", options=list(prod_options.keys()), format_func=lambda x: prod_options[x])
             
-            # 获取当前选中的产品对象
             target_prod = db.query(Product).filter(Product.id == selected_prod_id).first()
             
             if target_prod:
                 st.divider()
                 
-                # --- A. 颜色数据初始化逻辑 (关键) ---
-                # 当切换了选中的产品时，我们需要把数据库里的颜色加载到 session_state 中
-                # 使用 'edit_last_id' 来判断是否切换了产品
+                # --- A. 颜色数据初始化 ---
                 if "edit_colors" not in st.session_state:
                     st.session_state.edit_colors = []
                 
                 if "edit_last_id" not in st.session_state or st.session_state.edit_last_id != selected_prod_id:
-                    # 发生了切换，从数据库重新加载颜色
                     db_colors = db.query(ProductColor).filter(ProductColor.product_id == selected_prod_id).all()
                     st.session_state.edit_colors = [c.color_name for c in db_colors]
                     st.session_state.edit_last_id = selected_prod_id
 
-                # --- B. 基础信息回显与修改 ---
+                # --- B. 基础信息 ---
                 ec1, ec2 = st.columns(2)
-                # 使用 value 参数进行回显
                 edit_name = ec1.text_input("产品名称", value=target_prod.name, key="edit_name")
                 
-                # 处理下拉框回显，需要找到 index
                 platform_idx = 0
                 if target_prod.target_platform in platform_options:
                     platform_idx = platform_options.index(target_prod.target_platform)
                 edit_platform = ec2.selectbox("首发平台", platform_options, index=platform_idx, key="edit_platform")
 
-                # --- C. 颜色修改逻辑 ---
+                # --- C. 颜色修改 (省略，保持原样) ---
                 st.markdown("#### 颜色规格修改")
+                # ... [这里粘贴你原来的颜色修改代码] ...
                 ec_input, ec_btn = st.columns([3, 1])
                 edit_color_in = ec_input.text_input("新增颜色", key="edit_color_input")
                 
@@ -152,12 +155,9 @@ def show_product_page(db):
                         else:
                             st.toast("颜色已存在", icon="⚠️")
                 
-                # 显示当前颜色列表
                 if st.session_state.edit_colors:
                     st.write("当前颜色列表 (保存后生效):")
                     st.code("  ".join(st.session_state.edit_colors), language="text")
-                    
-                    # 颜色重置按钮 (恢复到数据库状态 或 清空)
                     col_rst1, col_rst2 = st.columns([1, 4])
                     if col_rst1.button("重置/清空", key="btn_clear_color_edit"):
                         st.session_state.edit_colors = []
@@ -165,14 +165,23 @@ def show_product_page(db):
                 else:
                     st.warning("⚠️ 当前列表为空，保存将删除所有颜色规格！")
 
-                # --- D. 价格修改 ---
+                # --- D. 价格修改 (修改点：同步新增字段) ---
                 st.markdown("#### 定价策略修改")
-                ep1, ep2, ep3, ep4, ep5 = st.columns(5)
-                e_price_w = ep1.number_input("微店", min_value=0.0, value=target_prod.price_weidian, key="edit_p_w")
-                e_price_b = ep2.number_input("Booth", min_value=0.0, value=target_prod.price_booth, key="edit_p_b")
-                e_price_jp = ep3.number_input("日本线下", min_value=0.0, value=target_prod.price_offline_jp, key="edit_p_jp")
-                e_price_cn = ep4.number_input("中国线下", min_value=0.0, value=target_prod.price_offline_cn, key="edit_p_cn")
-                e_price_other = ep5.number_input("其他", min_value=0.0, value=target_prod.price_other, key="edit_p_other")
+                
+                st.caption("🇨🇳 CNY")
+                ep_cn1, ep_cn2, ep_cn3 = st.columns(3)
+                e_price_w = ep_cn1.number_input("微店", min_value=0.0, value=target_prod.price_weidian, key="edit_p_w")
+                e_price_cn = ep_cn2.number_input("中国线下", min_value=0.0, value=target_prod.price_offline_cn, key="edit_p_cn")
+                e_price_other = ep_cn3.number_input("其他 (CNY)", min_value=0.0, value=target_prod.price_other, key="edit_p_other")
+
+                st.caption("🇯🇵 JPY")
+                ep_jp1, ep_jp2, ep_jp3, ep_jp4 = st.columns(4)
+                e_price_b = ep_jp1.number_input("Booth", min_value=0.0, value=target_prod.price_booth, key="edit_p_b")
+                # === 新增 ===
+                # 注意：如果老数据没有这个字段，可能会报错，建议在models里设置default=0.0
+                e_price_insta = ep_jp2.number_input("Instagram", min_value=0.0, value=getattr(target_prod, 'price_instagram', 0.0), key="edit_p_insta")
+                e_price_jp = ep_jp3.number_input("日本线下", min_value=0.0, value=target_prod.price_offline_jp, key="edit_p_jp")
+                e_price_other_jpy = ep_jp4.number_input("其他 (JPY)", min_value=0.0, value=getattr(target_prod, 'price_other_jpy', 0.0), key="edit_p_other_jpy")
 
                 st.divider()
 
@@ -183,7 +192,6 @@ def show_product_page(db):
                     elif not st.session_state.edit_colors:
                         st.error("请至少保留一个颜色")
                     else:
-                        # 1. 更新主表字段
                         target_prod.name = edit_name
                         target_prod.target_platform = edit_platform
                         target_prod.price_weidian = e_price_w
@@ -191,39 +199,33 @@ def show_product_page(db):
                         target_prod.price_offline_jp = e_price_jp
                         target_prod.price_offline_cn = e_price_cn
                         target_prod.price_other = e_price_other
+                        # === 新增更新逻辑 ===
+                        target_prod.price_instagram = e_price_insta
+                        target_prod.price_other_jpy = e_price_other_jpy
                         
-                        # 2. 更新颜色表 (策略：删除旧的 -> 插入新的)
-                        # 这样处理比较简单，但注意：这会重置颜色的 quantity (库存)。
-                        # 如果需要保留库存数量，逻辑会更复杂（需要对比新旧列表）。
-                        # *此处假设修改规格会重置库存，或者库存管理在另一处*
-                        # 为了保留库存，我们优化一下逻辑：
-                        
-                        # A. 获取现有数据库中的颜色对象 {name: object}
+                        # 颜色更新逻辑 (保持原样)
                         existing_db_colors = db.query(ProductColor).filter(ProductColor.product_id == target_prod.id).all()
                         existing_map = {c.color_name: c for c in existing_db_colors}
-                        
                         current_edit_list = st.session_state.edit_colors
                         
-                        # B. 删除：在数据库中有，但在编辑列表中没有的
+                        # 删除逻辑
                         for c_obj in existing_db_colors:
                             if c_obj.color_name not in current_edit_list:
                                 db.delete(c_obj)
                         
-                        # C. 新增：在编辑列表中有，但在数据库中没有的
+                        # 新增逻辑
                         for c_name in current_edit_list:
                             if c_name not in existing_map:
                                 db.add(ProductColor(product_id=target_prod.id, color_name=c_name, quantity=0))
-                            # 如果已经在数据库中，则保持不动 (保留了原有的 quantity)
                         
                         db.commit()
                         st.session_state["toast_msg"] = (f"产品《{edit_name}》修改成功！", "✅")
                         
-                        # 清除缓存ID，强制下次刷新数据
                         if "edit_last_id" in st.session_state:
                             del st.session_state["edit_last_id"]
                         st.rerun()
 
-    # ================= 模块 3：产品列表与删除 (保持原有逻辑) =================
+    # ================= 模块 3：产品列表 =================
     with tab3:
         st.subheader("现有产品列表")
         products = db.query(Product).order_by(Product.id.desc()).all()
@@ -237,19 +239,23 @@ def show_product_page(db):
                         st.markdown("#### 🏷️ 基础信息")
                         st.write(f"**首发平台**: {p.target_platform}")
                         st.caption("定价明细")
+                        # === 修改列表显示 ===
                         price_data = {
-                            "渠道": ["微店", "Booth", "日本线下", "中国线下", "其他"],
+                            "渠道": ["微店", "Booth", "Instagram", "日本线下", "中国线下", "其他(CNY)", "其他(JPY)"],
                             "价格": [
                                 f"¥ {p.price_weidian}", 
                                 f"¥ {p.price_booth} (JPY)",
+                                f"¥ {getattr(p, 'price_instagram', 0)} (JPY)", # 使用 getattr 防止报错
                                 f"¥ {p.price_offline_jp} (JPY)",
                                 f"¥ {p.price_offline_cn}",
-                                f"¥ {p.price_other}"
+                                f"¥ {p.price_other}",
+                                f"¥ {getattr(p, 'price_other_jpy', 0)} (JPY)"
                             ]
                         }
                         st.dataframe(pd.DataFrame(price_data), use_container_width=True, hide_index=True)
                     
                     with col_b:
+                        # 颜色显示部分保持原样
                         st.markdown("#### 🎨 颜色规格")
                         p_colors = db.query(ProductColor).filter(ProductColor.product_id == p.id).all()
                         if p_colors:
@@ -263,7 +269,7 @@ def show_product_page(db):
                             st.caption("暂无颜色规格")
 
                     st.divider()
-                    
+                    # 删除逻辑保持原样
                     _, col_delete = st.columns([5, 1])
                     with col_delete:
                         with st.popover("🗑️ 删除产品", use_container_width=True):
@@ -276,6 +282,5 @@ def show_product_page(db):
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"删除失败: {e}")
-
         else:
             st.info("暂无产品数据")
