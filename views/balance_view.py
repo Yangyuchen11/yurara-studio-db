@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-from models import CompanyBalanceItem, FixedAsset, ConsumableItem, FinanceRecord
+from sqlalchemy import func
+from models import CompanyBalanceItem, FixedAsset, ConsumableItem, FinanceRecord, Product, CostItem
 
 # 修改函数签名，增加 exchange_rate 参数
 def show_balance_page(db, exchange_rate):
@@ -25,11 +26,16 @@ def show_balance_page(db, exchange_rate):
     st.divider()
 
     # ================= 1. 核心计算 =================
-    # ... (此处代码逻辑完全不需要变，只需直接使用传入的 exchange_rate 变量即可) ...
-    # 为了节省篇幅，省略中间重复的查询代码，逻辑保持原样
     
     all_items = db.query(CompanyBalanceItem).all()
-    assets_manual = [i for i in all_items if i.category == 'asset']
+    
+    # 【修改点】分离 "在制资产冲销" 项
+    # 冲销项不应出现在 assets_manual 手动列表里，而是用于计算逻辑
+    offset_items = [i for i in all_items if i.name and i.name.startswith("在制资产冲销-")]
+    
+    # 过滤掉冲销项后的其他手动资产
+    assets_manual = [i for i in all_items if i.category == 'asset' and not i.name.startswith("在制资产冲销-")]
+    
     liabilities = [i for i in all_items if i.category == 'liability']
     equities = [i for i in all_items if i.category == 'equity']
 
@@ -45,7 +51,33 @@ def show_balance_page(db, exchange_rate):
     manual_asset_cny = sum([i.amount for i in assets_manual if i.currency == 'CNY'])
     manual_asset_jpy = sum([i.amount for i in assets_manual if i.currency == 'JPY'])
 
-    total_asset_cny = cash_cny + fixed_total + consumable_total + manual_asset_cny
+    # 【修改点】在制资产计算 (总成本 - 冲销额)
+    # 1. 计算总实付成本
+    wip_query = db.query(Product.name, func.sum(CostItem.actual_cost)).join(Product).group_by(Product.id).all()
+    
+    # 2. 准备冲销字典 { "在制资产冲销-产品名": 金额(负数) }
+    offset_map = {}
+    for off in offset_items:
+        # 从 "在制资产冲销-XXX" 提取 "XXX"
+        p_name = off.name.replace("在制资产冲销-", "")
+        offset_map[p_name] = offset_map.get(p_name, 0) + off.amount # amount 是负数
+
+    # 3. 计算净 WIP
+    wip_final_list = []
+    wip_total_cny = 0
+    
+    for p_name, total_cost in wip_query:
+        if not total_cost: total_cost = 0
+        offset_val = offset_map.get(p_name, 0)
+        
+        net_wip = total_cost + offset_val # 加上负数
+        
+        # 只有当净值 > 1 (忽略浮点误差) 时才显示
+        if net_wip > 1.0:
+            wip_final_list.append((p_name, net_wip))
+            wip_total_cny += net_wip
+
+    total_asset_cny = cash_cny + fixed_total + consumable_total + manual_asset_cny + wip_total_cny
     total_asset_jpy = cash_jpy + manual_asset_jpy
 
     # --- B. 计算负债总额 ---
@@ -93,7 +125,7 @@ def show_balance_page(db, exchange_rate):
         </div>
         """
 
-    # ================= 3. 界面渲染 (逻辑保持不变) =================
+    # ================= 3. 界面渲染 =================
     col_left, col_right = st.columns([1.1, 1])
 
     # ---------------- 左侧：资产展示 ----------------
@@ -104,10 +136,19 @@ def show_balance_page(db, exchange_rate):
         # 自动项
         if cash_cny != 0: asset_data.append({"项目": "流动资金(CNY)", "CNY": f"{cash_cny:,.2f}", "JPY": "-", "_id": "a1", "_type": "auto"})
         if cash_jpy != 0: asset_data.append({"项目": "流动资金(JPY)", "CNY": "-", "JPY": f"{cash_jpy:,.0f}", "_id": "a2", "_type": "auto"})
-        if fixed_total > 0: asset_data.append({"项目": "固定资产", "CNY": f"{fixed_total:,.2f}", "JPY": "-", "_id": "a3", "_type": "auto"})
+        if fixed_total > 0: asset_data.append({"项目": "固定资产(设备)", "CNY": f"{fixed_total:,.2f}", "JPY": "-", "_id": "a3", "_type": "auto"})
         if consumable_total > 0: asset_data.append({"项目": "耗材资产", "CNY": f"{consumable_total:,.2f}", "JPY": "-", "_id": "a4", "_type": "auto"})
         
-        # 手动项
+        for p_name, net_val in wip_final_list:
+            asset_data.append({
+                "项目": f"📦 在制资产-{p_name}", 
+                "CNY": f"{net_val:,.2f}", 
+                "JPY": "-", 
+                "_id": f"wip_{p_name}", 
+                "_type": "auto"
+            })
+
+        # 显示手动资产 (已过滤掉冲销项)
         for item in assets_manual:
             cny = item.amount if item.currency == 'CNY' else 0
             jpy = item.amount if item.currency == 'JPY' else 0
@@ -117,7 +158,9 @@ def show_balance_page(db, exchange_rate):
 
         if asset_data:
             st.dataframe(pd.DataFrame(asset_data)[["项目", "CNY", "JPY"]], use_container_width=True, hide_index=True)
-            with st.popover("🗑️ 删除其他资产"):
+            
+            # 删除逻辑保持不变
+            with st.popover("🗑️ 删除手动资产"):
                 manuals = [x for x in asset_data if x['_type'] == 'manual']
                 if manuals:
                     to_del = st.selectbox("选择删除", manuals, format_func=lambda x: x['项目'])
@@ -128,11 +171,9 @@ def show_balance_page(db, exchange_rate):
         else:
             st.info("暂无资产")
 
-        # 使用传入的 exchange_rate
         st.markdown(get_summary_html("资产总计", total_asset_cny, total_asset_jpy, exchange_rate, "blue"), unsafe_allow_html=True)
         st.write("") 
         st.markdown(get_summary_html("✨ 净资产 (Net Worth)", net_cny, net_jpy, exchange_rate, "purple"), unsafe_allow_html=True)
-
 
     # ---------------- 右侧：负债与资本展示 ----------------
     with col_right:

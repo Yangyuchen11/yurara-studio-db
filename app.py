@@ -177,7 +177,7 @@ with st.sidebar:
 
     # === 备份/恢复 (代码复用之前写好的逻辑) ===
     st.divider()
-    with st.expander("💾 数据备份与恢复"):
+    with st.popover("💾 数据备份与恢复", use_container_width=True):
         # ... (此处保持你原来的备份恢复代码不变) ...
         # 注意：这里也是直接使用 engine 和 db，无需修改
         
@@ -188,10 +188,10 @@ with st.sidebar:
             ("product_colors.csv", "product_colors", ProductColor),
             ("cost_items.csv", "cost_items", CostItem),
             ("inventory_logs.csv", "inventory_logs", InventoryLog),
-            ("fixed_assets.csv", "fixed_assets", FixedAsset),
+            ("fixed_assets.csv", "fixed_assets_detail", FixedAsset),
             ("fixed_asset_logs.csv", "fixed_asset_logs", FixedAssetLog),
-            ("consumables.csv", "consumables", ConsumableItem),
-            ("company_balance.csv", "company_balance", CompanyBalanceItem),
+            ("consumables.csv", "consumable_items", ConsumableItem),
+            ("company_balance.csv", "company_balance_items", CompanyBalanceItem),
         ]
         
         # 下载逻辑
@@ -222,10 +222,65 @@ with st.sidebar:
                                 if not df.empty:
                                     df.to_sql(table_name, engine, if_exists='append', index=False)
                                     st.toast(f"已导入 {table_name}")
+                if "postgres" in str(engine.url):
+                    from sqlalchemy import text
+                    with engine.connect() as conn:
+                        for _, table_name, _ in tables_map:
+                            try:
+                                # 重置序列为当前最大 ID + 1
+                                conn.execute(text(f"SELECT setval(pg_get_serial_sequence('{table_name}', 'id'), coalesce(max(id),0) + 1, false) FROM {table_name};"))
+                            except Exception:
+                                pass # 忽略没有 ID 序列的表
+                        conn.commit()
                 st.success("恢复完成")
                 st.rerun()
             except Exception as e:
                 st.error(f"导入错误: {e}")
+
+    # ==========================================
+    # === 新增：初始化/清空数据 ===
+    # ==========================================
+
+    with st.popover("🔴 清空所有数据 (保留表结构)", use_container_width=True):
+        st.error("⚠️ **严重警告**：此操作将删除所有业务数据！但会保留数据库表结构。")
+        st.markdown("请务必先点击上方的 **⬇️ 下载全量备份** 以防万一。")
+        
+        confirm_input = st.text_input("请输入确认口令", placeholder="输入 DELETE 以确认")
+        
+        if st.button("💣 确认清空", type="primary", disabled=(confirm_input != "DELETE"), use_container_width=True):
+            try:
+                # 按照依赖关系顺序删除 (先删子表，再删主表，防止外键报错)
+                
+                # 1. 删除关联表/子表
+                db.query(ProductColor).delete()
+                db.query(CostItem).delete()        # 关联了 Product 和 FinanceRecord
+                db.query(FixedAsset).delete()      # 关联了 FinanceRecord
+                db.query(ConsumableItem).delete()  # 关联了 FinanceRecord
+                
+                # 2. 删除日志表/独立表
+                db.query(InventoryLog).delete()
+                db.query(FixedAssetLog).delete()
+                db.query(CompanyBalanceItem).delete()
+                
+                # 3. 删除主表 (父表)
+                db.query(Product).delete()
+                db.query(FinanceRecord).delete()
+                
+                db.commit()
+                
+                # 4. 提示并刷新
+                st.session_state["toast_msg"] = ("数据已清空！表结构已保留。", "🧹")
+                
+                # 清除缓存状态
+                for key in list(st.session_state.keys()):
+                    if key not in ['authenticated', 'current_user_name', 'global_rate_input']:
+                        del st.session_state[key]
+                
+                st.rerun()
+                
+            except Exception as e:
+                db.rollback() # 发生错误回滚
+                st.error(f"清空失败: {e}")
 
 # 路由分发 (保持不变)
 if selected == "商品管理":
@@ -239,6 +294,6 @@ elif selected == "财务流水录入":
 elif selected == "公司资产一览":
     show_balance_page(db, exchange_rate)
 elif selected == "固定资产管理":
-    show_fixed_asset_page(db)
+    show_fixed_asset_page(db, exchange_rate)
 elif selected == "耗材管理":
-    show_consumable_page(db)
+    show_consumable_page(db, exchange_rate)

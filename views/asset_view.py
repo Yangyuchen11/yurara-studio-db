@@ -1,69 +1,108 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-# 引入新定义的 Log 模型
 from models import FixedAsset, FixedAssetLog
 
-def show_fixed_asset_page(db):
+def show_fixed_asset_page(db, exchange_rate):
     st.header("🏢 固定资产明细表")
     
     # 获取所有资产
     assets = db.query(FixedAsset).all()
     
-    # ================= 1. 资产列表展示 =================
+    # ================= 1. 资产列表展示 (可编辑) =================
     if assets:
         data_list = []
-        total_val = 0        # 采购总值
-        total_remain_val = 0 # 剩余总值
+        total_val_cny = 0        # 采购总值 (CNY)
+        total_remain_val_cny = 0 # 剩余总值 (CNY)
         
-        # 用于下拉菜单的选项 (过滤掉剩余数量为0的)
         active_assets = []
         
         for a in assets:
-            t_price = a.unit_price * a.quantity         # 总价 (采购时)
-            r_val = a.unit_price * a.remaining_qty      # 剩余价值 (当前)
+            # 1. 确定汇率
+            rate = exchange_rate if a.currency == "JPY" else 1.0
             
+            # 2. 基础计算
+            t_price_origin = a.unit_price * a.quantity    # 采购总价 (原币)
+            
+            # 【核心修改】剩余价值统一算成 CNY
+            r_val_cny = (a.unit_price * a.remaining_qty) * rate
+            
+            # 统计总池 (用于顶部卡片)
+            total_val_cny += t_price_origin * rate
+            total_remain_val_cny += r_val_cny
+
             data_list.append({
+                "ID": a.id,
                 "项目": a.name,
-                "单价": a.unit_price,
+                "币种": a.currency,
+                "单价 (原币)": a.unit_price,       # 单价保持原币，方便核对
                 "初始数量": a.quantity,
-                "剩余数量": a.remaining_qty, # 重点展示
-                "总价(采购)": t_price,
-                "剩余价值": r_val,
+                "剩余数量": a.remaining_qty,
+                "总价 (原币)": t_price_origin,     # 采购历史总价保持原币
+                "剩余价值 (CNY)": r_val_cny,       # 【修改】只显示折合后的 CNY
                 "店名": a.shop_name,
-                "备注": a.remarks,
-                "_id": a.id # 隐藏字段，用于逻辑处理
+                "备注": a.remarks
             })
-            
-            total_val += t_price
-            total_remain_val += r_val
             
             if a.remaining_qty > 0:
                 active_assets.append(a)
             
-        df = pd.DataFrame(data_list)
-        
         # --- 顶部统计卡片 ---
         c1, c2 = st.columns(2)
-        c1.metric("资产采购总值", f"¥ {total_val:,.2f}")
-        c2.metric("当前剩余价值 (计入公司资产)", f"¥ {total_remain_val:,.2f}", help="单价 x 剩余数量")
-        
-        # --- 主表格 ---
-        st.dataframe(
-            df, 
-            column_config={
-                "单价": st.column_config.NumberColumn(format="¥ %.2f"),
-                "总价(采购)": st.column_config.NumberColumn(format="¥ %.2f"),
-                "剩余价值": st.column_config.NumberColumn(format="¥ %.2f"),
-                # 隐藏内部ID列
-                "_id": None 
-            },
-            column_order=["项目", "单价", "初始数量", "剩余数量", "剩余价值", "总价(采购)", "店名", "备注"],
-            use_container_width=True,
-            hide_index=True
-        )
+        c1.metric("资产采购总值 (折合CNY)", f"¥ {total_val_cny:,.2f}")
+        c2.metric("当前剩余价值 (折合CNY)", f"¥ {total_remain_val_cny:,.2f}", help="计入公司资产的总额")
         
         st.divider()
+        st.markdown("#### 📋 资产清单 (剩余价值已折算为CNY)")
+
+        # --- 构造 DataFrame ---
+        df = pd.DataFrame(data_list)
+        
+        # --- 使用 DataEditor ---
+        edited_df = st.data_editor(
+            df,
+            key="asset_editor",
+            use_container_width=True,
+            hide_index=True,
+            # 锁定不需要修改的列
+            disabled=["ID", "项目", "币种", "单价 (原币)", "初始数量", "剩余数量", "总价 (原币)", "剩余价值 (CNY)"],
+            column_config={
+                "ID": None,
+                "币种": st.column_config.TextColumn(width="small"),
+                "单价 (原币)": st.column_config.NumberColumn(format="%.2f"),
+                "总价 (原币)": st.column_config.NumberColumn(format="%.2f"),
+                "剩余价值 (CNY)": st.column_config.NumberColumn(format="¥ %.2f"),
+                "店名": st.column_config.TextColumn("店名/来源", required=True),
+                "备注": st.column_config.TextColumn("备注"),
+            },
+            column_order=["项目", "币种", "单价 (原币)", "初始数量", "剩余数量", "总价 (原币)", "剩余价值 (CNY)", "店名", "备注"]
+        )
+
+        # --- 捕获修改并更新数据库 ---
+        if st.session_state.get("asset_editor") and st.session_state["asset_editor"].get("edited_rows"):
+            changes = st.session_state["asset_editor"]["edited_rows"]
+            has_change = False
+            
+            for index, diff in changes.items():
+                original_row = df.iloc[int(index)]
+                asset_id = int(original_row["ID"])
+                asset_obj = db.query(FixedAsset).filter(FixedAsset.id == asset_id).first()
+                
+                if asset_obj:
+                    if "店名" in diff:
+                        asset_obj.shop_name = diff["店名"]
+                        has_change = True
+                    if "备注" in diff:
+                        asset_obj.remarks = diff["备注"]
+                        has_change = True
+            
+            if has_change:
+                try:
+                    db.commit()
+                    st.toast("资产信息已更新", icon="💾")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"更新失败: {e}")
 
         # ================= 2. 资产核销操作区 =================
         st.subheader("📉 资产核销/报废")

@@ -58,6 +58,7 @@ class InventoryLog(Base):
     change_amount = Column(Integer) 
     reason = Column(String)       
     date = Column(Date, default=datetime.now)
+    note = Column(String, nullable=True)
 
 # --- C. 财务记录 ---
 class FinanceRecord(Base):
@@ -113,6 +114,7 @@ class ConsumableItem(Base):
     shop_name = Column(String)      # 供应商
     remarks = Column(String)        # 备注
     purchase_date = Column(Date, default=datetime.now)
+    currency = Column(String, default="CNY")
 
     finance_record_id = Column(Integer, ForeignKey("finance_records.id"), nullable=True)
 
@@ -124,3 +126,13 @@ class FixedAssetLog(Base):
     decrease_qty = Column(Integer)   # 核销/减少数量
     reason = Column(String)          # 核销原因 (损坏/丢失/报废)
     date = Column(Date, default=datetime.now)
+
+# --- H. 耗材变动日志 ---
+class ConsumableLog(Base):
+    __tablename__ = "consumable_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    item_name = Column(String)       # 耗材名称
+    change_qty = Column(Integer)     # 变动数量 (正数为补货，负数为消耗)
+    value_cny = Column(Float)        # 变动价值 (折合CNY)
+    date = Column(Date, default=datetime.now)
+    note = Column(String)            # 备注
