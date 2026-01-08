@@ -2,6 +2,52 @@ import streamlit as st
 import pandas as pd
 import io
 import zipfile
+
+# 页面配置
+st.set_page_config(page_title="Yurara综合管理系统", layout="wide")
+
+# ==========================================
+# === 核心修改：登录认证系统 ===
+# ==========================================
+
+def check_password():
+    """返回 True 如果用户已登录，否则显示登录框并返回 False"""
+    
+    # 初始化 session state
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+
+    # 如果已经验证过，直接返回 True
+    if st.session_state.authenticated:
+        return True
+
+    # 显示登录界面
+    st.header("🔒 系统登录")
+    st.caption("Yurara Studio ERP System")
+    
+    with st.form("login_form"):
+        user = st.text_input("用户名")
+        pwd = st.text_input("密码", type="password")
+        submitted = st.form_submit_button("登录", type="primary")
+        
+        if submitted:
+            # 检查 secrets 中的账号密码
+            # 也就是检查 .streamlit/secrets.toml 文件中的配置
+            correct_user = st.secrets["credentials"]["username"]
+            correct_pwd = st.secrets["credentials"]["password"]
+            
+            if user == correct_user and pwd == correct_pwd:
+                st.session_state.authenticated = True
+                st.rerun() # 刷新页面以进入主程序
+            else:
+                st.error("用户名或密码错误")
+                
+    return False
+
+# 执行检查：如果未登录，直接停止后续代码执行
+if not check_password():
+    st.stop()
+
 from database import engine, Base, get_db
 from sqlalchemy import text
 
@@ -26,8 +72,7 @@ from streamlit_option_menu import option_menu
 # 初始化数据库表
 Base.metadata.create_all(bind=engine)
 
-# 页面配置
-st.set_page_config(page_title="Yurara综合管理系统", layout="wide")
+
 
 # 获取数据库会话
 db = next(get_db())
