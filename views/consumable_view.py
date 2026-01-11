@@ -74,13 +74,18 @@ def show_consumable_page(db, exchange_rate):
             curr = getattr(i, "currency", "CNY") 
             rate = exchange_rate if curr == "JPY" else 1.0
             
-            # 基础数据 (原币)
-            purchase_total_origin = i.unit_price * i.initial_quantity
-            
-            # 【核心修改】剩余价值统一算成 CNY
             remain_val_cny = (i.unit_price * i.remaining_qty) * rate
-            
             total_remain_val_cny += remain_val_cny
+            
+            # 【修改点 1】 计算库存占比 (0 - 100)
+            if i.initial_quantity > 0:
+                # 乘以 100 转为百分数数值
+                ratio = (i.remaining_qty / i.initial_quantity) * 100
+            else:
+                ratio = 0.0
+            
+            # 防止溢出 (限制在 100 以内)
+            ratio = min(ratio, 100.0)
             
             data_list.append({
                 "ID": i.id,
@@ -88,62 +93,68 @@ def show_consumable_page(db, exchange_rate):
                 "分类": i.category,
                 "币种": curr,
                 "单价 (原币)": i.unit_price,
-                "总价 (原币)": purchase_total_origin,
+                "总价 (原币)": i.unit_price * i.initial_quantity,
                 "初始数量": i.initial_quantity,
                 "剩余数量": i.remaining_qty,
-                "剩余价值 (CNY)": remain_val_cny, # 【修改】只显示 CNY
+                "库存占比": ratio, # 新增数据列
+                "剩余价值 (CNY)": remain_val_cny,
                 "店铺": i.shop_name,
                 "备注": i.remarks
             })
             
         df = pd.DataFrame(data_list)
         
-        # 统计指标
         c1, c2 = st.columns(2)
         c1.metric("耗材种类数", f"{len(items)} 种")
         c2.metric("当前库存总值 (折合CNY)", f"¥ {total_remain_val_cny:,.2f}")
         
-        # --- 使用 DataEditor ---
+        # --- DataEditor ---
         edited_df = st.data_editor(
             df,
             key="consumable_editor",
             use_container_width=True,
             hide_index=True,
-            # 锁定列
-            disabled=["ID", "项目", "分类", "币种", "单价 (原币)", "总价 (原币)", "初始数量", "剩余数量", "剩余价值 (CNY)"],
+            # 锁定列：增加了 "库存占比" 为只读
+            disabled=["ID", "项目", "分类", "币种", "单价 (原币)", "总价 (原币)", "初始数量", "剩余数量", "库存占比", "剩余价值 (CNY)"],
             column_config={
                 "ID": None,
                 "币种": st.column_config.TextColumn(width="small"),
                 "单价 (原币)": st.column_config.NumberColumn(format="%.4f"), 
                 "总价 (原币)": st.column_config.NumberColumn(format="%.2f"),
-                # 【修改】显示格式为 CNY
                 "剩余价值 (CNY)": st.column_config.NumberColumn(format="¥ %.2f"),
-                "剩余数量": st.column_config.ProgressColumn(
-                    format="%d", min_value=0, max_value=max(df["初始数量"]) if not df.empty else 100
+                
+                # 【修改点 2】剩余数量回归纯数字显示
+                "剩余数量": st.column_config.NumberColumn(
+                    format="%d",
+                    help="当前实际库存数量"
                 ),
+                
+                # 【修改点 3】新增进度条列，显示百分比
+                "库存占比": st.column_config.ProgressColumn(
+                    label="库存状态",
+                    format="%d%%",   # 显示为整数百分比 (如 100%)
+                    min_value=0,
+                    max_value=100,   # 最大值设为 100
+                ),
+                
                 "店铺": st.column_config.TextColumn("店铺/供应商", required=True),
                 "备注": st.column_config.TextColumn("备注"),
             },
-            column_order=["项目", "分类", "币种", "单价 (原币)", "总价 (原币)", "初始数量", "剩余数量", "剩余价值 (CNY)", "店铺", "备注"]
+            # 调整列顺序，把占比放在剩余数量旁边
+            column_order=["项目", "分类", "币种", "单价 (原币)", "初始数量", "剩余数量", "库存占比", "剩余价值 (CNY)", "店铺", "备注"]
         )
 
         # --- 捕获修改并更新 ---
         if st.session_state.get("consumable_editor") and st.session_state["consumable_editor"].get("edited_rows"):
             changes = st.session_state["consumable_editor"]["edited_rows"]
             has_change = False
-            
             for index, diff in changes.items():
                 original_row = df.iloc[int(index)]
                 item_id = int(original_row["ID"])
-                
                 item_obj = db.query(ConsumableItem).filter(ConsumableItem.id == item_id).first()
                 if item_obj:
-                    if "店铺" in diff:
-                        item_obj.shop_name = diff["店铺"]
-                        has_change = True
-                    if "备注" in diff:
-                        item_obj.remarks = diff["备注"]
-                        has_change = True
+                    if "店铺" in diff: item_obj.shop_name = diff["店铺"]; has_change = True
+                    if "备注" in diff: item_obj.remarks = diff["备注"]; has_change = True
             
             if has_change:
                 try:
@@ -153,7 +164,7 @@ def show_consumable_page(db, exchange_rate):
                 except Exception as e:
                     st.error(f"更新失败: {e}")
         
-        # 删除功能
+        # 删除功能 (保持不变)
         with st.popover("🗑️ 删除耗材项"):
             del_name = st.selectbox("删除哪个项目?", df["项目"].tolist())
             if st.button("确认删除耗材"):

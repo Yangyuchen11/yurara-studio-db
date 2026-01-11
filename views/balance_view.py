@@ -3,34 +3,19 @@ import pandas as pd
 from sqlalchemy import func
 from models import CompanyBalanceItem, FixedAsset, ConsumableItem, FinanceRecord, Product, CostItem
 
-# 修改函数签名，增加 exchange_rate 参数
 def show_balance_page(db, exchange_rate):
     st.header("📊 公司账面概览 (资产负债表)")
 
-    # --- 顶部控制栏 (简化了，移除了汇率输入) ---
-    with st.expander("➕ 新增条目 (非固定资产/非流水类)", expanded=False):
-        st.caption("注：现金余额已根据财务流水自动计算，无需在此手动添加。")
-        with st.form("add_balance_item"):
-            r1, r2, r3, r4 = st.columns([1.5, 1.5, 1, 1])
-            f_cate = r1.selectbox("类别", ["资产 (Asset)", "债务 (Liability)", "资本 (Equity)"])
-            f_name = r2.text_input("项目名称")
-            f_curr = r3.radio("币种", ["CNY", "JPY"], horizontal=True)
-            f_amount = r4.number_input("金额", min_value=0.0, step=100.0)
-            
-            if st.form_submit_button("添加", type="primary"):
-                cate_code = "asset" if "资产" in f_cate else "liability" if "债务" in f_cate else "equity"
-                new_item = CompanyBalanceItem(category=cate_code, name=f_name, currency=f_curr, amount=f_amount)
-                db.add(new_item)
-                db.commit()
-                st.rerun()
+    # 【修改点】已删除顶部的 "➕ 新增条目" 区域
+    # 现在所有资产/负债/资本的增加，都必须通过【财务资金流水】录入，保证账务合规。
+
     st.divider()
 
     # ================= 1. 核心计算 =================
     
     all_items = db.query(CompanyBalanceItem).all()
     
-    # 【修改点】分离 "在制资产冲销" 项
-    # 冲销项不应出现在 assets_manual 手动列表里，而是用于计算逻辑
+    # 分离 "在制资产冲销" 项
     offset_items = [i for i in all_items if i.name and i.name.startswith("在制资产冲销-")]
     
     # 过滤掉冲销项后的其他手动资产
@@ -46,33 +31,38 @@ def show_balance_page(db, exchange_rate):
     # --- A. 计算资产总额 ---
     cash_cny = sum([r.amount for r in finance_records if r.currency == 'CNY'])
     cash_jpy = sum([r.amount for r in finance_records if r.currency == 'JPY'])
-    fixed_total = sum([fa.unit_price * fa.remaining_qty for fa in fixed_assets])
-    consumable_total = sum([c.unit_price * c.remaining_qty for c in consumables])
+    
+    # 固定资产 & 耗材 (统一折算为 CNY)
+    fixed_total = 0
+    for fa in fixed_assets:
+        curr = getattr(fa, 'currency', 'CNY')
+        rate = exchange_rate if curr == "JPY" else 1.0
+        fixed_total += (fa.unit_price * fa.remaining_qty) * rate
+
+    consumable_total = 0
+    for c in consumables:
+        curr = getattr(c, 'currency', 'CNY')
+        rate = exchange_rate if curr == "JPY" else 1.0
+        consumable_total += (c.unit_price * c.remaining_qty) * rate
+    
     manual_asset_cny = sum([i.amount for i in assets_manual if i.currency == 'CNY'])
     manual_asset_jpy = sum([i.amount for i in assets_manual if i.currency == 'JPY'])
 
-    # 【修改点】在制资产计算 (总成本 - 冲销额)
-    # 1. 计算总实付成本
+    # 在制资产计算 (总成本 - 冲销额)
     wip_query = db.query(Product.name, func.sum(CostItem.actual_cost)).join(Product).group_by(Product.id).all()
     
-    # 2. 准备冲销字典 { "在制资产冲销-产品名": 金额(负数) }
     offset_map = {}
     for off in offset_items:
-        # 从 "在制资产冲销-XXX" 提取 "XXX"
         p_name = off.name.replace("在制资产冲销-", "")
-        offset_map[p_name] = offset_map.get(p_name, 0) + off.amount # amount 是负数
+        offset_map[p_name] = offset_map.get(p_name, 0) + off.amount 
 
-    # 3. 计算净 WIP
     wip_final_list = []
     wip_total_cny = 0
     
     for p_name, total_cost in wip_query:
         if not total_cost: total_cost = 0
         offset_val = offset_map.get(p_name, 0)
-        
-        net_wip = total_cost + offset_val # 加上负数
-        
-        # 只有当净值 > 1 (忽略浮点误差) 时才显示
+        net_wip = total_cost + offset_val 
         if net_wip > 1.0:
             wip_final_list.append((p_name, net_wip))
             wip_total_cny += net_wip
@@ -80,19 +70,16 @@ def show_balance_page(db, exchange_rate):
     total_asset_cny = cash_cny + fixed_total + consumable_total + manual_asset_cny + wip_total_cny
     total_asset_jpy = cash_jpy + manual_asset_jpy
 
-    # --- B. 计算负债总额 ---
+    # --- B. 负债 & C. 资本 & D. 净资产 ---
     total_liab_cny = sum([i.amount for i in liabilities if i.currency == 'CNY'])
     total_liab_jpy = sum([i.amount for i in liabilities if i.currency == 'JPY'])
-
-    # --- C. 计算资本总额 ---
+    
     total_eq_cny = sum([i.amount for i in equities if i.currency == 'CNY'])
     total_eq_jpy = sum([i.amount for i in equities if i.currency == 'JPY'])
-
-    # --- D. 计算净资产 ---
+    
     net_cny = total_asset_cny - total_liab_cny
     net_jpy = total_asset_jpy - total_liab_jpy
 
-    # ================= 2. 辅助函数 =================
     def get_summary_html(title, cny_total, jpy_total, rate, color_theme):
         colors = {
             "blue":   {"bg": "#e6f3ff", "border": "#2196F3", "text": "#0d47a1"}, 
@@ -139,6 +126,7 @@ def show_balance_page(db, exchange_rate):
         if fixed_total > 0: asset_data.append({"项目": "固定资产(设备)", "CNY": f"{fixed_total:,.2f}", "JPY": "-", "_id": "a3", "_type": "auto"})
         if consumable_total > 0: asset_data.append({"项目": "耗材资产", "CNY": f"{consumable_total:,.2f}", "JPY": "-", "_id": "a4", "_type": "auto"})
         
+        # 净 WIP 资产
         for p_name, net_val in wip_final_list:
             asset_data.append({
                 "项目": f"📦 在制资产-{p_name}", 
@@ -148,7 +136,7 @@ def show_balance_page(db, exchange_rate):
                 "_type": "auto"
             })
 
-        # 显示手动资产 (已过滤掉冲销项)
+        # 手动项 (其他资产)
         for item in assets_manual:
             cny = item.amount if item.currency == 'CNY' else 0
             jpy = item.amount if item.currency == 'JPY' else 0
@@ -158,22 +146,35 @@ def show_balance_page(db, exchange_rate):
 
         if asset_data:
             st.dataframe(pd.DataFrame(asset_data)[["项目", "CNY", "JPY"]], use_container_width=True, hide_index=True)
-            
-            # 删除逻辑保持不变
-            with st.popover("🗑️ 删除手动资产"):
+            with st.popover("🗑️ 删除其他资产"):
+                # 只允许删除那些【没有】关联流水的项目 (即 finance_record_id 为空)
+                # 这样防止用户在资产表误删了有账目来源的资产
                 manuals = [x for x in asset_data if x['_type'] == 'manual']
-                if manuals:
-                    to_del = st.selectbox("选择删除", manuals, format_func=lambda x: x['项目'])
-                    if st.button("确认删除资产"):
-                        db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == to_del['_id']).delete()
-                        db.commit()
-                        st.rerun()
+                
+
+                # 我们可以让用户选，但在点击删除时判断
+                
+                to_del = st.selectbox("选择删除", manuals, format_func=lambda x: x['项目'])
+                
+                if st.button("确认删除资产"):
+                    # 查询该对象
+                    item_to_del = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == to_del['_id']).first()
+                    
+                    if item_to_del:
+                        if item_to_del.finance_record_id:
+                            # 如果有关联流水，禁止删除，提示去流水表删
+                            st.error("⚠️ 该项目关联了财务流水，无法在此删除！请去【财务资金流水】界面删除对应的收支记录。")
+                        else:
+                            db.delete(item_to_del)
+                            db.commit()
+                            st.rerun()
         else:
             st.info("暂无资产")
 
         st.markdown(get_summary_html("资产总计", total_asset_cny, total_asset_jpy, exchange_rate, "blue"), unsafe_allow_html=True)
         st.write("") 
         st.markdown(get_summary_html("✨ 净资产 (Net Worth)", net_cny, net_jpy, exchange_rate, "purple"), unsafe_allow_html=True)
+
 
     # ---------------- 右侧：负债与资本展示 ----------------
     with col_right:

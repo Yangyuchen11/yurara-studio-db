@@ -4,6 +4,13 @@ import io
 import zipfile
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from models import (
+    Product, ProductColor, InventoryLog, 
+    FinanceRecord, CostItem, 
+    FixedAsset, FixedAssetLog, 
+    ConsumableItem, ConsumableLog,  # 确保包含耗材日志
+    CompanyBalanceItem, PreShippingItem # 【新增】预出库表
+)
 
 # === 1. 页面配置 (必须放在第一行) ===
 st.set_page_config(page_title="Yurara综合管理系统", layout="wide")
@@ -147,7 +154,7 @@ with st.sidebar:
         menu_icon="dataset",
         options=[
             "公司资产一览", "财务流水录入", "商品管理", 
-            "库存管理", "成本核算", "固定资产管理", "耗材管理"
+            "库存与销售额管理", "成本核算", "固定资产管理", "耗材管理"
         ],
         icons=[
             "clipboard-data", "currency-yen", "bag-heart", 
@@ -175,70 +182,73 @@ with st.sidebar:
     st.session_state.global_rate_input = rate_input
     exchange_rate = rate_input / 100.0
 
-    # === 备份/恢复 (代码复用之前写好的逻辑) ===
+# === 备份/恢复 ===
     st.divider()
     with st.popover("💾 数据备份与恢复", use_container_width=True):
-        # ... (此处保持你原来的备份恢复代码不变) ...
-        # 注意：这里也是直接使用 engine 和 db，无需修改
-        
-        # 定义映射
+        # 定义映射: (CSV文件名, 数据库表名, SQLAlchemy模型类)
+        # 【修改点】加入了 pre_shipping_items 和 consumable_logs
         tables_map = [
             ("products.csv", "products", Product),
-            ("finance_records.csv", "finance_records", FinanceRecord),
             ("product_colors.csv", "product_colors", ProductColor),
+            ("finance_records.csv", "finance_records", FinanceRecord),
             ("cost_items.csv", "cost_items", CostItem),
             ("inventory_logs.csv", "inventory_logs", InventoryLog),
             ("fixed_assets.csv", "fixed_assets_detail", FixedAsset),
             ("fixed_asset_logs.csv", "fixed_asset_logs", FixedAssetLog),
             ("consumables.csv", "consumable_items", ConsumableItem),
+            ("consumable_logs.csv", "consumable_logs", ConsumableLog),
             ("company_balance.csv", "company_balance_items", CompanyBalanceItem),
+            ("pre_shipping_items.csv", "pre_shipping_items", PreShippingItem), 
         ]
         
         # 下载逻辑
         zip_buffer = io.BytesIO()
         try:
             with zipfile.ZipFile(zip_buffer, "w") as zf:
-                for file_name, table_name, model_cls in tables_map:
+                for file_name, _, model_cls in tables_map:
                     try:
                         df = pd.read_sql(db.query(model_cls).statement, db.bind)
                         csv_bytes = df.to_csv(index=False).encode('utf-8-sig')
                         zf.writestr(file_name, csv_bytes)
                     except Exception as e:
-                        pass # 忽略空表错误
+                        pass # 忽略空表
             st.download_button("⬇️ 下载全量备份 (ZIP)", data=zip_buffer.getvalue(), file_name="yurara_backup.zip", mime="application/zip")
         except Exception as e:
             st.error(f"导出错误: {e}")
 
         st.divider()
+        
         # 上传逻辑
         uploaded_file = st.file_uploader("上传备份 ZIP", type="zip")
         if uploaded_file and st.button("🔴 确认导入"):
             try:
                 with zipfile.ZipFile(uploaded_file) as zf:
-                    for file_name, table_name, model_cls in tables_map:
+                    for file_name, table_name, _ in tables_map:
                         if file_name in zf.namelist():
                             with zf.open(file_name) as f:
                                 df = pd.read_csv(f, encoding='utf-8-sig')
                                 if not df.empty:
                                     df.to_sql(table_name, engine, if_exists='append', index=False)
                                     st.toast(f"已导入 {table_name}")
+                
+                # Postgres 序列重置逻辑 (防止ID冲突)
                 if "postgres" in str(engine.url):
                     from sqlalchemy import text
                     with engine.connect() as conn:
                         for _, table_name, _ in tables_map:
                             try:
-                                # 重置序列为当前最大 ID + 1
                                 conn.execute(text(f"SELECT setval(pg_get_serial_sequence('{table_name}', 'id'), coalesce(max(id),0) + 1, false) FROM {table_name};"))
                             except Exception:
-                                pass # 忽略没有 ID 序列的表
+                                pass 
                         conn.commit()
+                        
                 st.success("恢复完成")
                 st.rerun()
             except Exception as e:
                 st.error(f"导入错误: {e}")
 
     # ==========================================
-    # === 新增：初始化/清空数据 ===
+    # === 清空所有数据 ===
     # ==========================================
 
     with st.popover("🔴 清空所有数据 (保留表结构)", use_container_width=True):
@@ -249,17 +259,19 @@ with st.sidebar:
         
         if st.button("💣 确认清空", type="primary", disabled=(confirm_input != "DELETE"), use_container_width=True):
             try:
-                # 按照依赖关系顺序删除 (先删子表，再删主表，防止外键报错)
+                # 按照依赖关系顺序删除 (先删子表，再删主表)
                 
                 # 1. 删除关联表/子表
                 db.query(ProductColor).delete()
-                db.query(CostItem).delete()        # 关联了 Product 和 FinanceRecord
-                db.query(FixedAsset).delete()      # 关联了 FinanceRecord
-                db.query(ConsumableItem).delete()  # 关联了 FinanceRecord
+                db.query(CostItem).delete()        
+                db.query(FixedAsset).delete()      
+                db.query(ConsumableItem).delete()
+                db.query(PreShippingItem).delete() # 【新增】
                 
                 # 2. 删除日志表/独立表
                 db.query(InventoryLog).delete()
                 db.query(FixedAssetLog).delete()
+                db.query(ConsumableLog).delete()   # 【新增】
                 db.query(CompanyBalanceItem).delete()
                 
                 # 3. 删除主表 (父表)
@@ -268,7 +280,6 @@ with st.sidebar:
                 
                 db.commit()
                 
-                # 4. 提示并刷新
                 st.session_state["toast_msg"] = ("数据已清空！表结构已保留。", "🧹")
                 
                 # 清除缓存状态
@@ -279,7 +290,7 @@ with st.sidebar:
                 st.rerun()
                 
             except Exception as e:
-                db.rollback() # 发生错误回滚
+                db.rollback()
                 st.error(f"清空失败: {e}")
 
 # 路由分发 (保持不变)
@@ -287,7 +298,7 @@ if selected == "商品管理":
     show_product_page(db)
 elif selected == "成本核算":
     show_cost_page(db)
-elif selected == "库存管理":
+elif selected == "库存与销售额管理":
     show_inventory_page(db)
 elif selected == "财务流水录入":
     show_finance_page(db, exchange_rate)

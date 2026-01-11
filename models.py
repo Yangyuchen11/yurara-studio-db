@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -30,7 +30,7 @@ class ProductColor(Base):
     product_id = Column(Integer, ForeignKey("products.id"))
     color_name = Column(String)
     quantity = Column(Integer)
-    
+    produced_quantity = Column(Integer, default=0)
     product = relationship("Product", back_populates="colors")
 
 class CostItem(Base):
@@ -59,6 +59,11 @@ class InventoryLog(Base):
     reason = Column(String)       
     date = Column(Date, default=datetime.now)
     note = Column(String, nullable=True)
+    is_sold = Column(Boolean, default=False) # 是否为售出
+    sale_amount = Column(Float, default=0.0) # 销售总额
+    currency = Column(String, nullable=True) # 币种
+    platform = Column(String, nullable=True) # 销售平台
+    is_other_out = Column(Boolean, default=False) # 是否为其他出库
 
 # --- C. 财务记录 ---
 class FinanceRecord(Base):
@@ -70,14 +75,6 @@ class FinanceRecord(Base):
     category = Column(String) 
     description = Column(String)
 
-# class FixedAsset(Base):
-#     __tablename__ = "fixed_assets"
-#     id = Column(Integer, primary_key=True, index=True)
-#     name = Column(String)
-#     purchase_price = Column(Float)
-#     purchase_date = Column(Date)
-#     description = Column(String)
-
 # --- D. 公司账面/资产负债 ---
 class CompanyBalanceItem(Base):
     __tablename__ = "company_balance_items"
@@ -86,6 +83,7 @@ class CompanyBalanceItem(Base):
     name = Column(String)     # 项目名：如“现金(CNY账户)”
     amount = Column(Float)    # 金额
     currency = Column(String, default="CNY") # 币种：CNY 或 JPY
+    finance_record_id = Column(Integer, ForeignKey("finance_records.id"), nullable=True)
 
 # --- E. 固定资产管理 ---
 class FixedAsset(Base):
@@ -136,3 +134,18 @@ class ConsumableLog(Base):
     value_cny = Column(Float)        # 变动价值 (折合CNY)
     date = Column(Date, default=datetime.now)
     note = Column(String)            # 备注
+
+# --- 【新增】I. 预出库管理表 ---
+class PreShippingItem(Base):
+    __tablename__ = "pre_shipping_items"
+    id = Column(Integer, primary_key=True, index=True)
+    product_name = Column(String)
+    variant = Column(String)
+    quantity = Column(Integer)
+    # 预售信息
+    pre_sale_amount = Column(Float) # 填写的预售额
+    currency = Column(String)       # 币种
+    # 关联的债务ID (用于出库时核销)
+    related_debt_id = Column(Integer, nullable=True)
+    created_date = Column(Date, default=datetime.now)
+    note = Column(String, default="")
