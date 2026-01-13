@@ -157,30 +157,34 @@ def show_inventory_page(db):
                                             wip_asset_name = f"预入库大货资产-{p_name}"
                                             offset_asset_name = f"在制资产冲销-{p_name}"
                                             
+                                            # 1. 计算需要清理的残余价值 
                                             wip_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == wip_asset_name).first()
+
                                             if wip_item:
-                                                if abs(wip_item.amount) > 0.01:
+                                                residual_val = wip_item.amount # 记录下这笔负数金额 (-723.87)
+                                                
+                                                if abs(residual_val) > 0.01:
+                                                    # === 【核心修改点 1】: 记录流水但金额设为 0 ===
                                                     db.add(FinanceRecord(
                                                         date=date.today(),
-                                                        amount=-wip_item.amount,
+                                                        amount=0,  # <--- 修改为 0，不再干扰实际现金余额
                                                         currency="CNY",
-                                                        category="生产完成时开销调整",
-                                                        description=f"【自动】{p_name} 预入库资产残余清理: {wip_item.amount:.2f}"
+                                                        category="资产价值修正",
+                                                        description=f"【调账记录】{p_name} 生产结单。修正资产偏差：{residual_val:,.2f} 元。 (仅作会计调整，不涉及现金)"
                                                     ))
-                                                db.delete(wip_item)
-                                            
-                                            target_offset_val = -total_actual_cost
+
+                                                    # === 【核心修改点 2】: 直接调整资产负债表项目 ===
+                                                    # 将余额强行归零（或根据逻辑物理删除该行）
+                                                    db.delete(wip_item) 
+                                                    st.toast(f"已清理账面偏差: {residual_val:,.2f}", icon="⚖️")
+
+                                            # 2. 同步更新“在制资产冲销”项，确保资产负债表平衡
                                             offset_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == offset_asset_name).first()
-                                            if not offset_item:
-                                                offset_item = CompanyBalanceItem(name=offset_asset_name, amount=target_offset_val, category="asset", currency="CNY")
-                                                db.add(offset_item)
-                                            else:
-                                                offset_item.amount = target_offset_val
-                                            
-                                            if abs(total_actual_cost) < 0.01 and offset_item:
-                                                 db.delete(offset_item)
+                                            if offset_item:
+                                                # 同样将其调整为 0 或删除，因为生产已完全结束
+                                                db.delete(offset_item)
                                         
-                                        db.commit()
+                                            db.commit()
                                         st.toast("操作成功", icon="✅")
                                         st.rerun()
                                     except Exception as e:
@@ -195,31 +199,107 @@ def show_inventory_page(db):
 
     # ================= 2. 预出库列表管理 =================
     st.subheader("🚚 预出库/待发货管理")
-    st.caption("此处管理的商品尚未扣减实际库存，但已计入债务与预售额。")
+    st.caption("修改下方【数量】或【预售额】将自动同步至账面资产负债表。")
     pre_items = db.query(PreShippingItem).all()
     
     if pre_items:
-        pre_data = []
+        pre_data_list = []
         for p in pre_items:
-            pre_data.append({
+            pre_data_list.append({
+                "ID": p.id,
                 "日期": p.created_date,
-                "产品": f"{p.product_name} - {p.variant}",
+                "产品": p.product_name,
+                "款式": p.variant,
                 "数量": p.quantity,
-                "预售额": f"{p.pre_sale_amount} {p.currency}",
+                "预售额": p.pre_sale_amount,
+                "币种": p.currency,
                 "备注": p.note
             })
-        st.dataframe(pd.DataFrame(pre_data), use_container_width=True, hide_index=True)
         
-        c_p1, c_p2 = st.columns([3, 1])
-        selected_pre_id = c_p1.selectbox("选择要完成发货的订单", [p.id for p in pre_items], format_func=lambda x: next((f"{i.created_date} | {i.product_name}-{i.variant} (Qty:{i.quantity})" for i in pre_items if i.id == x), "Unknown"))
+        df_pre = pd.DataFrame(pre_data_list)
         
-        if c_p2.button("✅ 出库完成 (转收入)", type="primary"):
+        edited_pre_df = st.data_editor(
+            df_pre, 
+            key="pre_shipping_editor",
+            use_container_width=True, 
+            hide_index=True,
+            disabled=["ID", "日期", "产品", "款式"], # 核心属性禁止在此修改
+            column_config={
+                "ID": None,
+                "数量": st.column_config.NumberColumn(min_value=1, step=1),
+                "预售额": st.column_config.NumberColumn(format="%.2f"),
+                "币种": st.column_config.SelectboxColumn(options=["CNY", "JPY"])
+            }
+        )
+        
+        # --- 捕获并处理修改 ---
+        if st.session_state.get("pre_shipping_editor") and st.session_state["pre_shipping_editor"].get("edited_rows"):
+            changes = st.session_state["pre_shipping_editor"]["edited_rows"]
+            has_p_change = False
+            
+            for index, diff in changes.items():
+                item_id = int(df_pre.iloc[int(index)]["ID"])
+                p_obj = db.query(PreShippingItem).filter(PreShippingItem.id == item_id).first()
+                if p_obj:
+                    # 1. 如果修改了数量，联动更新“预出库成本”负债
+                    if "数量" in diff:
+                        new_qty = diff["数量"]
+                        p_obj.quantity = new_qty
+                        # 重新计算成本负债
+                        prod = db.query(Product).filter(Product.name == p_obj.product_name).first()
+                        if prod and p_obj.related_debt_id:
+                            u_cost = get_unit_cost(db, prod.id)
+                            debt_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == p_obj.related_debt_id).first()
+                            if debt_item:
+                                debt_item.amount = new_qty * u_cost
+                        has_p_change = True
+
+                    # 2. 如果修改了预售额/币种，联动更新“预计收入”资产
+                    if "预售额" in diff or "币种" in diff:
+                        if "预售额" in diff: p_obj.pre_sale_amount = diff["预售额"]
+                        if "币种" in diff: p_obj.currency = diff["币种"]
+                        
+                        # 查找关联资产项
+                        asset_name = f"{p_obj.product_name}-{p_obj.variant}-预计收入(预售)"
+                        asset_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
+                        if asset_item:
+                            asset_item.amount = p_obj.pre_sale_amount
+                            asset_item.currency = p_obj.currency
+                        has_p_change = True
+                        
+                    if "备注" in diff:
+                        p_obj.note = diff["备注"]
+                        has_p_change = True
+
+            if has_p_change:
+                db.commit()
+                st.toast("预出库信息及账面数据已同步更新", icon="💾")
+                st.rerun()
+        
+    c_p1, c_p2 = st.columns([3, 1])
+    pre_item_labels = {
+        p.id: f"{p.created_date} | {p.product_name}-{p.variant} (Qty:{p.quantity}) | 📝{p.note or ''}"
+        for p in pre_items
+    }
+    
+    selected_pre_id = c_p1.selectbox(
+        "选择要完成发货的订单", 
+        options=list(pre_item_labels.keys()), 
+        format_func=lambda x: pre_item_labels.get(x, "未知订单")
+    ) 
+    if c_p2.button("✅ 出库完成 (转收入)", type="primary"):
             target_pre = db.query(PreShippingItem).filter(PreShippingItem.id == selected_pre_id).first()
             if target_pre:
                 try:
+                    # 1. 删除关联的成本债务 (负债)
                     if target_pre.related_debt_id:
                         debt_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == target_pre.related_debt_id).first()
                         if debt_item: db.delete(debt_item) 
+                    
+                    # 2. 删除关联的预售资产 (预计收入) - 新增逻辑
+                    asset_name = f"{target_pre.product_name}-{target_pre.variant}-预计收入(预售)"
+                    asset_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
+                    if asset_item: db.delete(asset_item)
                     
                     # 预出库转完成，这里默认使用今天，因为是点击完成的动作
                     fin_rec = FinanceRecord(date=date.today(), amount=target_pre.pre_sale_amount, currency=target_pre.currency, category="销售收入", description=f"预出库转实销: {target_pre.product_name}-{target_pre.variant} (x{target_pre.quantity})")
@@ -240,6 +320,63 @@ def show_inventory_page(db):
                     st.error(f"操作失败: {e}")
     else:
         st.info("当前没有挂起的预出库项目。")
+
+    # --- 新增：撤销/删除预出库逻辑 ---
+    st.write("") # 留点间距
+    with st.popover("🗑️ 撤销预出库 (数据回滚)", use_container_width=True):
+        st.error("⚠️ 注意：此操作将彻底删除该预售记录并回滚资产/负债账面，不可恢复。")
+        
+        # 构造可供选择的删除列表
+        del_pre_options = {
+            f"{p.created_date} | {p.product_name}-{p.variant} (数量:{p.quantity}) | 📝{p.note or ''}": p.id 
+            for p in pre_items
+        }
+        
+        selected_del_pre_label = st.selectbox(
+            "选择要撤销的预出库记录", 
+            options=list(del_pre_options.keys()), 
+            key="del_pre_select_box"
+        )
+        
+        if st.button("🔴 确认撤销并回滚数据", type="primary", use_container_width=True):
+            target_pre_id = del_pre_options[selected_del_pre_label]
+            target_pre_obj = db.query(PreShippingItem).filter(PreShippingItem.id == target_pre_id).first()
+            
+            if target_pre_obj:
+                try:
+                    # 1. 回滚账面负债 (成本债务)
+                    if target_pre_obj.related_debt_id:
+                        debt_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == target_pre_obj.related_debt_id).first()
+                        if debt_item:
+                            db.delete(debt_item)
+                    
+                    # 2. 回滚账面资产 (预售预计收入)
+                    asset_name = f"{target_pre_obj.product_name}-{target_pre_obj.variant}-预计收入(预售)"
+                    asset_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
+                    if asset_item:
+                        db.delete(asset_item)
+                        
+                    # 3. 删除关联的库存历史日志 (InventoryLog)
+                    # 匹配条件：产品、款式、日期、且理由为“预出库”
+                    pre_log = db.query(InventoryLog).filter(
+                        InventoryLog.product_name == target_pre_obj.product_name,
+                        InventoryLog.variant == target_pre_obj.variant,
+                        InventoryLog.reason == "预出库",
+                        InventoryLog.date == target_pre_obj.created_date
+                    ).first()
+                    if pre_log:
+                        db.delete(pre_log)
+                        
+                    # 4. 删除预出库记录本身
+                    db.delete(target_pre_obj)
+                    
+                    db.commit()
+                    st.success("预出库记录已撤销，账面资产与负债已同步回滚。")
+                    st.rerun()
+                    
+                except Exception as e:
+                    db.rollback()
+                    st.error(f"撤销失败: {e}")
 
     st.divider()
 
@@ -275,10 +412,15 @@ def show_inventory_page(db):
 
     if move_type == "预出库":
         with extra_info_col:
-            st.info("💡 预出库不扣减实际库存。将创建一笔【成本债务】并增加预售额记录。")
-            c1, c2 = st.columns(2)
-            pre_sale_price = c1.number_input("预售总额", min_value=0.0, step=100.0)
-            pre_sale_curr = c2.selectbox("币种", ["CNY", "JPY"], key="pre_curr")
+            st.info("💡 预出库：锁定库存并记录预售收入（暂挂于预计收入科目）。")
+            c_pre1, c_pre2, c_pre3 = st.columns(3)
+            # 这里定义变量，后续在按钮提交时会被引用
+            pre_sale_curr = c_pre1.selectbox("预售币种", ["CNY", "JPY"], key="pre_out_curr")
+            pre_sale_price = c_pre2.number_input("预售总金额", min_value=0.0, step=100.0, format="%.2f", help="预计将收到的总金额")
+            
+            if input_qty > 0 and pre_sale_price > 0:
+                unit_val = pre_sale_price / input_qty
+                c_pre3.markdown(f"<div style='padding-top: 30px; color: gray;'>📊 折合单价: {unit_val:,.2f}</div>", unsafe_allow_html=True)
 
     elif move_type == "出库":
         with extra_info_col:
@@ -359,15 +501,50 @@ def show_inventory_page(db):
                 target_prod_obj = db.query(Product).filter(Product.id == selected_product_id).first()
                 try:
                     if move_type == "预出库":
+                        # === 将原本在 UI 部分的逻辑移动到这里 ===
+                        
+                        # 1. 计算成本并创建负债
                         unit_cost = get_unit_cost(db, selected_product_id)
                         cost_debt_amount = unit_cost * input_qty
                         debt_name = f"{p_name}-{p_var}-预出库成本"
                         debt_item = CompanyBalanceItem(name=debt_name, amount=cost_debt_amount, category="liability", currency="CNY")
                         db.add(debt_item)
+                        
+                        # 2. 创建预计收入 (资产)
+                        # 注意：pre_sale_price 和 pre_sale_curr 是从上面的 UI 块中获取的变量
+                        asset_name = f"{p_name}-{p_var}-预计收入(预售)"
+                        asset_item = CompanyBalanceItem(name=asset_name, amount=pre_sale_price, category="asset", currency=pre_sale_curr)
+                        db.add(asset_item)
+                        
+                        # 必须先 flush 才能拿到 debt_item.id
                         db.flush() 
-                        # 预出库是待定项，通常不需要指定日期，或者也可以指定创建日期
-                        # 这里我们暂保持默认创建日期，或者也可以传 created_date=input_date
-                        pre_item = PreShippingItem(product_name=p_name, variant=p_var, quantity=input_qty, pre_sale_amount=pre_sale_price, currency=pre_sale_curr, related_debt_id=debt_item.id, note=p_remark)
+
+                        # 3. 记录库存历史日志
+                        log_note = f"预出库登记: {p_remark}"
+                        log = InventoryLog(
+                            product_name=p_name, 
+                            variant=p_var, 
+                            change_amount=input_qty, 
+                            reason="预出库", 
+                            note=log_note, 
+                            date=input_date,
+                            sale_amount=pre_sale_price,
+                            currency=pre_sale_curr,
+                            is_sold=False # 尚未真正售出结算
+                        )
+                        db.add(log)
+
+                        # 4. 创建预出库待处理项
+                        pre_item = PreShippingItem(
+                            product_name=p_name, 
+                            variant=p_var, 
+                            quantity=input_qty, 
+                            pre_sale_amount=pre_sale_price, 
+                            currency=pre_sale_curr, 
+                            related_debt_id=debt_item.id, 
+                            note=p_remark,
+                            created_date=input_date
+                        )
                         db.add(pre_item)
                         st.toast(f"预出库登记成功！", icon="🚚")
 
