@@ -4,7 +4,7 @@ from datetime import date
 from models import FixedAsset, FixedAssetLog
 
 def show_fixed_asset_page(db, exchange_rate):
-    st.header("🏢 固定资产明细表")
+    st.header("🏢 固定资产管理")
     
     # 获取所有资产
     assets = db.query(FixedAsset).all()
@@ -12,34 +12,52 @@ def show_fixed_asset_page(db, exchange_rate):
     # ================= 1. 资产列表展示 (可编辑) =================
     if assets:
         data_list = []
-        total_val_cny = 0        # 采购总值 (CNY)
-        total_remain_val_cny = 0 # 剩余总值 (CNY)
+        
+        # 统计变量初始化
+        total_val_cny_equiv = 0.0        # 采购总值 (折合CNY)
+        total_remain_val_cny_equiv = 0.0 # 剩余总值 (折合CNY)
+        
+        total_remain_val_jpy_only = 0.0  # 仅统计 JPY 资产的原值
         
         active_assets = []
         
         for a in assets:
-            # 1. 确定汇率
-            rate = exchange_rate if a.currency == "JPY" else 1.0
+            curr = getattr(a, "currency", "CNY")
+            qty = a.remaining_qty
+            unit_price = a.unit_price
             
-            # 2. 基础计算
-            t_price_origin = a.unit_price * a.quantity    # 采购总价 (原币)
+            # 计算采购总价和剩余价值
+            total_origin = unit_price * a.quantity
+            remain_origin = unit_price * qty
             
-            # 【核心修改】剩余价值统一算成 CNY
-            r_val_cny = (a.unit_price * a.remaining_qty) * rate
+            # 初始化显示变量
+            show_cny = None
+            show_jpy = None
             
-            # 统计总池 (用于顶部卡片)
-            total_val_cny += t_price_origin * rate
-            total_remain_val_cny += r_val_cny
+            # 统计变量 (用于顶部卡片，始终需要折算)
+            rate = exchange_rate if curr == "JPY" else 1.0
+            total_val_cny_equiv += total_origin * rate
+            total_remain_val_cny_equiv += remain_origin * rate
+            if curr == "JPY": total_remain_val_jpy_only += remain_origin
+
+            # 表格显示逻辑 (严格互斥)
+            if curr == "JPY":
+                show_jpy = remain_origin
+                show_cny = None # JPY资产，CNY列留空
+            else:
+                show_cny = remain_origin
+                show_jpy = None # CNY资产，JPY列留空
 
             data_list.append({
                 "ID": a.id,
                 "项目": a.name,
-                "币种": a.currency,
-                "单价 (原币)": a.unit_price,       # 单价保持原币，方便核对
+                "币种": curr,
+                "单价 (原币)": unit_price,
                 "初始数量": a.quantity,
-                "剩余数量": a.remaining_qty,
-                "总价 (原币)": t_price_origin,     # 采购历史总价保持原币
-                "剩余价值 (CNY)": r_val_cny,       # 【修改】只显示折合后的 CNY
+                "剩余数量": qty,
+                "总价 (原币)": total_origin,
+                "剩余价值 (CNY)": show_cny,  # 仅 CNY 资产显示
+                "剩余价值 (JPY)": show_jpy,  # 仅 JPY 资产显示
                 "店名": a.shop_name,
                 "备注": a.remarks
             })
@@ -48,12 +66,13 @@ def show_fixed_asset_page(db, exchange_rate):
                 active_assets.append(a)
             
         # --- 顶部统计卡片 ---
-        c1, c2 = st.columns(2)
-        c1.metric("资产采购总值 (折合CNY)", f"¥ {total_val_cny:,.2f}")
-        c2.metric("当前剩余价值 (折合CNY)", f"¥ {total_remain_val_cny:,.2f}", help="计入公司资产的总额")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("资产采购历史总值 (折合)", f"¥ {total_val_cny_equiv:,.2f}")
+        c2.metric("当前剩余价值 (折合)", f"¥ {total_remain_val_cny_equiv:,.2f}", help="所有资产按当前汇率折算为 CNY 的总和")
+        c3.metric("其中日元资产原值", f"¥ {total_remain_val_jpy_only:,.0f}", help="仅统计 JPY 资产的日元原值部分")
         
         st.divider()
-        st.markdown("#### 📋 资产清单 (剩余价值已折算为CNY)")
+        st.markdown("#### 📋 资产清单")
 
         # --- 构造 DataFrame ---
         df = pd.DataFrame(data_list)
@@ -64,18 +83,19 @@ def show_fixed_asset_page(db, exchange_rate):
             key="asset_editor",
             use_container_width=True,
             hide_index=True,
-            # 锁定不需要修改的列
-            disabled=["ID", "项目", "币种", "单价 (原币)", "初始数量", "剩余数量", "总价 (原币)", "剩余价值 (CNY)"],
+            # 锁定不需要修改的列 (增加 JPY 列)
+            disabled=["ID", "项目", "币种", "单价 (原币)", "初始数量", "剩余数量", "总价 (原币)", "剩余价值 (CNY)", "剩余价值 (JPY)"],
             column_config={
                 "ID": None,
                 "币种": st.column_config.TextColumn(width="small"),
                 "单价 (原币)": st.column_config.NumberColumn(format="%.2f"),
                 "总价 (原币)": st.column_config.NumberColumn(format="%.2f"),
-                "剩余价值 (CNY)": st.column_config.NumberColumn(format="¥ %.2f"),
+                "剩余价值 (CNY)": st.column_config.NumberColumn(format="¥ %.2f", help="按汇率折算"),
+                "剩余价值 (JPY)": st.column_config.NumberColumn(format="¥ %.0f", help="日元资产原值"),
                 "店名": st.column_config.TextColumn("店名/来源", required=True),
                 "备注": st.column_config.TextColumn("备注"),
             },
-            column_order=["项目", "币种", "单价 (原币)", "初始数量", "剩余数量", "总价 (原币)", "剩余价值 (CNY)", "店名", "备注"]
+            column_order=["项目", "币种", "单价 (原币)", "初始数量", "剩余数量", "总价 (原币)", "剩余价值 (CNY)", "剩余价值 (JPY)", "店名", "备注"]
         )
 
         # --- 捕获修改并更新数据库 ---
@@ -120,10 +140,10 @@ def show_fixed_asset_page(db, exchange_rate):
                 # 最大值不能超过剩余数量
                 del_qty = c_op2.number_input(
                     "核销数量", 
-                    min_value=1, 
-                    max_value=target_asset.remaining_qty, 
-                    step=1,
-                    value=1
+                    min_value=1.0, # 固定资产可能不是整数，如果允许小数
+                    max_value=float(target_asset.remaining_qty), 
+                    step=1.0,
+                    value=1.0
                 )
                 
                 # 3. 原因

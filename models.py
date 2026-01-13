@@ -9,7 +9,9 @@ class Product(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     total_quantity = Column(Integer, default=0)
-    
+
+    # 可销售数量 (用于成本核算的分母，可变动)
+    marketable_quantity = Column(Integer, default=0)
     # 销售相关
     target_platform = Column(String)
     price_weidian = Column(Float, default=0.0)      # 微店
@@ -42,7 +44,7 @@ class CostItem(Base):
     supplier = Column(String)
     category = Column(String)
     unit_price = Column(Float, default=0.0) # 单价 (预算/参考)
-    quantity = Column(Integer, default=1)   # 数量
+    quantity = Column(Float, default=1)   # 数量
     remarks = Column(String, default="")    # 备注
     unit = Column(String, default="") # 单位 (如: 米/个)
 
@@ -149,3 +151,10 @@ class PreShippingItem(Base):
     related_debt_id = Column(Integer, nullable=True)
     created_date = Column(Date, default=datetime.now)
     note = Column(String, default="")
+
+# --- J. 系统全局设置 (新增) ---
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+    key = Column(String, primary_key=True, index=True) # 例如 "exchange_rate"
+    value = Column(String) # 存为字符串，使用时再转换类型
+    description = Column(String, nullable=True)

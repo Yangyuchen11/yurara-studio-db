@@ -3,10 +3,58 @@ import pandas as pd
 from datetime import date
 from models import FinanceRecord, Product, CostItem, ConsumableItem, FixedAsset, ConsumableLog, CompanyBalanceItem
 
+# === 核心修复：定义一个统一的获取流动资金账户的函数 ===
+def get_cash_asset(db, currency):
+    """
+    统一查找逻辑：
+    1. 优先找名字以 '流动资金' 开头的资产项。
+    2. 必须匹配币种。
+    3. 按 ID 排序取第一个（保证永远操作同一个，通常是旧的那个）。
+    """
+    return db.query(CompanyBalanceItem).filter(
+        CompanyBalanceItem.name.like("流动资金%"), 
+        CompanyBalanceItem.currency == currency,
+        CompanyBalanceItem.category == "asset"
+    ).order_by(CompanyBalanceItem.id.asc()).first()
+
 def show_finance_page(db, exchange_rate):
-    st.header("💰 财务资金流水")
+    # ================= 0. 全局样式优化 (加深滚动条) =================
+    st.markdown("""
+        <style>
+            /* 针对 Webkit 内核浏览器 (Chrome, Edge, Safari) */
+            /* 滚动条整体宽度/高度 */
+            ::-webkit-scrollbar {
+                width: 12px;
+                height: 12px;
+            }
+            
+            /* 滚动条轨道 (背景) */
+            ::-webkit-scrollbar-track {
+                background: #f0f2f6; 
+                border-radius: 6px;
+            }
+            
+            /* 滚动条滑块 (也就是你可以拖动的那部分) */
+            ::-webkit-scrollbar-thumb {
+                background: #888888; /* 这里设置颜色：深灰色 */
+                border-radius: 6px;
+            }
+
+            /* 鼠标悬停在滑块上时的颜色 */
+            ::-webkit-scrollbar-thumb:hover {
+                background: #555555; /* 悬停变黑 */
+            }
+
+            /* 针对 Firefox 浏览器 */
+            * {
+                scrollbar-width: thin;
+                scrollbar-color: #888888 #f0f2f6;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+    st.header("💰 财务流水")
     
-    # ================= 1. 新增记录区域 =================
+    # ================= 1. 新增记录区域 (保持不变) =================
     with st.expander("➕ 新增收支/兑换/债务记录", expanded=True):
         r1_c1, r1_c2, r1_c3 = st.columns([1, 1, 1])
         f_date = r1_c1.date_input("日期", date.today())
@@ -33,7 +81,7 @@ def show_finance_page(db, exchange_rate):
         balance_item_type = None 
 
         # =======================================================
-        # >>>>> 场景 C: 货币兑换 (保持不变) <<<<<
+        # >>>>> 场景 C: 货币兑换 <<<<<
         # =======================================================
         if rec_type == "货币兑换":
             with r1_c3:
@@ -57,6 +105,7 @@ def show_finance_page(db, exchange_rate):
                     st.warning("金额必须大于0")
                 else:
                     try:
+                        # 1. 记录流水
                         rec_out = FinanceRecord(
                             date=f_date, amount=-amount_out, currency=source_curr,
                             category="货币兑换", description=f"兑换支出 (-> {target_curr}) | {f_desc}"
@@ -67,6 +116,19 @@ def show_finance_page(db, exchange_rate):
                             category="货币兑换", description=f"兑换入账 (<- {source_curr}) | {f_desc}"
                         )
                         db.add(rec_in)
+                        
+                        # 2. 更新资产余额 (使用统一函数)
+                        asset_out = get_cash_asset(db, source_curr)
+                        if asset_out: asset_out.amount -= amount_out
+                        
+                        asset_in = get_cash_asset(db, target_curr)
+                        if asset_in: 
+                            asset_in.amount += amount_in
+                        else:
+                            # 如果完全不存在，才新建
+                            new_asset = CompanyBalanceItem(category="asset", name=f"流动资金({target_curr})", amount=amount_in, currency=target_curr)
+                            db.add(new_asset)
+
                         db.commit()
                         st.toast(f"兑换成功：-{amount_out}{source_curr}, +{amount_in}{target_curr}", icon="💱")
                         st.rerun()
@@ -74,7 +136,7 @@ def show_finance_page(db, exchange_rate):
                         st.error(f"兑换失败: {e}")
 
         # =======================================================
-        # >>>>> 场景 D: 债务管理 (核心修改) <<<<<
+        # >>>>> 场景 D: 债务管理 <<<<<
         # =======================================================
         elif rec_type == "债务":
             with r1_c3:
@@ -87,13 +149,11 @@ def show_finance_page(db, exchange_rate):
             # --- 1. 新增债务 ---
             if "新增" in debt_op:
                 c_type1, c_type2 = st.columns([1, 2])
-                # 【修改点】选择借款去向
                 fund_dest = c_type1.selectbox("资金去向", ["存入流动资金", "新增资产项"])
                 
                 c_d1, c_d2 = st.columns(2)
                 new_debt_name = c_d1.text_input("债务名称", placeholder="如：银行贷款 / 欠款采购")
                 
-                # 根据去向显示不同输入框
                 if fund_dest == "存入流动资金":
                     related_content = c_d2.text_input("入账说明", placeholder="如：贷款现金入账")
                     help_msg = "此操作会：1.增加负债 2.增加账面流动资金 (产生收入流水)"
@@ -115,34 +175,34 @@ def show_finance_page(db, exchange_rate):
                         st.error("金额必须大于0")
                     else:
                         try:
-                            # 1. 创建 财务流水 (FinanceRecord)
-                            # 如果是流动资金 -> 记为收入 (Amount > 0)
-                            # 如果是新增资产 -> 记为 0 (仅作为日志，不影响 Cash), 或者用特殊标记
-                            
                             finance_rec = None
-                            
                             if fund_dest == "存入流动资金":
                                 finance_rec = FinanceRecord(
                                     date=f_date,
-                                    amount=debt_amount, # 正数，增加现金
+                                    amount=debt_amount, 
                                     currency=f_curr,
                                     category="借入资金",
                                     description=f"{related_content} (来源: {debt_source}) | {debt_remark}"
                                 )
+                                # 更新流动资金
+                                cash_asset = get_cash_asset(db, f_curr)
+                                if cash_asset: 
+                                    cash_asset.amount += debt_amount
+                                else:
+                                    db.add(CompanyBalanceItem(category="asset", name=f"流动资金({f_curr})", amount=debt_amount, currency=f_curr))
                             else:
-                                # 新增资产项：不增加流动资金，所以金额记为0，但在描述中备注
                                 finance_rec = FinanceRecord(
                                     date=f_date,
-                                    amount=0, # 不影响现金流
+                                    amount=0, 
                                     currency=f_curr,
                                     category="债务-资产形成",
                                     description=f"【资产债务】新增资产: {related_content} | 债务: {new_debt_name} | 金额: {debt_amount}"
                                 )
                             
                             db.add(finance_rec)
-                            db.flush() # 获取 ID
+                            db.flush() 
 
-                            # 2. 创建 负债项目 (Liability)
+                            # 创建负债
                             new_liability = CompanyBalanceItem(
                                 name=new_debt_name,
                                 amount=debt_amount, 
@@ -152,11 +212,11 @@ def show_finance_page(db, exchange_rate):
                             )
                             db.add(new_liability)
 
-                            # 3. 如果是新增资产 -> 创建 资产项目 (Asset)
+                            # 创建资产
                             if fund_dest == "新增资产项":
                                 new_asset = CompanyBalanceItem(
                                     name=related_content,
-                                    amount=debt_amount, # 资产价值 = 债务金额
+                                    amount=debt_amount, 
                                     category="asset",
                                     currency=f_curr,
                                     finance_record_id=finance_rec.id
@@ -181,7 +241,6 @@ def show_finance_page(db, exchange_rate):
                     
                     st.divider()
                     
-                    # 【修改点】偿还方式选择
                     repay_type = st.radio("偿还/处理方式", ["💸 资金还款 (减少流动资金)", "🔄 资产抵消/退还 (删除对应资产)"])
                     
                     if "资金还款" in repay_type:
@@ -195,7 +254,6 @@ def show_finance_page(db, exchange_rate):
                                 st.error("金额必须大于0")
                             else:
                                 try:
-                                    # 1. 记一笔支出 (减少现金)
                                     new_finance = FinanceRecord(
                                         date=f_date,
                                         amount=-repay_amount, 
@@ -205,25 +263,24 @@ def show_finance_page(db, exchange_rate):
                                     )
                                     db.add(new_finance)
                                     
-                                    # 2. 减少债务
-                                    target_liab.amount -= repay_amount
+                                    # 更新流动资金
+                                    cash_asset = get_cash_asset(db, target_liab.currency)
+                                    if cash_asset: cash_asset.amount -= repay_amount
                                     
-                                    # 如果还清，是否删除？这里逻辑是金额归零即可，也可以选择物理删除
-                                    if target_liab.amount <= 0.01: # 浮点数容错
+                                    target_liab.amount -= repay_amount
+                                    if target_liab.amount <= 0.01:
                                         db.delete(target_liab)
                                         st.toast("债务已还清并销账", icon="✅")
                                     else:
                                         st.toast(f"已还款: {repay_amount}", icon="💸")
-                                        
+                                    
                                     db.commit()
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"操作失败: {e}")
                                     
                     else:
-                        st.caption("ℹ️ 通过退还资产或资产抵债来消除债务。操作将：1.删除指定的资产项 2.删除/减少债务。**不会减少流动资金**。")
-                        
-                        # 获取现有资产供选择
+                        st.caption("ℹ️ 通过退还资产或资产抵消来消除债务。操作将：1.删除指定的资产项 2.删除/减少债务。**不会减少流动资金**。")
                         assets = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.category == 'asset').all()
                         asset_map = {f"{a.name} (价值: {a.amount:,.2f})": a for a in assets}
                         
@@ -240,7 +297,6 @@ def show_finance_page(db, exchange_rate):
                         
                         if st.button("💾 确认资产抵消", type="primary"):
                              try:
-                                # 1. 记录日志 (金额为0，不影响现金，但记录事件)
                                 new_finance = FinanceRecord(
                                     date=f_date,
                                     amount=0, 
@@ -250,15 +306,11 @@ def show_finance_page(db, exchange_rate):
                                 )
                                 db.add(new_finance)
                                 
-                                # 2. 扣减/删除 资产
                                 target_asset.amount -= offset_amount
-                                if target_asset.amount <= 0.01:
-                                    db.delete(target_asset)
+                                if target_asset.amount <= 0.01: db.delete(target_asset)
                                 
-                                # 3. 扣减/删除 债务
                                 target_liab.amount -= offset_amount
-                                if target_liab.amount <= 0.01:
-                                    db.delete(target_liab)
+                                if target_liab.amount <= 0.01: db.delete(target_liab)
                                     
                                 db.commit()
                                 st.toast(f"资产抵消完成，金额: {offset_amount}", icon="🔄")
@@ -267,7 +319,7 @@ def show_finance_page(db, exchange_rate):
                                 st.error(f"操作失败: {e}")
 
         # =======================================================
-        # >>>>> 场景 A & B: 普通收入/支出 (已移除借款和债务选项) <<<<<
+        # >>>>> 场景 A & B: 普通收入/支出 <<<<<
         # =======================================================
         else:
             with r1_c3:
@@ -277,17 +329,17 @@ def show_finance_page(db, exchange_rate):
             # >>>>> 场景 A: 收入录入 <<<<<
             # -------------------------------------------------------
             if rec_type == "收入":
-                income_cats = ["销售收入", "退款", "投资", "现有资产增加", "新资产增加", "其他现金收入"]
+                income_cats = ["销售收入", "退款", "投资", "现有资产增加", "其他资产增加", "新资产增加", "其他现金收入"]
                 final_category = st.selectbox("收入分类", income_cats)
                 
-                # ... (投资/现有资产增加/新资产增加/其他 的逻辑保持不变) ...
-                # === 特殊场景：投资 (资本增加) ===
                 if final_category == "投资":
+                    st.info("ℹ️ **操作说明**：此操作将记录一笔【资金收入】，增加流动资金；同时增加对应的【资本项】余额。")
                     equities = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.category == 'equity').all()
                     eq_map = {e.name: e for e in equities}
                     eq_options = ["➕ 新增资本项目"] + list(eq_map.keys())
                     c_eq1, c_eq2 = st.columns([2, 1])
                     selected_eq = c_eq1.selectbox("选择资本项目", eq_options)
+                    
                     if selected_eq == "➕ 新增资本项目":
                         is_new_balance_item = True
                         f_name = c_eq2.text_input("新项目名称", placeholder="如：种子轮融资")
@@ -296,15 +348,40 @@ def show_finance_page(db, exchange_rate):
                         target_obj = eq_map[selected_eq]
                         target_balance_item_id = target_obj.id
                         f_name = target_obj.name
-                        c_eq2.info(f"当前余额: {target_obj.amount:,.2f}")
-                    f_amount_input = st.number_input("入账金额", min_value=0.0, step=100.0, format="%.2f")
+                        if target_obj.currency != f_curr:
+                            c_eq2.warning(f"⚠️ 注意：该项目原币种为 {target_obj.currency}")
+                        else:
+                            c_eq2.info(f"当前余额: {target_obj.amount:,.2f}")
+                            
+                    f_amount_input = st.number_input("投资/入账金额", min_value=0.0, step=100.0, format="%.2f", help="实际到账的资金金额")
                     calc_total_amount = f_amount_input
                     balance_item_type = "equity"
 
-                # === 特殊场景：现有资产增加 ===
+                # 【修改点 2】: 增加 "其他资产增加" 的输入框逻辑
+                elif final_category == "其他资产增加":
+                    st.info("ℹ️ **操作说明**：此操作将记录收入流水，并自动在【其他资产管理】中增加对应的物资库存。")
+                    
+                    c_add1, c_add2 = st.columns([1.5, 1])
+                    f_name = c_add1.text_input("项目名", placeholder="资产/耗材名称")
+                    f_shop = c_add2.text_input("店铺/来源", placeholder="供应商")
+                    
+                    c_add3, c_add4 = st.columns(2)
+                    calc_total_amount = c_add3.number_input("总价 (价值)", min_value=0.0, step=10.0, format="%.2f")
+                    f_qty = c_add4.number_input("数量", min_value=0.01, step=1.0, value=1.0, format="%.2f")
+                    
+                    # 自动计算单价
+                    f_price = calc_total_amount / f_qty if f_qty > 0 else 0
+                    if f_price > 0:
+                        st.caption(f"📊 计算单价: {f_price:,.2f}")
+                    
+                    # 赋值给通用变量
+                    f_amount_input = calc_total_amount
+                    balance_item_type = None # 不创建通用的 CompanyBalanceItem，而是创建 ConsumableItem
+
                 elif final_category == "现有资产增加":
                     assets = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.category == 'asset').all()
-                    manual_assets = [a for a in assets if not a.name.startswith("在制资产") and not a.name.startswith("预入库")]
+                    # 【优化】过滤掉流动资金，防止自己增加自己
+                    manual_assets = [a for a in assets if not a.name.startswith("在制资产") and not a.name.startswith("预入库") and not a.name.startswith("流动资金")]
                     if not manual_assets:
                         st.warning("暂无手动录入的资产项目")
                         st.stop()
@@ -314,11 +391,10 @@ def show_finance_page(db, exchange_rate):
                     target_balance_item_id = target_obj.id
                     f_name = target_obj.name
                     st.caption(f"当前余额: {target_obj.amount:,.2f}")
-                    f_amount_input = st.number_input("增加金额", min_value=0.0, step=100.0, format="%.2f")
+                    f_amount_input = st.number_input("增加价值/金额", min_value=0.0, step=100.0, format="%.2f")
                     calc_total_amount = f_amount_input
                     balance_item_type = "asset"
 
-                # === 新资产增加 ===
                 elif final_category == "新资产增加":
                     st.caption("此操作将记录一笔收入流水，并同时在资产表中创建一个新的资产项目。")
                     c_in1, c_in2, c_in3 = st.columns([2, 1.5, 1])
@@ -329,7 +405,6 @@ def show_finance_page(db, exchange_rate):
                     is_new_balance_item = True
                     balance_item_type = "asset"
 
-                # === 其他现金收入 ===
                 else:
                     c_in1, c_in2, c_in3 = st.columns([2, 1.5, 1])
                     f_name = c_in1.text_input("收入内容", placeholder="如：微店结算 / 零星收入")
@@ -342,11 +417,11 @@ def show_finance_page(db, exchange_rate):
             # >>>>> 场景 B: 支出录入 <<<<<
             # -------------------------------------------------------
             else: 
-                exp_cats = ["商品成本", "固定资产购入", "耗材购入", "撤资", "现有资产减少", "其他"]
+                exp_cats = ["商品成本", "固定资产购入", "其他资产购入", "撤资", "现有资产减少", "其他"]
                 exp_type = st.selectbox("支出分类", exp_cats)
                 
-                # ... (撤资/现有资产减少/商品成本/耗材/固资/其他 的逻辑保持不变) ...
                 if exp_type == "撤资":
+                    st.info("ℹ️ **操作说明**：此操作将记录一笔【资金支出】，扣减流动资金；同时扣减对应的【资本项】余额。")
                     final_category = "资本撤回"
                     equities = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.category == 'equity').all()
                     eq_map = {e.name: e for e in equities}
@@ -357,15 +432,18 @@ def show_finance_page(db, exchange_rate):
                     target_obj = eq_map[selected_eq]
                     target_balance_item_id = target_obj.id
                     f_name = target_obj.name
+                    if target_obj.currency != f_curr:
+                        st.warning(f"⚠️ 注意：该项目原币种为 {target_obj.currency}，当前支出币种为 {f_curr}")
                     st.caption(f"当前投入: {target_obj.amount:,.2f}")
-                    f_amount_input = st.number_input("撤资金额", min_value=0.0, step=100.0, format="%.2f")
+                    f_amount_input = st.number_input("撤资/支出金额", min_value=0.0, step=100.0, format="%.2f", help="实际流出的资金金额")
                     calc_total_amount = f_amount_input
                     balance_item_type = "equity"
 
                 elif exp_type == "现有资产减少":
                     final_category = "现有资产减少"
                     assets = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.category == 'asset').all()
-                    manual_assets = [a for a in assets if not a.name.startswith("在制资产") and not a.name.startswith("预入库")]
+                    # 【优化】过滤掉流动资金
+                    manual_assets = [a for a in assets if not a.name.startswith("在制资产") and not a.name.startswith("预入库") and not a.name.startswith("流动资金")]
                     if not manual_assets:
                         st.warning("暂无手动录入的资产项目")
                         st.stop()
@@ -402,42 +480,69 @@ def show_finance_page(db, exchange_rate):
                         f_name = c_out1.text_input("请输入具体内容")
                     else:
                         f_name = selected_item_name
+                    
                     c_total, c_qty = st.columns(2)
                     calc_total_amount = c_total.number_input("👉 实付总价", min_value=0.0, step=10.0, format="%.2f")
-                    f_qty = c_qty.number_input("数量", min_value=1, step=1, value=1)
+                    f_qty = c_qty.number_input("数量", min_value=0.01, step=0.1, value=1.0, format="%.2f")
                     f_price = calc_total_amount / f_qty if f_qty > 0 else 0
+                    
+                    if f_price > 0:
+                        st.caption(f"📊 自动计算单价: **¥ {f_price:,.2f}**")
 
-                elif exp_type == "耗材购入":
-                     all_cons = db.query(ConsumableItem).all()
-                     con_map = {c.name: c for c in all_cons}
-                     con_options = ["➕ 新增耗材项目"] + list(con_map.keys())
-                     c_sel, c_shop = st.columns([2, 1])
-                     selected_con = c_sel.selectbox("选择耗材", con_options)
-                     f_shop = c_shop.text_input("店铺/供应商", placeholder="淘宝/Amazon")
-                     if selected_con == "➕ 新增耗材项目":
-                         is_consumable_append = False
-                         f_name = st.text_input("新耗材名称")
-                         final_category = st.selectbox("耗材子分类", ["包装材", "无实体", "备用素材", "其他"])
-                     else:
-                         is_consumable_append = True
-                         target_obj = con_map[selected_con]
-                         target_consumable_id = target_obj.id
-                         f_name = target_obj.name
-                         final_category = target_obj.category
-                     c_total, c_qty = st.columns(2)
-                     calc_total_amount = c_total.number_input("👉 实付总价", min_value=0.0, step=10.0, format="%.2f")
-                     f_qty = c_qty.number_input("数量", min_value=1, step=1, value=1)
-                     f_price = calc_total_amount / f_qty if f_qty > 0 else 0
+                elif exp_type == "其他资产购入":
+                    st.info("ℹ️ 此操作将记录支出，并自动增加【其他资产管理】中的库存。")
+                    
+                    # 第一行：项目名 | 分类 | 店铺
+                    c_oa1, c_oa2, c_oa3 = st.columns([1.5, 1, 1])
+                    
+                    # 为了方便，可以提供现有资产的自动补全，但允许输入新名称
+                    all_cons = db.query(ConsumableItem).all()
+                    cons_names = [c.name for c in all_cons]
+                    
+                    # 项目名 (输入或选择)
+                    f_name = c_oa1.selectbox("项目名称", ["➕ 手动输入新项"] + cons_names)
+                    if f_name == "➕ 手动输入新项":
+                        f_name = c_oa1.text_input("请输入新项目名称", placeholder="如：飞机盒")
+                    
+                    # 分类 (选择)
+                    # 尝试根据已选项目自动填充分类
+                    default_cat_idx = 0
+                    if f_name in cons_names:
+                        existing_item = next((c for c in all_cons if c.name == f_name), None)
+                        if existing_item and existing_item.category in ["包装材", "无实体", "备用素材", "其他", "商品周边", "办公用品"]:
+                            default_cat_idx = ["包装材", "无实体", "备用素材", "其他", "商品周边", "办公用品"].index(existing_item.category)
+                            
+                    final_category = c_oa2.selectbox("资产分类", ["包装材", "无实体", "备用素材", "其他", "商品周边", "办公用品"], index=default_cat_idx)
+                    
+                    # 店铺
+                    f_shop = c_oa3.text_input("店铺/供应商", placeholder="淘宝/Amazon")
+
+                    # 第二行：总价 | 数量
+                    c_total, c_qty = st.columns(2)
+                    calc_total_amount = c_total.number_input("👉 支出总价", min_value=0.0, step=10.0, format="%.2f")
+                    f_qty = c_qty.number_input("数量", min_value=0.01, step=1.0, value=1.0, format="%.2f")
+                    
+                    # 自动算单价
+                    f_price = calc_total_amount / f_qty if f_qty > 0 else 0
+                    if f_price > 0:
+                        st.caption(f"📊 自动计算单价: **¥ {f_price:,.2f}**")
+                        
+                    # 标记
+                    is_consumable_append = True # 开启耗材逻辑
 
                 elif exp_type == "固定资产购入":
                     final_category = "固定资产购入"
                     c_out1, c_out2 = st.columns([2, 1])
                     f_name = c_out1.text_input("支出内容")
                     f_shop = c_out2.text_input("店铺/供应商")
+                    
                     c_total, c_qty = st.columns(2)
                     calc_total_amount = c_total.number_input("👉 实付总价", min_value=0.0, step=10.0, format="%.2f")
-                    f_qty = c_qty.number_input("数量", min_value=1, step=1, value=1)
+                    f_qty = c_qty.number_input("数量", min_value=0.01, step=0.1, value=1.0, format="%.2f")
+                    
                     f_price = calc_total_amount / f_qty if f_qty > 0 else 0
+                    if f_price > 0:
+                        st.caption(f"📊 自动计算单价: **¥ {f_price:,.2f}**")
 
                 else:
                     final_category = st.selectbox("费用分类", ["差旅费", "利润分红", "手续费", "房租水电", "其他支出"])
@@ -457,24 +562,42 @@ def show_finance_page(db, exchange_rate):
                     st.warning("请输入内容")
                 else:
                     try:
+                        # 1. 记录 FinanceRecord
+                        # 支出记为负数
                         final_amount = calc_total_amount if rec_type == "收入" else -calc_total_amount
+                        
+                        # 备注信息拼接
                         note_detail = f"{f_shop}" if f_shop else ""
                         if f_qty > 1: note_detail += f" (x{f_qty})"
                         if f_desc: note_detail += f" | {f_desc}"
                         
-                        # 1. 创建财务对象
-                        new_finance = FinanceRecord(
+                        new_record = FinanceRecord(
                             date=f_date, amount=final_amount, currency=f_curr,
                             category=final_category, description=f"{f_name} [{note_detail}]"
                         )
-                        db.add(new_finance)
-                        db.flush() 
-                        finance_id = new_finance.id
+                        db.add(new_record)
+                        db.flush() # 获取ID
                         
-                        link_msg = ""
-                        # 2. 联动 CompanyBalanceItem (资本/资产增减)
+                        # 2. 联动更新资产 (现金流变动) - 【使用统一函数】
+                        target_cash_asset = get_cash_asset(db, f_curr)
+                        
+                        # 如果完全没有，才创建新的
+                        if not target_cash_asset:
+                            target_cash_asset = CompanyBalanceItem(
+                                category="asset",
+                                name=f"流动资金({f_curr})",
+                                amount=0.0,
+                                currency=f_curr
+                            )
+                            db.add(target_cash_asset)
+                        
+                        target_cash_asset.amount += final_amount
+                        
+                        link_msg = "资金变动已记录"
+                        
+                        # 3. 联动 CompanyBalanceItem
                         if balance_item_type:
-                            balance_delta = calc_total_amount if rec_type == "收入" else -calc_total_amount
+                            balance_delta = final_amount 
                             
                             if is_new_balance_item:
                                 new_bi = CompanyBalanceItem(
@@ -482,51 +605,174 @@ def show_finance_page(db, exchange_rate):
                                     amount=balance_delta, 
                                     category=balance_item_type,
                                     currency=f_curr,
-                                    finance_record_id=finance_id 
+                                    finance_record_id=new_record.id # 关联ID
                                 )
                                 db.add(new_bi)
-                                link_msg += f" + 新{balance_item_type}"
+                                link_msg += f" + 新{balance_item_type} ({balance_delta:+.2f})"
                             
                             elif target_balance_item_id:
                                 existing_bi = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == target_balance_item_id).first()
                                 if existing_bi:
                                     existing_bi.amount += balance_delta
-                                    
-                                    # 【修改点】自动检测归零逻辑
-                                    # 如果余额 <= 0 (考虑到浮点数误差，用 0.01 判断)，则自动删除
                                     if existing_bi.amount <= 0.01:
                                         db.delete(existing_bi)
                                         link_msg += f" ({balance_item_type}已归零并移除)"
                                     else:
-                                        link_msg += f" + 更新{balance_item_type}"
+                                        link_msg += f" + 更新{balance_item_type} ({balance_delta:+.2f})"
 
-                        # 3. 联动其他表
+                        # 4. 联动其他表
                         if rec_type == "支出":
                             if exp_type == "商品成本" and selected_product_id:
-                                db.add(CostItem(product_id=selected_product_id, item_name=f_name, actual_cost=calc_total_amount, supplier=f_shop, category=final_category, unit_price=f_price, quantity=f_qty, remarks=f_desc, finance_record_id=finance_id))
-                                link_msg += " + 商品成本"
+                                # === 【修改开始】 ===
+                                # 逻辑：如果支付币种是 JPY，记入成本表时需折算为 CNY
+                                cost_in_cny = calc_total_amount
+                                unit_price_cny = f_price
+                                
+                                # 备注中增加原币说明，方便核对
+                                final_remark = f_desc
+                                if f_curr == "JPY":
+                                    cost_in_cny = calc_total_amount * exchange_rate
+                                    unit_price_cny = cost_in_cny / f_qty if f_qty > 0 else 0
+                                    # 在备注里追加原币金额信息
+                                    curr_note = f"(原币支付: {calc_total_amount:.0f} JPY)"
+                                    final_remark = f"{f_desc} {curr_note}".strip()
+
+                                db.add(CostItem(
+                                    product_id=selected_product_id, 
+                                    item_name=f_name, 
+                                    actual_cost=cost_in_cny, # 存入折算后的 CNY
+                                    supplier=f_shop, 
+                                    category=final_category, 
+                                    unit_price=unit_price_cny, # 单价也折算为 CNY
+                                    quantity=f_qty, 
+                                    remarks=final_remark, 
+                                    finance_record_id=new_record.id
+                                ))
+                                link_msg += " + 商品成本(已折算CNY)"
+                                
                             elif exp_type == "固定资产购入":
-                                db.add(FixedAsset(name=f_name, unit_price=f_price, quantity=f_qty, remaining_qty=f_qty, shop_name=f_shop, remarks=f_desc, currency=f_curr, finance_record_id=finance_id))
+                                db.add(FixedAsset(name=f_name, unit_price=f_price, quantity=f_qty, remaining_qty=f_qty, shop_name=f_shop, remarks=f_desc, currency=f_curr, finance_record_id=new_record.id))
                                 link_msg += " + 固定资产"
-                            elif exp_type == "耗材购入":
+                            elif exp_type == "其他资产购入":
+                                # 1. 计算汇率价值 (用于记录日志)
                                 rate = exchange_rate if f_curr == "JPY" else 1.0
                                 val_cny = calc_total_amount * rate
-                                if is_consumable_append and target_consumable_id:
-                                    existing_item = db.query(ConsumableItem).filter(ConsumableItem.id == target_consumable_id).first()
-                                    if existing_item:
-                                        existing_item.remaining_qty += f_qty
-                                        old_val = existing_item.unit_price * (existing_item.remaining_qty - f_qty)
-                                        if existing_item.remaining_qty > 0: existing_item.unit_price = (old_val + calc_total_amount) / existing_item.remaining_qty
-                                        db.add(ConsumableLog(item_name=existing_item.name, change_qty=f_qty, value_cny=val_cny, note=f"追加: {f_desc}", date=f_date))
+                                
+                                # 2. 智能查找目标资产对象 (按名称查重)
+                                target_item = db.query(ConsumableItem).filter(ConsumableItem.name == f_name).first()
+
+                                # --- 分支处理：合并 vs 新建 ---
+                                if target_item:
+                                    # === 合并逻辑 (加权平均算法) ===
+                                    # 旧的总价值
+                                    old_total_val = target_item.unit_price * target_item.remaining_qty
+                                    # 新的总价值
+                                    new_total_val = calc_total_amount
+                                    
+                                    # 更新数量
+                                    target_item.remaining_qty += f_qty
+                                    
+                                    # 更新单价 (总价值 / 总数量)
+                                    if target_item.remaining_qty > 0:
+                                        target_item.unit_price = (old_total_val + new_total_val) / target_item.remaining_qty
+                                    
+                                    # 更新店铺/分类 (以最新的为准)
+                                    target_item.shop_name = f_shop 
+                                    target_item.category = final_category 
+                                    
+                                    # 记录日志
+                                    db.add(ConsumableLog(
+                                        item_name=target_item.name, 
+                                        change_qty=f_qty, 
+                                        value_cny=val_cny, 
+                                        note=f"购入入库: {f_desc}", 
+                                        date=f_date
+                                    ))
+                                    link_msg += f" + 其他资产库存 (已合并至: {target_item.name})"
+                                    
                                 else:
-                                    db.add(ConsumableItem(name=f_name, category=final_category, unit_price=f_price, initial_quantity=f_qty, remaining_qty=f_qty, shop_name=f_shop, remarks=f_desc, currency=f_curr, finance_record_id=finance_id))
-                                    db.add(ConsumableLog(item_name=f_name, change_qty=f_qty, value_cny=val_cny, note=f"初始: {f_desc}", date=f_date))
-                                link_msg += " + 耗材库存"
+                                    # === 新建逻辑 ===
+                                    new_con = ConsumableItem(
+                                        name=f_name, 
+                                        category=final_category, 
+                                        unit_price=f_price, 
+                                        initial_quantity=f_qty, 
+                                        remaining_qty=f_qty, 
+                                        shop_name=f_shop, 
+                                        remarks=f_desc, 
+                                        currency=f_curr, 
+                                        finance_record_id=new_record.id
+                                    )
+                                    db.add(new_con)
+                                    
+                                    db.add(ConsumableLog(
+                                        item_name=f_name, 
+                                        change_qty=f_qty, 
+                                        value_cny=val_cny, 
+                                        note=f"初始购入: {f_desc}", 
+                                        date=f_date
+                                    ))
+                                    link_msg += " + 新其他资产库存"
+                        
+                        # 【收入类型的联动处理】
+                        elif rec_type == "收入":
+                            if final_category == "其他资产增加":
+                                # 1. 计算汇率价值
+                                rate = exchange_rate if f_curr == "JPY" else 1.0
+                                val_cny = calc_total_amount * rate
+                                
+                                # 2. 查重逻辑 (按名称查找是否已存在)
+                                target_item = db.query(ConsumableItem).filter(ConsumableItem.name == f_name).first()
+                                
+                                if target_item:
+                                    # === 合并逻辑 (加权平均) ===
+                                    old_total_val = target_item.unit_price * target_item.remaining_qty
+                                    new_total_val = calc_total_amount
+                                    
+                                    target_item.remaining_qty += f_qty
+                                    if target_item.remaining_qty > 0:
+                                        target_item.unit_price = (old_total_val + new_total_val) / target_item.remaining_qty
+                                    
+                                    # 更新店铺信息
+                                    if f_shop: target_item.shop_name = f_shop
+                                    
+                                    db.add(ConsumableLog(
+                                        item_name=target_item.name,
+                                        change_qty=f_qty,
+                                        value_cny=val_cny,
+                                        note=f"资产增加(收入): {f_desc}",
+                                        date=f_date
+                                    ))
+                                    link_msg += f" + 其他资产库存 (已合并: {target_item.name})"
+                                else:
+                                    # === 新建逻辑 ===
+                                    new_con = ConsumableItem(
+                                        name=f_name,
+                                        category="其他", # 默认为其他，可在资产管理页修改
+                                        unit_price=f_price,
+                                        initial_quantity=f_qty,
+                                        remaining_qty=f_qty,
+                                        shop_name=f_shop,
+                                        remarks=f_desc,
+                                        currency=f_curr,
+                                        finance_record_id=new_record.id
+                                    )
+                                    db.add(new_con)
+                                    
+                                    db.add(ConsumableLog(
+                                        item_name=f_name,
+                                        change_qty=f_qty,
+                                        value_cny=val_cny,
+                                        note=f"资产增加(初始): {f_desc}",
+                                        date=f_date
+                                    ))
+                                    link_msg += " + 新其他资产库存"
 
                         db.commit()
                         st.toast(f"记账成功！{link_msg}", icon="✅")
                         st.rerun()
                     except Exception as e:
+                        db.rollback()
                         st.error(f"写入失败: {e}")
 
     # ================= 2. 数据处理与余额计算 =================
@@ -550,6 +796,7 @@ def show_finance_page(db, exchange_rate):
                 "当前CNY余额": running_cny, 
                 "当前JPY余额": running_jpy
             })
+        # 倒序排列，显示最新的在前面
         df_display = pd.DataFrame(processed_data).sort_values(by=["日期", "ID"], ascending=[False, False]).reset_index(drop=True)
     else:
         df_display = pd.DataFrame()
@@ -562,55 +809,213 @@ def show_finance_page(db, exchange_rate):
     m3.metric("JPY折合CNY", f"¥ {jpy_to_cny:,.2f}", help=f"汇率: {exchange_rate*100:.1f}")
     m4.metric("账户总余额 (CNY)", f"¥ {(running_cny + jpy_to_cny):,.2f}")
 
+    # ================= 3. 流水明细 (带颜色只读表格) =================
     if not df_display.empty:
-        st.subheader("📝 流水明细")
-        edited_df = st.data_editor(
-            df_display, use_container_width=True, hide_index=True, key="finance_editor",
-            disabled=["当前CNY余额", "当前JPY余额", "ID"],
-            column_config={
-                "日期": st.column_config.DateColumn("日期", format="YYYY-MM-DD", required=True),
-                "收支": st.column_config.SelectboxColumn("收支", options=["收入", "支出"], required=True),
-                "币种": st.column_config.SelectboxColumn("币种", options=["CNY", "JPY"], required=True),
-                "金额": st.column_config.NumberColumn("金额 (绝对值)", min_value=0.01, format="¥ %.2f", required=True),
-                "当前CNY余额": st.column_config.NumberColumn("CNY 结余", format="¥ %.2f"),
-                "当前JPY余额": st.column_config.NumberColumn("JPY 结余", format="¥ %.0f"),
-            },
-            column_order=["日期", "收支", "币种", "金额", "分类", "备注", "当前CNY余额", "当前JPY余额"]
-        )
-        if st.session_state.get("finance_editor") and st.session_state["finance_editor"].get("edited_rows"):
-            changes = st.session_state["finance_editor"]["edited_rows"]
-            has_db_change = False
-            for index, diff in changes.items():
-                original_row = df_display.iloc[int(index)]
-                record = db.query(FinanceRecord).filter(FinanceRecord.id == int(original_row["ID"])).first()
-                if record:
-                    new_type = diff.get("收支", "收入" if record.amount > 0 else "支出")
-                    new_abs_amount = float(diff.get("金额", abs(record.amount)))
-                    record.date = diff.get("日期", str(record.date))
-                    record.currency = diff.get("币种", record.currency)
-                    record.amount = new_abs_amount if new_type == "收入" else -new_abs_amount
-                    record.category = diff.get("分类", record.category)
-                    record.description = diff.get("备注", record.description)
-                    has_db_change = True
-                    if "金额" in diff:
-                        linked_costs = db.query(CostItem).filter(CostItem.finance_record_id == record.id).all()
-                        for cost in linked_costs: cost.actual_cost = new_abs_amount
-            if has_db_change:
-                db.commit()
-                st.rerun()
+        st.subheader("📜 流水明细")
 
-        with st.popover("🗑️ 删除记录"):
-            del_options = df_display.to_dict('records')
-            selected_del = st.selectbox("选择要删除的记录", del_options, format_func=lambda x: f"{x['日期']} | {x['收支']} {x['金额']} | {x['分类']}")
-            if st.button("确认删除选中记录"):
-                del_id = selected_del['ID']
-                db.query(CostItem).filter(CostItem.finance_record_id == del_id).delete()
-                db.query(FixedAsset).filter(FixedAsset.finance_record_id == del_id).delete()
-                db.query(ConsumableItem).filter(ConsumableItem.finance_record_id == del_id).delete()
-                db.query(CompanyBalanceItem).filter(CompanyBalanceItem.finance_record_id == del_id).delete()
-                db.query(FinanceRecord).filter(FinanceRecord.id == del_id).delete()
-                db.commit()
-                st.toast("删除成功 (关联项目已清理)", icon="🗑️")
-                st.rerun()
+        # --- A. 定义颜色样式函数 ---
+        def highlight_rows(row):
+            type_val = row.get("收支", "")
+            # 默认白色背景
+            styles = [''] * len(row)
+            if type_val == "支出":
+                return ['background-color: #ffebee; color: #b71c1c'] * len(row) # 淡红
+            elif type_val == "收入":
+                return ['background-color: #e8f5e9; color: #1b5e20'] * len(row) # 浅绿
+            return styles
+
+        # --- B. 应用样式 ---
+        # 格式化日期列为字符串，否则 st.dataframe 有时显示不友好
+        df_styled = df_display.copy()
+        df_styled['日期'] = pd.to_datetime(df_styled['日期']).dt.strftime('%Y-%m-%d')
+        
+        # 应用 Styler
+        styler = df_styled.style.apply(highlight_rows, axis=1)
+        # 格式化金额
+        styler = styler.format({
+            "金额": "¥ {:.2f}", 
+            "当前CNY余额": "¥ {:.2f}", 
+            "当前JPY余额": "¥ {:.0f}"
+        })
+
+        # --- C. 渲染只读表格 (动态高度) ---
+        # 1. 计算高度：(数据行数 + 表头1行) * 每行高度(约35px)
+        # 2. 加上一点缓冲
+        num_rows = len(df_display)
+        row_height = 35 
+        calculated_height = (num_rows + 1) * row_height
+        
+        # 3. 设置限制：最小 300px，最大 1200px (根据您的屏幕需求调整)
+        # 这样数据少时不留白，数据多时在全屏下能显示更多行
+        final_height = min(max(calculated_height, 300), 1200)
+
+        st.dataframe(
+            styler,
+            use_container_width=True,
+            hide_index=True,
+            height=int(final_height), # 使用动态计算的高度
+            column_config={"ID": None} 
+        )
+
+        # ================= 4. 底部操作区 (编辑 & 删除) =================
+        st.divider()
+        c_edit, c_del = st.columns([1, 1])
+
+        # 获取用于下拉框的字典列表
+        record_options = df_display.to_dict('records')
+
+        # >>> 编辑记录功能 <<<
+        with c_edit:
+            with st.popover("✏️ 编辑记录", use_container_width=True):
+                if not record_options:
+                    st.caption("暂无记录可编辑")
+                else:
+                    # 1. 选择记录
+                    sel_edit = st.selectbox(
+                        "选择要修改的记录", 
+                        record_options, 
+                        format_func=lambda x: f"{x['日期']} | {x['收支']} {x['金额']} | {x['分类']} | {x['备注']}",
+                        key="edit_select"
+                    )
+                    
+                    if sel_edit:
+                        target_id = sel_edit['ID']
+                        # 从数据库重新拉取最新对象
+                        edit_obj = db.query(FinanceRecord).filter(FinanceRecord.id == target_id).first()
+                        
+                        if edit_obj:
+                            st.markdown(f"**正在编辑 ID: {edit_obj.id}**")
+                            
+                            # 2. 编辑表单
+                            with st.form(key=f"edit_form_{target_id}"):
+                                new_date = st.date_input("日期", value=edit_obj.date)
+                                
+                                c_e1, c_e2 = st.columns(2)
+                                new_type = c_e1.selectbox("收支类型", ["收入", "支出"], index=0 if edit_obj.amount > 0 else 1)
+                                new_curr = c_e2.selectbox("币种", ["CNY", "JPY"], index=0 if edit_obj.currency == "CNY" else 1)
+                                
+                                c_e3, c_e4 = st.columns(2)
+                                new_amount_abs = c_e3.number_input("金额 (绝对值)", value=abs(edit_obj.amount), min_value=0.0, step=10.0)
+                                new_cat = c_e4.text_input("分类", value=edit_obj.category)
+                                
+                                new_desc = st.text_input("备注", value=edit_obj.description or "")
+                                
+                                st.warning("⚠️ 注意：修改金额或收支类型将自动更新【流动资金】余额，并联动更新关联的成本/资产项金额。")
+                                
+                                if st.form_submit_button("✅ 确认修改并保存"):
+                                    try:
+                                        # A. 计算金额差额 (用于更新流动资金)
+                                        # 新的带符号金额
+                                        new_signed_amount = new_amount_abs if new_type == "收入" else -new_amount_abs
+                                        old_amount = edit_obj.amount
+                                        diff = new_signed_amount - old_amount
+                                        
+                                        # B. 更新 FinanceRecord
+                                        edit_obj.date = new_date
+                                        edit_obj.currency = new_curr
+                                        edit_obj.amount = new_signed_amount
+                                        edit_obj.category = new_cat
+                                        edit_obj.description = new_desc
+                                        
+                                        # C. 更新流动资金 (CompanyBalanceItem)
+                                        cash_asset = get_cash_asset(db, new_curr)
+                                        if cash_asset:
+                                            cash_asset.amount += diff
+                                        
+                                        # D. 联动更新 (CostItem / FixedAsset / Consumable 等)
+                                        # 1. 成本 (CostItem)
+                                        linked_costs = db.query(CostItem).filter(CostItem.finance_record_id == target_id).all()
+                                        for cost in linked_costs:
+                                            cost.actual_cost = new_amount_abs
+                                            cost.remarks = f"{new_desc} (已修)"
+                                            
+                                        # 2. 固定资产 (FixedAsset)
+                                        linked_assets = db.query(FixedAsset).filter(FixedAsset.finance_record_id == target_id).all()
+                                        for fa in linked_assets:
+                                            if fa.quantity > 0:
+                                                fa.unit_price = new_amount_abs / fa.quantity
+                                            fa.currency = new_curr
+                                            
+                                        # 3. 其他资产 (ConsumableItem)
+                                        linked_cons = db.query(ConsumableItem).filter(ConsumableItem.finance_record_id == target_id).all()
+                                        for ci in linked_cons:
+                                            if ci.initial_quantity > 0:
+                                                ci.unit_price = new_amount_abs / ci.initial_quantity
+                                            ci.currency = new_curr
+                                            
+                                        # 4. 公司资产/负债 (CompanyBalanceItem)
+                                        linked_bis = db.query(CompanyBalanceItem).filter(
+                                            CompanyBalanceItem.finance_record_id == target_id,
+                                            CompanyBalanceItem.category != 'asset'
+                                        ).all()
+                                        for bi in linked_bis:
+                                            bi.amount = new_amount_abs
+                                            bi.currency = new_curr
+
+                                        db.commit()
+                                        st.toast("记录已修改并联动更新！", icon="💾")
+                                        st.rerun()
+                                        
+                                    except Exception as e:
+                                        db.rollback()
+                                        st.error(f"修改失败: {e}")
+
+        # >>> 删除记录功能 <<<
+        with c_del:
+            with st.popover("🗑️ 删除记录", use_container_width=True):
+                if not record_options:
+                    st.caption("暂无记录可删除")
+                else:
+                    selected_del = st.selectbox(
+                        "选择要删除的记录", 
+                        record_options, 
+                        format_func=lambda x: f"{x['日期']} | {x['收支']} {x['金额']} | {x['分类']} | {x['备注']}",
+                        key="del_select"
+                    )
+                    
+                    if st.button("确认删除选中记录", type="primary"):
+                        del_id = selected_del['ID']
+                        record_to_del = db.query(FinanceRecord).filter(FinanceRecord.id == del_id).first()
+                        
+                        if record_to_del:
+                            msg_list = []
+                            try:
+                                # 1. 回滚资金余额
+                                cash_asset = get_cash_asset(db, record_to_del.currency)
+                                if cash_asset:
+                                    cash_asset.amount -= record_to_del.amount
+                                    msg_list.append("资金已回滚")
+                                
+                                # 2. 特殊处理：【其他资产购入】回滚库存
+                                if record_to_del.category == "其他资产购入":
+                                    target_log = db.query(ConsumableLog).filter(
+                                        ConsumableLog.date == record_to_del.date,
+                                        ConsumableLog.value_cny >= abs(record_to_del.amount) - 0.1,
+                                        ConsumableLog.value_cny <= abs(record_to_del.amount) + 0.1,
+                                        ConsumableLog.change_qty > 0
+                                    ).first()
+                                    if target_log:
+                                        target_item = db.query(ConsumableItem).filter(ConsumableItem.name == target_log.item_name).first()
+                                        if target_item:
+                                            target_item.remaining_qty -= target_log.change_qty
+                                            msg_list.append(f"库存已扣减 {target_log.change_qty}")
+                                        db.delete(target_log)
+
+                                # 3. 级联删除关联项目
+                                db.query(CostItem).filter(CostItem.finance_record_id == del_id).delete()
+                                db.query(FixedAsset).filter(FixedAsset.finance_record_id == del_id).delete()
+                                db.query(ConsumableItem).filter(ConsumableItem.finance_record_id == del_id).delete()
+                                db.query(CompanyBalanceItem).filter(CompanyBalanceItem.finance_record_id == del_id).delete()
+                                
+                                # 4. 删除流水本身
+                                db.delete(record_to_del)
+                                db.commit()
+                                
+                                st.toast(f"删除成功: {' | '.join(msg_list)}", icon="🗑️")
+                                st.rerun()
+                                
+                            except Exception as e:
+                                db.rollback()
+                                st.error(f"删除失败: {e}")
     else:
         st.info("暂无财务记录")

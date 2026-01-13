@@ -98,7 +98,9 @@ def show_product_page(db):
                     price_other=price_other,
                     price_instagram=price_insta,
                     price_other_jpy=price_other_jpy,
-                    total_quantity=total_q 
+                    total_quantity=total_q,
+                    # 初始化可销售数量等于总预计数量
+                    marketable_quantity=total_q
                 )
                 db.add(new_prod)
                 db.flush()
@@ -163,6 +165,7 @@ def show_product_page(db):
                     st.session_state.edit_specs_df,
                     num_rows="dynamic", # 允许添加/删除行
                     use_container_width=True,
+                    hide_index=True,
                     key="editor_specs",
                     column_config={
                         "颜色名称": st.column_config.TextColumn(required=True),

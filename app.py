@@ -9,7 +9,8 @@ from models import (
     FinanceRecord, CostItem, 
     FixedAsset, FixedAssetLog, 
     ConsumableItem, ConsumableLog,  # 确保包含耗材日志
-    CompanyBalanceItem, PreShippingItem # 【新增】预出库表
+    CompanyBalanceItem, PreShippingItem, # 【新增】预出库表
+    SystemSetting,
 )
 
 # === 1. 页面配置 (必须放在第一行) ===
@@ -112,6 +113,25 @@ def get_db():
     finally:
         db.close()
 
+# === 辅助函数：获取/保存系统设置 ===
+def get_system_setting(db, key, default_value=""):
+    setting = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+    if not setting:
+        # 如果不存在，初始化一个默认值
+        setting = SystemSetting(key=key, value=str(default_value))
+        db.add(setting)
+        db.commit()
+    return setting.value
+
+def set_system_setting(db, key, new_value):
+    setting = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+    if setting:
+        setting.value = str(new_value)
+    else:
+        setting = SystemSetting(key=key, value=str(new_value))
+        db.add(setting)
+    db.commit()
+
 # ==========================================
 # === 3. 业务逻辑 (基本保持不变) ===
 # ==========================================
@@ -130,7 +150,8 @@ from views.inventory_view import show_inventory_page
 from views.finance_view import show_finance_page
 from views.balance_view import show_balance_page
 from views.asset_view import show_fixed_asset_page
-from views.consumable_view import show_consumable_page
+from views.consumable_view import show_other_asset_page
+from views.sales_view import show_sales_page
 from streamlit_option_menu import option_menu
 
 # 初始化表结构
@@ -153,12 +174,24 @@ with st.sidebar:
         menu_title="Yurara Studio",
         menu_icon="dataset",
         options=[
-            "公司资产一览", "财务流水录入", "商品管理", 
-            "库存与销售额管理", "成本核算", "固定资产管理", "耗材管理"
+            "财务流水录入",
+            "公司账面概览",  
+            "商品管理", 
+            "商品成本核算", 
+            "销售额一览",
+            "库存管理", 
+            "固定资产管理", 
+            "其他资产管理"
         ],
         icons=[
-            "clipboard-data", "currency-yen", "bag-heart", 
-            "arrow-left-right", "calculator", "camera-reels", "box-seam"
+            "currency-yen", 
+            "clipboard-data", 
+            "bag-heart", 
+            "calculator", 
+            "graph-up-arrow",
+            "arrow-left-right", 
+            "camera-reels", 
+            "box-seam"
         ],
         default_index=0,
         styles={
@@ -169,17 +202,32 @@ with st.sidebar:
         }
     )
 
-    # === 汇率 ===
+    # === 新的数据库持久化汇率代码 ===
     st.divider()
     st.markdown("### 💱 全局汇率设置")
-    if "global_rate_input" not in st.session_state:
-        st.session_state.global_rate_input = 4.8
+    
+    # 1. 从数据库读取当前存储的汇率 (默认 4.8)
+    # 注意：db 是你在主程序上方定义的数据库会话
+    db_rate_str = get_system_setting(db, "exchange_rate", "4.8")
+    
+    # 2. 显示输入框
     rate_input = st.number_input(
         "汇率 (100 JPY 兑 CNY)", 
-        value=st.session_state.global_rate_input, 
-        step=0.1, format="%.2f"
+        value=float(db_rate_str), 
+        step=0.1, 
+        format="%.2f",
+        key="global_rate_widget" # 给个key防止重绘丢失焦点
     )
-    st.session_state.global_rate_input = rate_input
+    
+    # 3. 如果用户修改了数值，保存回数据库
+    # 浮点数比较需要容错，或者简单的比较字符串
+    if abs(rate_input - float(db_rate_str)) > 0.001:
+        set_system_setting(db, "exchange_rate", rate_input)
+        st.toast(f"汇率已更新并永久保存: {rate_input}", icon="💾")
+        # 稍微延迟一下或者直接 rerun 刷新整个页面的计算
+        st.rerun()
+
+    # 4. 设置全局变量供后续页面使用
     exchange_rate = rate_input / 100.0
 
 # === 备份/恢复 ===
@@ -296,15 +344,17 @@ with st.sidebar:
 # 路由分发 (保持不变)
 if selected == "商品管理":
     show_product_page(db)
-elif selected == "成本核算":
+elif selected == "商品成本核算":
     show_cost_page(db)
-elif selected == "库存与销售额管理":
-    show_inventory_page(db)
+elif selected == "库存管理":
+    show_inventory_page(db) # 只显示库存
+elif selected == "销售额一览":
+    show_sales_page(db)     # 新增页面
 elif selected == "财务流水录入":
     show_finance_page(db, exchange_rate)
-elif selected == "公司资产一览":
+elif selected == "公司账面概览":
     show_balance_page(db, exchange_rate)
 elif selected == "固定资产管理":
     show_fixed_asset_page(db, exchange_rate)
-elif selected == "耗材管理":
-    show_consumable_page(db, exchange_rate)
+elif selected == "其他资产管理":
+    show_other_asset_page(db, exchange_rate)

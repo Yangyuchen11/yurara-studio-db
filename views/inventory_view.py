@@ -1,17 +1,22 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from sqlalchemy import func, or_ # 需要引入 or_
+from sqlalchemy import func, or_
 from models import Product, InventoryLog, ProductColor, CompanyBalanceItem, CostItem, PreShippingItem, FinanceRecord
+
+# === 定义成本分类 ===
+COST_CATEGORIES = ["大货材料费", "大货加工费", "物流邮费", "包装费", "设计开发费", "检品发货等人工费", "宣发费", "其他成本"]
 
 # === 辅助函数：获取产品单位成本 ===
 def get_unit_cost(db, product_id):
     total_actual_cost = db.query(func.sum(CostItem.actual_cost))\
         .filter(CostItem.product_id == product_id).scalar() or 0.0
     product = db.query(Product).filter(Product.id == product_id).first()
-    total_qty = product.total_quantity if product else 0
-    if total_qty > 0:
-        return total_actual_cost / total_qty
+    # 使用可销售数量作为分母，如果未设置则回退到总数量
+    denom = product.marketable_quantity if (product and product.marketable_quantity is not None) else (product.total_quantity if product else 0)
+    
+    if denom > 0:
+        return total_actual_cost / denom
     return 0.0
 
 # === 辅助函数：更新资产（按名称） ===
@@ -19,8 +24,9 @@ def update_bi_by_name(db, name, delta, category="asset", currency="CNY", finance
     item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name==name).first()
     if item: 
         item.amount += delta
-        # 只有当金额非常接近0且无流水的孤立资产才删除，防止频繁创建删除
-        if abs(item.amount) <= 0.01: db.delete(item)
+        # 容错：只有当金额极小且无关联流水时才物理删除，防止误删
+        if abs(item.amount) <= 0.01 and not item.finance_record_id: 
+            db.delete(item)
     else: 
         db.add(CompanyBalanceItem(
             name=name, amount=delta, category=category, 
@@ -29,101 +35,9 @@ def update_bi_by_name(db, name, delta, category="asset", currency="CNY", finance
 
 # === 主页面逻辑 ===
 def show_inventory_page(db):
-    exchange_rate_input = st.session_state.get("global_rate_input", 4.8)
-    exchange_rate = exchange_rate_input / 100.0
+    st.header("📦 库存管理")
 
-    st.header("📦 库存与销售额管理")
-    
-    # ================= 1. 销售额一览 =================
-    st.subheader("📊 销售数据一览")
-    with st.container(border=True):
-        logs_sold = db.query(InventoryLog).filter(InventoryLog.is_sold == True).all()
-        logs_other = db.query(InventoryLog).filter(InventoryLog.is_other_out == True).all()
-
-        total_sales_cny = sum([l.sale_amount for l in logs_sold if l.currency == 'CNY'])
-        total_sales_jpy = sum([l.sale_amount for l in logs_sold if l.currency == 'JPY'])
-        total_qty_sold = sum([-l.change_amount for l in logs_sold])
-        total_qty_other = sum([abs(l.change_amount) for l in logs_other])
-
-        platform_stats = {}
-        for l in logs_sold:
-            pf = l.platform or "未知平台"
-            if pf not in platform_stats:
-                platform_stats[pf] = {'amount': 0.0, 'qty': 0}
-            platform_stats[pf]['amount'] += l.sale_amount
-            platform_stats[pf]['qty'] += -l.change_amount
-
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("总销售额 (CNY)", f"¥ {total_sales_cny:,.2f}")
-        m2.metric("总销售额 (JPY)", f"¥ {total_sales_jpy:,.0f}")
-        m3.metric("净售出数量", f"{total_qty_sold} 件")
-        m4.metric("其他出库数量", f"{total_qty_other} 件")
-
-        if platform_stats:
-            st.caption("各平台销售详情 (含退款抵扣):")
-            data_list = []
-            for pf, stats in platform_stats.items():
-                data_list.append({
-                    "平台": pf,
-                    "销售额 (原币累加)": f"{stats['amount']:,.2f}",
-                    "净销量": stats['qty']
-                })
-            st.dataframe(pd.DataFrame(data_list), use_container_width=True, hide_index=True)
-
-    st.divider()
-
-    # ================= 2. 预出库列表管理 =================
-    st.subheader("🚚 预出库/待发货管理")
-    st.caption("此处管理的商品尚未扣减实际库存，但已计入债务与预售额。")
-    pre_items = db.query(PreShippingItem).all()
-    
-    if pre_items:
-        pre_data = []
-        for p in pre_items:
-            pre_data.append({
-                "日期": p.created_date,
-                "产品": f"{p.product_name} - {p.variant}",
-                "数量": p.quantity,
-                "预售额": f"{p.pre_sale_amount} {p.currency}",
-                "备注": p.note
-            })
-        st.dataframe(pd.DataFrame(pre_data), use_container_width=True, hide_index=True)
-        
-        c_p1, c_p2 = st.columns([3, 1])
-        selected_pre_id = c_p1.selectbox("选择要完成发货的订单", [p.id for p in pre_items], format_func=lambda x: next((f"{i.created_date} | {i.product_name}-{i.variant} (Qty:{i.quantity})" for i in pre_items if i.id == x), "Unknown"))
-        
-        if c_p2.button("✅ 出库完成 (转收入)", type="primary"):
-            target_pre = db.query(PreShippingItem).filter(PreShippingItem.id == selected_pre_id).first()
-            if target_pre:
-                try:
-                    if target_pre.related_debt_id:
-                        debt_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == target_pre.related_debt_id).first()
-                        if debt_item: db.delete(debt_item) 
-                    
-                    fin_rec = FinanceRecord(date=date.today(), amount=target_pre.pre_sale_amount, currency=target_pre.currency, category="销售收入", description=f"预出库转实销: {target_pre.product_name}-{target_pre.variant} (x{target_pre.quantity})")
-                    db.add(fin_rec)
-                    db.flush()
-                    
-                    target_asset_name = f"流动资金({target_pre.currency})"
-                    update_bi_by_name(db, target_asset_name, target_pre.pre_sale_amount, category="asset", currency=target_pre.currency, finance_id=fin_rec.id)
-
-                    log_out = InventoryLog(product_name=target_pre.product_name, variant=target_pre.variant, change_amount=-target_pre.quantity, reason="出库", note=f"预出库完成: {target_pre.note}", is_sold=True, sale_amount=target_pre.pre_sale_amount, currency=target_pre.currency, platform="预售转出")
-                    db.add(log_out)
-                    
-                    db.delete(target_pre)
-                    db.commit()
-                    st.toast(f"出库完成！资金已存入 {target_asset_name}", icon="💰")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"操作失败: {e}")
-    else:
-        st.info("当前没有挂起的预出库项目。")
-
-    st.divider()
-
-    # ================= 3. 库存一览与操作 =================
-    st.subheader("📝 库存变动录入")
-    
+    # ================= 1. 库存一览与操作 =================
     products = db.query(Product).all()
     product_names = [p.name for p in products]
     
@@ -144,17 +58,15 @@ def show_inventory_page(db):
                 
                 real_stock_map = {}
                 pre_in_map = {}
+                pre_out_items = db.query(PreShippingItem).filter(PreShippingItem.product_name == p_name).all()
+                pre_out_map = {}
                 
                 for log in all_logs:
                     if log.reason in ["入库", "出库", "额外生产入库", "退货入库"]:
                         real_stock_map[log.variant] = real_stock_map.get(log.variant, 0) + log.change_amount
-                    
-                    # 统计预入库：包含正常的“预入库”和“计划入库减少”
                     elif log.reason in ["预入库", "计划入库减少"]:
                         pre_in_map[log.variant] = pre_in_map.get(log.variant, 0) + log.change_amount
                 
-                pre_out_items = db.query(PreShippingItem).filter(PreShippingItem.product_name == p_name).all()
-                pre_out_map = {}
                 for item in pre_out_items:
                     pre_out_map[item.variant] = pre_out_map.get(item.variant, 0) + item.quantity
 
@@ -191,9 +103,9 @@ def show_inventory_page(db):
                         with r8:
                             c_btn1, c_btn2 = st.columns([1, 1])
                             
-                            # 按钮 1: 生产完成 (逻辑不变)
+                            # 按钮 1: 生产完成
                             if pre_in_qty == 0 and c.quantity > 0:
-                                if c_btn1.button("🏭 生产完成", key=f"btn_prod_done_{c.id}"):
+                                if c_btn1.button("🏭 生产完成", key=f"btn_prod_done_v2_{c.id}"):
                                     db.add(InventoryLog(product_name=p_name, variant=c.color_name, change_amount=c.quantity, reason="预入库", note="生产完成", date=date.today()))
                                     unit_cost = get_unit_cost(db, selected_product_id)
                                     val = c.quantity * unit_cost
@@ -202,11 +114,7 @@ def show_inventory_page(db):
                                     db.commit()
                                     st.rerun()
 
-                            # =======================================================
-                            # 【修复版】按钮 2: 入库完成 / 结单清理
-                            # =======================================================
-                            
-                            # 1. 检测当前商品是否有挂起的流程
+                            # 按钮 2: 入库完成 / 结单清理
                             has_pending_logs = False
                             for log in all_logs:
                                 if log.variant == c.color_name and log.reason in ["预入库", "计划入库减少"]:
@@ -215,27 +123,18 @@ def show_inventory_page(db):
                             
                             if has_pending_logs:
                                 btn_label = "📥 入库完成" if pre_in_qty > 0 else "✅ 结单/清理"
-                                
-                                if c_btn2.button(btn_label, key=f"btn_finish_{c.id}"):
+                                if c_btn2.button(btn_label, key=f"btn_finish_stock_{c.id}"):
                                     try:
                                         unit_cost = get_unit_cost(db, selected_product_id)
                                         
-                                        # --- A. 正常入库逻辑 (仅当数量>0时执行) ---
                                         if pre_in_qty > 0:
                                             val = pre_in_qty * unit_cost
-                                            # 资产转移：预入库 -> 大货
                                             update_bi_by_name(db, f"预入库大货资产-{p_name}", -val)
                                             update_bi_by_name(db, f"大货资产-{p_name}", val)
-                                            
-                                            # 记录入库日志
                                             db.add(InventoryLog(product_name=p_name, variant=c.color_name, change_amount=pre_in_qty, reason="入库", note="预入库转实物", date=date.today()))
-                                            
-                                            # 更新颜色表的已产数量
                                             if c.produced_quantity is None: c.produced_quantity = 0
                                             c.produced_quantity += pre_in_qty
                                         
-                                        # --- B. 状态更新 (将当前款式的预入库标记为完成) ---
-                                        # 获取当前款式的所有挂起日志
                                         pending_logs = db.query(InventoryLog).filter(
                                             InventoryLog.product_name == p_name,
                                             InventoryLog.variant == c.color_name,
@@ -243,30 +142,21 @@ def show_inventory_page(db):
                                         ).all()
                                         for pl in pending_logs: pl.reason = "预入库完成"
                                         
-                                        # 归零计划数量
                                         c.quantity = 0 
                                         
-                                        # --- C. 全局清理检测 (关键修复：避免卡死和资产回滚错误) ---
-                                        
-                                        # 核心技巧：查询“除当前款式外”是否还有其他挂起日志
-                                        # 这样不需要等待数据库 flush 当前的修改，避免死锁
                                         other_pending_count = db.query(func.count(InventoryLog.id)).filter(
                                             InventoryLog.product_name == p_name,
                                             or_(InventoryLog.reason == "预入库", InventoryLog.reason == "计划入库减少"),
-                                            InventoryLog.variant != c.color_name # <--- 排除当前正在处理的款式
+                                            InventoryLog.variant != c.color_name 
                                         ).scalar()
                                         
-                                        # 如果其他款式都搞定了，说明这是最后一个动作 -> 执行清理
                                         if other_pending_count == 0:
-                                            
-                                            # 1. 计算该商品的历史总投入成本 (正数)
                                             total_actual_cost = db.query(func.sum(CostItem.actual_cost))\
                                                 .filter(CostItem.product_id == selected_product_id).scalar() or 0.0
                                             
                                             wip_asset_name = f"预入库大货资产-{p_name}"
                                             offset_asset_name = f"在制资产冲销-{p_name}"
                                             
-                                            # 2. 清理【预入库资产】 (如果有残余，说明是误差，记录调整并删除)
                                             wip_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == wip_asset_name).first()
                                             if wip_item:
                                                 if abs(wip_item.amount) > 0.01:
@@ -279,32 +169,20 @@ def show_inventory_page(db):
                                                     ))
                                                 db.delete(wip_item)
                                             
-                                            # 3. 修正【在制资产冲销】 (关键！不能删除，必须设为 -总成本)
-                                            # 逻辑：资产负债表里的“在制资产” = 总成本(CostItems) + 冲销项。
-                                            # 要让它归零，冲销项必须等于 -总成本。
                                             target_offset_val = -total_actual_cost
-                                            
                                             offset_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == offset_asset_name).first()
                                             if not offset_item:
-                                                # 如果之前被误删了，这里重建
-                                                offset_item = CompanyBalanceItem(
-                                                    name=offset_asset_name,
-                                                    amount=target_offset_val,
-                                                    category="asset",
-                                                    currency="CNY"
-                                                )
+                                                offset_item = CompanyBalanceItem(name=offset_asset_name, amount=target_offset_val, category="asset", currency="CNY")
                                                 db.add(offset_item)
                                             else:
                                                 offset_item.amount = target_offset_val
                                             
-                                            # 只有当真正的总成本为0时，才删除冲销项
                                             if abs(total_actual_cost) < 0.01 and offset_item:
                                                  db.delete(offset_item)
                                         
                                         db.commit()
                                         st.toast("操作成功", icon="✅")
                                         st.rerun()
-                                        
                                     except Exception as e:
                                         db.rollback()
                                         st.error(f"操作发生错误: {e}")
@@ -315,8 +193,64 @@ def show_inventory_page(db):
 
     st.divider()
 
-    # ================= 4. 变动录入表单 =================
-    f_type, f_var, f_qty, f_remark, f_btn = st.columns([1.2, 1.2, 0.8, 1.2, 0.8])
+    # ================= 2. 预出库列表管理 =================
+    st.subheader("🚚 预出库/待发货管理")
+    st.caption("此处管理的商品尚未扣减实际库存，但已计入债务与预售额。")
+    pre_items = db.query(PreShippingItem).all()
+    
+    if pre_items:
+        pre_data = []
+        for p in pre_items:
+            pre_data.append({
+                "日期": p.created_date,
+                "产品": f"{p.product_name} - {p.variant}",
+                "数量": p.quantity,
+                "预售额": f"{p.pre_sale_amount} {p.currency}",
+                "备注": p.note
+            })
+        st.dataframe(pd.DataFrame(pre_data), use_container_width=True, hide_index=True)
+        
+        c_p1, c_p2 = st.columns([3, 1])
+        selected_pre_id = c_p1.selectbox("选择要完成发货的订单", [p.id for p in pre_items], format_func=lambda x: next((f"{i.created_date} | {i.product_name}-{i.variant} (Qty:{i.quantity})" for i in pre_items if i.id == x), "Unknown"))
+        
+        if c_p2.button("✅ 出库完成 (转收入)", type="primary"):
+            target_pre = db.query(PreShippingItem).filter(PreShippingItem.id == selected_pre_id).first()
+            if target_pre:
+                try:
+                    if target_pre.related_debt_id:
+                        debt_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == target_pre.related_debt_id).first()
+                        if debt_item: db.delete(debt_item) 
+                    
+                    # 预出库转完成，这里默认使用今天，因为是点击完成的动作
+                    fin_rec = FinanceRecord(date=date.today(), amount=target_pre.pre_sale_amount, currency=target_pre.currency, category="销售收入", description=f"预出库转实销: {target_pre.product_name}-{target_pre.variant} (x{target_pre.quantity})")
+                    db.add(fin_rec)
+                    db.flush()
+                    
+                    target_asset_name = f"流动资金({target_pre.currency})"
+                    update_bi_by_name(db, target_asset_name, target_pre.pre_sale_amount, category="asset", currency=target_pre.currency, finance_id=fin_rec.id)
+
+                    log_out = InventoryLog(product_name=target_pre.product_name, variant=target_pre.variant, change_amount=-target_pre.quantity, reason="出库", note=f"预出库完成: {target_pre.note}", is_sold=True, sale_amount=target_pre.pre_sale_amount, currency=target_pre.currency, platform="预售转出")
+                    db.add(log_out)
+                    
+                    db.delete(target_pre)
+                    db.commit()
+                    st.toast(f"出库完成！资金已存入 {target_asset_name}", icon="💰")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"操作失败: {e}")
+    else:
+        st.info("当前没有挂起的预出库项目。")
+
+    st.divider()
+
+    # ================= 3. 变动录入表单 =================
+
+    st.subheader("📝 库存变动录入")
+    
+    # 【修改点 1】: 增加日期选择列
+    f_date, f_type, f_var, f_qty, f_remark, f_btn = st.columns([1, 1.1, 1.1, 0.7, 1.2, 0.7])
+    
+    input_date = f_date.date_input("日期", value=date.today())
     move_type = f_type.selectbox("变动类型", ["出库", "入库", "退货入库", "预入库", "预出库", "额外生产入库", "计划入库减少"])
     
     color_options = [c.color_name for c in colors] if selected_product_id and colors else ["通用"]
@@ -335,6 +269,9 @@ def show_inventory_page(db):
     refund_amount = 0.0
     refund_curr = "CNY"
     refund_platform = "其他"
+    
+    cons_cat = "其他成本"
+    cons_content = ""
 
     if move_type == "预出库":
         with extra_info_col:
@@ -345,15 +282,31 @@ def show_inventory_page(db):
 
     elif move_type == "出库":
         with extra_info_col:
-            out_type = st.radio("出库类型", ["售出", "其他"], horizontal=True)
+            out_type = st.radio("出库类型", ["售出", "消耗", "其他"], horizontal=True)
+            
             if out_type == "售出":
                 c1, c2, c3 = st.columns(3)
                 sale_curr = c1.selectbox("币种", ["CNY", "JPY"], key="out_curr")
+                
+                # 根据币种自动切换常用平台
                 pf_options = ["微店", "中国线下", "其他"] if sale_curr == "CNY" else ["Booth", "Instagram", "日本线下", "其他"]
                 sale_platform = c2.selectbox("销售平台", pf_options)
-                unit_price = c3.number_input("单价", min_value=0.0)
-                sale_price = unit_price * input_qty 
-                st.caption(f"💰 总销售额: {sale_price:,.2f} {sale_curr} (自动存入流动资金)")
+                
+                # 【修改点】：这里改为输入总价，而非单价
+                sale_price = c3.number_input("销售总价", min_value=0.0, step=100.0, format="%.2f", help="实际收到的订单总金额")
+                
+                # 自动反算单价供参考
+                if input_qty > 0 and sale_price > 0:
+                    unit_val = sale_price / input_qty
+                    st.caption(f"📊 折合单价: {unit_val:,.2f} {sale_curr}")
+                else:
+                    st.caption(f"💰 资金将存入: 流动资金({sale_curr})")
+
+            elif out_type == "消耗":
+                st.warning(f"⚠️ 注意：选择【消耗】将自动扣减该商品的【可销售数量】。（记入成本但不产生金额）")
+                c_cons1, c_cons2 = st.columns([1, 2])
+                cons_cat = c_cons1.selectbox("计入成本分类", COST_CATEGORIES, index=COST_CATEGORIES.index("宣发费") if "宣发费" in COST_CATEGORIES else 0)
+                cons_content = c_cons2.text_input("消耗内容 (必填)", placeholder="如：宣发样衣、赠送KOL")
 
     elif move_type == "退货入库":
         with extra_info_col:
@@ -365,128 +318,357 @@ def show_inventory_page(db):
 
     elif move_type == "计划入库减少":
         with extra_info_col:
-            st.warning("⚠️ 此操作将减少【预入库】数量，并回滚资产。请确保预入库数量足够扣减。")
+            st.warning("⚠️ 此操作将：1.减少预入库数量 2.回滚资产 3.扣减商品的【可销售数量】。")
+
+    elif move_type == "额外生产入库":
+        with extra_info_col:
+            st.info("💡 此操作将增加库存，并增加商品的【可销售数量】。")
 
     with f_btn:
         st.write("")
         if st.button("提交", type="primary"):
+            is_valid = True
+            
+            # 校验
             if p_name == "暂无产品":
                 st.error("无效产品")
-                st.stop()
+                is_valid = False
 
-            # =======================================================
-            # 【新增校验】: 计划入库减少前的库存检查
-            # =======================================================
-            if move_type == "计划入库减少":
-                # 计算当前款式的“有效预入库数量”
-                # 逻辑与上方表格的统计逻辑一致：只统计状态为 "预入库" 或 "计划入库减少" 的日志
+            if is_valid and move_type == "计划入库减少":
                 current_pre_in_qty = 0
                 check_logs = db.query(InventoryLog).filter(
                     InventoryLog.product_name == p_name,
                     InventoryLog.variant == p_var,
                     or_(InventoryLog.reason == "预入库", InventoryLog.reason == "计划入库减少")
                 ).all()
-                
-                for l in check_logs:
-                    current_pre_in_qty += l.change_amount
+                for l in check_logs: current_pre_in_qty += l.change_amount
                 
                 if current_pre_in_qty <= 0:
-                    st.error(f"❌ 失败：款式【{p_var}】当前没有挂起的预入库数量，无法执行减少操作。")
-                    st.stop()
-                
-                if input_qty > current_pre_in_qty:
+                    st.error(f"❌ 失败：款式【{p_var}】当前没有挂起的预入库数量。")
+                    is_valid = False
+                elif input_qty > current_pre_in_qty:
                     st.error(f"❌ 失败：减少数量 ({input_qty}) 不能超过当前预入库总数 ({current_pre_in_qty})。")
-                    st.stop()
-            # =======================================================
+                    is_valid = False
+            
+            if is_valid and move_type == "出库" and out_type == "消耗":
+                if not cons_content.strip():
+                    st.error("❌ 失败：请填写【消耗内容】。")
+                    is_valid = False
 
-            try:
-                # --- 1. 预出库 ---
-                if move_type == "预出库":
-                    unit_cost = get_unit_cost(db, selected_product_id)
-                    cost_debt_amount = unit_cost * input_qty
-                    debt_name = f"{p_name}-{p_var}-预出库成本"
-                    debt_item = CompanyBalanceItem(name=debt_name, amount=cost_debt_amount, category="liability", currency="CNY")
-                    db.add(debt_item)
-                    db.flush() 
-                    pre_item = PreShippingItem(product_name=p_name, variant=p_var, quantity=input_qty, pre_sale_amount=pre_sale_price, currency=pre_sale_curr, related_debt_id=debt_item.id, note=p_remark)
-                    db.add(pre_item)
-                    st.toast(f"预出库登记成功！", icon="🚚")
+            if is_valid:
+                target_prod_obj = db.query(Product).filter(Product.id == selected_product_id).first()
+                try:
+                    if move_type == "预出库":
+                        unit_cost = get_unit_cost(db, selected_product_id)
+                        cost_debt_amount = unit_cost * input_qty
+                        debt_name = f"{p_name}-{p_var}-预出库成本"
+                        debt_item = CompanyBalanceItem(name=debt_name, amount=cost_debt_amount, category="liability", currency="CNY")
+                        db.add(debt_item)
+                        db.flush() 
+                        # 预出库是待定项，通常不需要指定日期，或者也可以指定创建日期
+                        # 这里我们暂保持默认创建日期，或者也可以传 created_date=input_date
+                        pre_item = PreShippingItem(product_name=p_name, variant=p_var, quantity=input_qty, pre_sale_amount=pre_sale_price, currency=pre_sale_curr, related_debt_id=debt_item.id, note=p_remark)
+                        db.add(pre_item)
+                        st.toast(f"预出库登记成功！", icon="🚚")
 
-                # --- 2. 出库 ---
-                elif move_type == "出库":
-                    is_sold = (out_type == "售出")
-                    final_sale_amount = sale_price if is_sold else 0
-                    log = InventoryLog(product_name=p_name, variant=p_var, change_amount=-input_qty, reason="出库", note=f"{out_type} | {p_remark}", is_sold=is_sold, sale_amount=final_sale_amount, currency=sale_curr if is_sold else None, platform=sale_platform if is_sold else None, is_other_out=not is_sold)
-                    db.add(log)
-                    if is_sold:
-                        fin_rec = FinanceRecord(date=date.today(), amount=final_sale_amount, currency=sale_curr, category="销售收入", description=f"{p_name}-{p_var} 售出 (x{input_qty}) @{sale_platform}")
+                    elif move_type == "出库":
+                        is_sold = (out_type == "售出")
+                        final_sale_amount = sale_price if is_sold else 0
+                        
+                        unit_cost = get_unit_cost(db, selected_product_id)
+                        cost_val = input_qty * unit_cost
+
+                        if out_type == "消耗" and target_prod_obj:
+                            if target_prod_obj.marketable_quantity is None: target_prod_obj.marketable_quantity = target_prod_obj.total_quantity
+                            target_prod_obj.marketable_quantity -= input_qty
+                            
+                            combined_remark = f"款式:{p_var} 数量:{input_qty}"
+                            if p_remark: combined_remark += f" | {p_remark}"
+
+                            new_cost = CostItem(
+                                product_id=selected_product_id,
+                                item_name=cons_content, 
+                                actual_cost=0,          
+                                supplier="",            
+                                category=cons_cat,      
+                                unit_price=0,           
+                                quantity=0,             
+                                unit="",                
+                                remarks=combined_remark 
+                            )
+                            db.add(new_cost)
+                            st.toast(f"可销售数量已减少 {input_qty}，记录已添加至【{cons_cat}】", icon="📉")
+
+                        log_note = f"{out_type} | {p_remark}"
+                        if out_type == "消耗":
+                            log_note = f"消耗: {cons_content} | {p_remark}"
+
+                        # 【修改点 2】: 使用 input_date
+                        log = InventoryLog(product_name=p_name, variant=p_var, change_amount=-input_qty, reason="出库", note=log_note, is_sold=is_sold, sale_amount=final_sale_amount, currency=sale_curr if is_sold else None, platform=sale_platform if is_sold else None, is_other_out=not is_sold, date=input_date)
+                        db.add(log)
+                        
+                        if is_sold:
+                            # 【修改点 3】: 使用 input_date
+                            fin_rec = FinanceRecord(date=input_date, amount=final_sale_amount, currency=sale_curr, category="销售收入", description=f"{p_name}-{p_var} 售出 (x{input_qty}) @{sale_platform}")
+                            db.add(fin_rec)
+                            update_bi_by_name(db, f"流动资金({sale_curr})", final_sale_amount, category="asset", currency=sale_curr, finance_id=fin_rec.id)
+                        
+                        update_bi_by_name(db, f"大货资产-{p_name}", -cost_val)
+                        if out_type != "消耗": 
+                            st.toast(f"出库成功！", icon="📤")
+
+                    elif move_type == "退货入库":
+                        # 【修改点 4】: 使用 input_date
+                        db.add(InventoryLog(product_name=p_name, variant=p_var, change_amount=input_qty, reason="退货入库", note=f"平台: {refund_platform} | {p_remark}", date=input_date, is_sold=True, sale_amount=-refund_amount, currency=refund_curr, platform=refund_platform))
+                        fin_rec = FinanceRecord(date=input_date, amount=-refund_amount, currency=refund_curr, category="销售退款", description=f"{p_name}-{p_var} 退货 (x{input_qty}) | {p_remark}")
                         db.add(fin_rec)
-                        update_bi_by_name(db, f"流动资金({sale_curr})", final_sale_amount, category="asset", currency=sale_curr, finance_id=fin_rec.id)
-                    unit_cost = get_unit_cost(db, selected_product_id)
-                    cost_val = input_qty * unit_cost
-                    update_bi_by_name(db, f"大货资产-{p_name}", -cost_val)
-                    st.toast(f"出库成功！", icon="📤")
+                        update_bi_by_name(db, f"流动资金({refund_curr})", -refund_amount, category="asset", currency=refund_curr)
+                        unit_cost = get_unit_cost(db, selected_product_id)
+                        asset_val = input_qty * unit_cost
+                        update_bi_by_name(db, f"大货资产-{p_name}", asset_val)
+                        st.toast("退货入库完成", icon="↩️")
 
-                # --- 3. 退货入库 ---
-                elif move_type == "退货入库":
-                    db.add(InventoryLog(product_name=p_name, variant=p_var, change_amount=input_qty, reason="退货入库", note=f"平台: {refund_platform} | {p_remark}", date=date.today(), is_sold=True, sale_amount=-refund_amount, currency=refund_curr, platform=refund_platform))
-                    fin_rec = FinanceRecord(date=date.today(), amount=-refund_amount, currency=refund_curr, category="销售退款", description=f"{p_name}-{p_var} 退货 (x{input_qty}) | {p_remark}")
-                    db.add(fin_rec)
-                    update_bi_by_name(db, f"流动资金({refund_curr})", -refund_amount, category="asset", currency=refund_curr)
-                    unit_cost = get_unit_cost(db, selected_product_id)
-                    asset_val = input_qty * unit_cost
-                    update_bi_by_name(db, f"大货资产-{p_name}", asset_val)
-                    st.toast("退货入库完成", icon="↩️")
+                    elif move_type == "计划入库减少":
+                        if target_prod_obj:
+                            if target_prod_obj.marketable_quantity is None: target_prod_obj.marketable_quantity = target_prod_obj.total_quantity
+                            target_prod_obj.marketable_quantity -= input_qty
+                            st.toast(f"可销售数量已减少 {input_qty}", icon="📉")
 
-                # --- 4. 计划入库减少 ---
-                elif move_type == "计划入库减少":
-                    # 1. 记录负向日志，理由为“计划入库减少”
-                    db.add(InventoryLog(product_name=p_name, variant=p_var, change_amount=-input_qty, reason="计划入库减少", note=f"修正预入库: {p_remark}", date=date.today()))
-                    
-                    # 2. 资产回滚：减少预入库资产，增加在制资产冲销(恢复)
-                    unit_cost = get_unit_cost(db, selected_product_id)
-                    val = input_qty * unit_cost
-                    update_bi_by_name(db, f"预入库大货资产-{p_name}", -val)
-                    update_bi_by_name(db, f"在制资产冲销-{p_name}", val)
-                    st.toast(f"预入库数量已减少: {input_qty}", icon="📉")
+                        # 【修改点 5】: 使用 input_date
+                        db.add(InventoryLog(product_name=p_name, variant=p_var, change_amount=-input_qty, reason="计划入库减少", note=f"修正预入库: {p_remark}", date=input_date))
+                        unit_cost = get_unit_cost(db, selected_product_id)
+                        val = input_qty * unit_cost
+                        update_bi_by_name(db, f"预入库大货资产-{p_name}", -val)
+                        update_bi_by_name(db, f"在制资产冲销-{p_name}", val)
+                        st.toast(f"预入库数量已减少: {input_qty}", icon="📉")
 
-                # --- 5. 入库/预入库/额外生产 ---
-                else:
-                    qty_change = input_qty 
-                    db.add(InventoryLog(product_name=p_name, variant=p_var, change_amount=qty_change, reason=move_type, note=p_remark, date=date.today()))
-                    if move_type == "额外生产入库" and selected_product_id:
-                        c_rec = db.query(ProductColor).filter(ProductColor.product_id==selected_product_id, ProductColor.color_name==p_var).first()
-                        if c_rec: 
-                            if c_rec.produced_quantity is None: c_rec.produced_quantity = 0
-                            c_rec.produced_quantity += input_qty
-                    unit_cost = get_unit_cost(db, selected_product_id)
-                    val_change = input_qty * unit_cost
-                    if move_type in ["入库", "额外生产入库"]: update_bi_by_name(db, f"大货资产-{p_name}", val_change)
-                    elif move_type == "预入库": update_bi_by_name(db, f"预入库大货资产-{p_name}", val_change)
-                    st.toast(f"{move_type} 成功", icon="📥")
+                    else:
+                        qty_change = input_qty 
+                        # 【修改点 6】: 使用 input_date (常规入库/额外生产等)
+                        db.add(InventoryLog(product_name=p_name, variant=p_var, change_amount=qty_change, reason=move_type, note=p_remark, date=input_date))
+                        
+                        if move_type == "额外生产入库" and selected_product_id:
+                            c_rec = db.query(ProductColor).filter(ProductColor.product_id==selected_product_id, ProductColor.color_name==p_var).first()
+                            if c_rec: 
+                                if c_rec.produced_quantity is None: c_rec.produced_quantity = 0
+                                c_rec.produced_quantity += input_qty
+                            
+                            if target_prod_obj:
+                                if target_prod_obj.marketable_quantity is None: target_prod_obj.marketable_quantity = target_prod_obj.total_quantity
+                                target_prod_obj.marketable_quantity += input_qty
+                                st.toast(f"可销售数量已增加 {input_qty}", icon="📈")
 
-                db.commit()
-                st.rerun()
+                        unit_cost = get_unit_cost(db, selected_product_id)
+                        val_change = input_qty * unit_cost
+                        if move_type in ["入库", "额外生产入库"]: update_bi_by_name(db, f"大货资产-{p_name}", val_change)
+                        elif move_type == "预入库": update_bi_by_name(db, f"预入库大货资产-{p_name}", val_change)
+                        st.toast(f"{move_type} 成功", icon="📥")
 
-            except Exception as e:
-                db.rollback()
-                st.error(f"操作失败: {e}")
+                    db.commit()
+                    st.rerun()
 
-    # ================= 5. 库存变动记录 =================
-    st.subheader("📜 库存变动记录")
-    logs = db.query(InventoryLog).order_by(InventoryLog.id.desc()).all()
+                except Exception as e:
+                    db.rollback()
+                    st.error(f"操作失败: {e}")
+
+    # ================= 4. 库存变动记录 (可编辑 + 删除) =================
+    st.subheader("📜 库存变动历史记录")
+    
+    # 筛选当前产品相关的日志
+    logs_query = db.query(InventoryLog)
+    if selected_product_id:
+        logs_query = logs_query.filter(InventoryLog.product_name == p_name)
+    
+    logs = logs_query.order_by(InventoryLog.id.desc()).limit(100).all() 
+    
     if logs:
+        # 1. 准备数据给 DataEditor
         log_data = []
         for l in logs:
-            desc = l.note
+            desc = l.note or ""
             if l.is_sold: 
-                if l.change_amount < 0: desc = f"售出: ¥{l.sale_amount}{l.currency} ({l.platform})"
-                else: desc = f"退货: -¥{abs(l.sale_amount)}{l.currency} ({l.platform})"
-            elif l.is_other_out: desc = f"其他出库: {l.note}"
+                prefix = ""
+                if l.change_amount < 0: prefix = f"售出: ¥{l.sale_amount}{l.currency} ({l.platform}) | "
+                else: prefix = f"退货: -¥{abs(l.sale_amount)}{l.currency} ({l.platform}) | "
+                
+                if not desc.startswith("售出:") and not desc.startswith("退货:"):
+                    desc = prefix + desc
+            elif l.is_other_out and not desc.startswith("其他出库:"):
+                desc = f"其他出库: {desc}"
+            
             log_data.append({
-                "日期": l.date, "产品": l.product_name, "款式": l.variant,
-                "数量": l.change_amount, "类型": l.reason, "详情": desc
+                "_id": l.id, 
+                "日期": l.date, 
+                "产品": l.product_name, 
+                "款式": l.variant,
+                "数量": l.change_amount, 
+                "类型": l.reason, 
+                "详情": desc
             })
-        st.dataframe(pd.DataFrame(log_data), use_container_width=True, hide_index=True)
+        
+        df_logs = pd.DataFrame(log_data)
+        
+        # 2. 显示可编辑表格
+        edited_logs = st.data_editor(
+            df_logs,
+            key="log_editor",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "_id": None, # 隐藏 ID
+                "日期": st.column_config.DateColumn(required=True),
+                "产品": st.column_config.TextColumn(disabled=True),
+                "款式": st.column_config.TextColumn(disabled=True),
+                "数量": st.column_config.NumberColumn(disabled=True),
+                "类型": st.column_config.TextColumn(disabled=True),
+                "详情": st.column_config.TextColumn(label="详情 (可编辑备注)", required=False)
+            }
+        )
+        
+        # 3. 处理编辑保存
+        any_change = False
+
+        for index, row in edited_logs.iterrows():
+            log_id = row["_id"]
+            new_date = row["日期"]
+            if isinstance(new_date, pd.Timestamp): new_date = new_date.date()
+            new_note = row["详情"]
+            
+            target_log = db.query(InventoryLog).filter(InventoryLog.id == log_id).first()
+            if target_log:
+                has_change = False
+                if target_log.date != new_date:
+                    target_log.date = new_date; has_change = True
+                
+                if (target_log.note or "") != new_note:
+                     target_log.note = new_note
+                     has_change = True
+                
+                if has_change:
+                    any_change = True
+
+        if any_change:
+            db.commit()
+            st.toast("日志已更新", icon="💾")
+            st.rerun()
+
+        # 4. 删除功能 (带回滚)
+        with st.popover("🗑️ 删除记录 (级联回滚)", use_container_width=True):
+            st.warning("⚠️ 删除操作将自动回滚：库存、资产价值、可销售数量。请谨慎操作！")
+            
+            # 在下拉框中增加备注信息
+            del_options = {f"{l.date} | {l.product_name} {l.variant} ({l.reason} {l.change_amount}) | {l.note or ''}": l.id for l in logs}
+            selected_del_label = st.selectbox("选择要删除的记录", list(del_options.keys()))
+            
+            if st.button("🔴 确认删除并回滚"):
+                log_id = del_options[selected_del_label]
+                log_to_del = db.query(InventoryLog).filter(InventoryLog.id == log_id).first()
+                
+                if log_to_del:
+                    try:
+                        msg_list = []
+                        # 1. 查找对应的产品对象
+                        target_prod = db.query(Product).filter(Product.name == log_to_del.product_name).first()
+                        
+                        if target_prod:
+                            # 2. 恢复可销售数量 (Marketable Quantity)
+                            # 逻辑：'计划入库减少' 录入时是负数 (例如 -5)，删除时我们需要加回 5。
+                            # 公式：qty -= change_amount  =>  qty -= (-5)  =>  qty += 5 (正确)
+                            
+                            # 定义哪些类型需要回滚可销售数量
+                            reasons_affecting_marketable = ["计划入库减少", "额外生产入库"]
+                            
+                            # 特殊判断：如果是出库且备注包含消耗
+                            is_consumable_out = (log_to_del.reason == "出库" and "消耗" in (log_to_del.note or ""))
+                            
+                            if log_to_del.reason in reasons_affecting_marketable or is_consumable_out:
+                                if target_prod.marketable_quantity is None: 
+                                    target_prod.marketable_quantity = target_prod.total_quantity
+                                
+                                old_mq = target_prod.marketable_quantity
+                                target_prod.marketable_quantity -= log_to_del.change_amount
+                                msg_list.append(f"可售数量 {old_mq} -> {target_prod.marketable_quantity}")
+                        else:
+                            st.error(f"⚠️ 未找到名为 {log_to_del.product_name} 的产品，跳过可售数量回滚。")
+
+                        # 3. 恢复资产 (Company Balance)
+                        # 计算单价 (为了回滚资产价值)
+                        unit_cost = get_unit_cost(db, target_prod.id) if target_prod else 0
+                        asset_delta = log_to_del.change_amount * unit_cost
+                        
+                        if log_to_del.reason in ["入库", "额外生产入库", "退货入库"]:
+                            # 入库增加了资产，删除时要减去
+                            update_bi_by_name(db, f"大货资产-{log_to_del.product_name}", -asset_delta)
+                            msg_list.append("大货资产已回滚")
+                        
+                        elif log_to_del.reason == "出库":
+                            # A. 恢复库存资产 (原有逻辑)
+                            update_bi_by_name(db, f"大货资产-{log_to_del.product_name}", -asset_delta)
+                            msg_list.append("大货资产已回滚")
+                            
+                            # === 【新增】B. 如果是售出，回滚资金 ===
+                            if log_to_del.is_sold:
+                                # 1. 尝试找到对应的财务流水
+                                # 匹配条件：日期相同 + 金额相同 + 描述包含产品名 + 类型为销售收入
+                                target_fin = db.query(FinanceRecord).filter(
+                                    FinanceRecord.date == log_to_del.date,
+                                    FinanceRecord.amount == log_to_del.sale_amount, # 精确匹配金额
+                                    FinanceRecord.category == "销售收入",
+                                    FinanceRecord.description.like(f"%{log_to_del.product_name}%") # 描述包含产品名
+                                ).first()
+                                
+                                if target_fin:
+                                    # 2. 扣减流动资金
+                                    # 注意：get_cash_asset 是 finance_view 的函数，这里我们需要手动查一下
+                                    # 或者直接按名字查（因为我们知道币种）
+                                    cash_name = f"流动资金({log_to_del.currency})"
+                                    cash_item = db.query(CompanyBalanceItem).filter(
+                                        CompanyBalanceItem.name.like("流动资金%"),
+                                        CompanyBalanceItem.currency == log_to_del.currency
+                                    ).first()
+                                    
+                                    if cash_item:
+                                        cash_item.amount -= target_fin.amount
+                                        msg_list.append(f"流动资金已扣除 {target_fin.amount}")
+                                    
+                                    # 3. 删除财务流水
+                                    db.delete(target_fin)
+                                    msg_list.append("关联销售流水已删除")
+                                else:
+                                    st.warning("⚠️ 未找到完全匹配的财务流水，请手动前往【财务流水】删除对应收入。")
+
+                            # C. 如果是消耗，回滚成本 (原有逻辑)
+                            if "消耗:" in (log_to_del.note or ""):
+                                try:
+                                    content_part = log_to_del.note.split("|")[0].replace("消耗:", "").replace("内部消耗:", "").strip()
+                                    target_cost = db.query(CostItem).filter(
+                                        CostItem.product_id == target_prod.id,
+                                        CostItem.actual_cost == 0,
+                                        CostItem.item_name.like(f"%{content_part}%")
+                                    ).first()
+                                    if target_cost:
+                                        db.delete(target_cost)
+                                        msg_list.append("关联成本记录已删除")
+                                except:
+                                    pass
+
+                        elif log_to_del.reason in ["预入库", "计划入库减少"]:
+                            # 预入库/计划减少 影响的是 预入库资产 和 冲销项
+                            # 逻辑：asset_delta 为负 (例如 -5 * cost)，我们需要减去这个负值 (即加上价值)
+                            update_bi_by_name(db, f"预入库大货资产-{log_to_del.product_name}", -asset_delta)
+                            update_bi_by_name(db, f"在制资产冲销-{log_to_del.product_name}", asset_delta)
+                            msg_list.append("预入库/冲销资产已回滚")
+
+                        # 5. 删除日志本身
+                        db.delete(log_to_del)
+                        db.commit()
+                        
+                        full_msg = " | ".join(msg_list)
+                        st.success(f"删除成功！\n{full_msg}")
+                        st.rerun()
+                        
+                    except Exception as e:
+                        db.rollback()
+                        st.error(f"删除失败: {e}")
     else:
         st.info("暂无记录")
