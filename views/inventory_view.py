@@ -200,7 +200,7 @@ def show_inventory_page(db):
     # ================= 2. 预出库列表管理 =================
     st.subheader("🚚 预出库/待发货管理")
     st.caption("修改下方【数量】或【预售额】将自动同步至账面资产负债表。")
-    pre_items = db.query(PreShippingItem).all()
+    pre_items = db.query(PreShippingItem).filter(PreShippingItem.product_name == p_name).all()
     
     if pre_items:
         pre_data_list = []
