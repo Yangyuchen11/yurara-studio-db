@@ -276,48 +276,61 @@ def show_inventory_page(db):
                 st.toast("预出库信息及账面数据已同步更新", icon="💾")
                 st.rerun()
         
-    c_p1, c_p2 = st.columns([3, 1])
-    pre_item_labels = {
-        p.id: f"{p.created_date} | {p.product_name}-{p.variant} (Qty:{p.quantity}) | 📝{p.note or ''}"
-        for p in pre_items
-    }
-    
-    selected_pre_id = c_p1.selectbox(
-        "选择要完成发货的订单", 
-        options=list(pre_item_labels.keys()), 
-        format_func=lambda x: pre_item_labels.get(x, "未知订单")
-    ) 
-    if c_p2.button("✅ 出库完成 (转收入)", type="primary"):
-            target_pre = db.query(PreShippingItem).filter(PreShippingItem.id == selected_pre_id).first()
-            if target_pre:
-                try:
-                    # 1. 删除关联的成本债务 (负债)
-                    if target_pre.related_debt_id:
-                        debt_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == target_pre.related_debt_id).first()
-                        if debt_item: db.delete(debt_item) 
-                    
-                    # 2. 删除关联的预售资产 (预计收入) - 新增逻辑
-                    asset_name = f"{target_pre.product_name}-{target_pre.variant}-预计收入(预售)"
-                    asset_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
-                    if asset_item: db.delete(asset_item)
-                    
-                    # 预出库转完成，这里默认使用今天，因为是点击完成的动作
-                    fin_rec = FinanceRecord(date=date.today(), amount=target_pre.pre_sale_amount, currency=target_pre.currency, category="销售收入", description=f"预出库转实销: {target_pre.product_name}-{target_pre.variant} (x{target_pre.quantity})")
-                    db.add(fin_rec)
-                    db.flush()
-                    
-                    target_asset_name = f"流动资金({target_pre.currency})"
-                    update_bi_by_name(db, target_asset_name, target_pre.pre_sale_amount, category="asset", currency=target_pre.currency, finance_id=fin_rec.id)
+        c_p1, c_p2 = st.columns([3.5, 1], vertical_alignment="bottom")
+        
+        with c_p1:
+            # 构建带备注的选项字典
+            pre_item_labels = {
+                p.id: f"{p.created_date} | {p.product_name}-{p.variant} (Qty:{p.quantity}) | 📝{p.note or ''}"
+                for p in pre_items
+            }
+            
+            selected_pre_id = st.selectbox(
+                "选择要完成发货的订单", 
+                options=list(pre_item_labels.keys()), 
+                format_func=lambda x: pre_item_labels.get(x, "未知订单"),
+                key="sel_pre_ship_order" # 增加 key 避免冲突
+            )
+            
+        with c_p2:
+            # 如果你的 Streamlit 版本报错不支持 vertical_alignment，
+            # 请删除上面的 vertical_alignment="bottom"，并取消下面两行注释来手动对齐：
+            # st.write("") 
+            # st.write("") 
+            
+            if st.button("✅ 出库完成 (转收入)", type="primary", use_container_width=True):
+                target_pre = db.query(PreShippingItem).filter(PreShippingItem.id == selected_pre_id).first()
+                if target_pre:
+                    try:
+                        # 1. 删除关联的成本债务 (负债)
+                        if target_pre.related_debt_id:
+                            debt_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == target_pre.related_debt_id).first()
+                            if debt_item: db.delete(debt_item) 
+                        
+                        # 2. 删除关联的预售资产 (预计收入)
+                        asset_name = f"{target_pre.product_name}-{target_pre.variant}-预计收入(预售)"
+                        asset_item = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
+                        if asset_item: db.delete(asset_item)
+                        
+                        # 3. 记录收入并增加现金资产
+                        fin_rec = FinanceRecord(date=date.today(), amount=target_pre.pre_sale_amount, currency=target_pre.currency, category="销售收入", description=f"预出库转实销: {target_pre.product_name}-{target_pre.variant} (x{target_pre.quantity})")
+                        db.add(fin_rec)
+                        db.flush()
+                        
+                        target_asset_name = f"流动资金({target_pre.currency})"
+                        update_bi_by_name(db, target_asset_name, target_pre.pre_sale_amount, category="asset", currency=target_pre.currency, finance_id=fin_rec.id)
 
-                    log_out = InventoryLog(product_name=target_pre.product_name, variant=target_pre.variant, change_amount=-target_pre.quantity, reason="出库", note=f"预出库完成: {target_pre.note}", is_sold=True, sale_amount=target_pre.pre_sale_amount, currency=target_pre.currency, platform="预售转出")
-                    db.add(log_out)
-                    
-                    db.delete(target_pre)
-                    db.commit()
-                    st.toast(f"出库完成！资金已存入 {target_asset_name}", icon="💰")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"操作失败: {e}")
+                        # 4. 记录出库日志
+                        log_out = InventoryLog(product_name=target_pre.product_name, variant=target_pre.variant, change_amount=-target_pre.quantity, reason="出库", note=f"预出库完成: {target_pre.note}", is_sold=True, sale_amount=target_pre.pre_sale_amount, currency=target_pre.currency, platform="预售转出")
+                        db.add(log_out)
+                        
+                        # 5. 删除预出库条目
+                        db.delete(target_pre)
+                        db.commit()
+                        st.toast(f"出库完成！资金已存入 {target_asset_name}", icon="💰")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"操作失败: {e}")
     else:
         st.info("当前没有挂起的预出库项目。")
 
