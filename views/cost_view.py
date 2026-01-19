@@ -505,7 +505,7 @@ def show_cost_page(db):
         
         # 【关键修正】定义哪些操作属于“实物”变动，排除“预入库”
         # 对应 Inventory View 中的 real_stock_map 逻辑
-        real_stock_reasons = ["入库", "出库", "额外生产入库", "退货入库"]
+        real_stock_reasons = ["入库", "出库", "额外生产入库", "退货入库", "发货撤销"]
         
         for l in stock_logs:
             if l.reason in real_stock_reasons:
