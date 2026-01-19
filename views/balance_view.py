@@ -88,7 +88,7 @@ def show_balance_page(db, exchange_rate):
     cash_cny = sum([r.amount for r in finance_records if r.currency == 'CNY'])
     cash_jpy = sum([r.amount for r in finance_records if r.currency == 'JPY'])
     
-    # 【修改点 1】: 固定资产 (分别统计 CNY 和 JPY)
+    # 固定资产 (分别统计 CNY 和 JPY)
     fixed_total_cny = 0.0
     fixed_total_jpy = 0.0
     for fa in fixed_assets:
@@ -99,7 +99,7 @@ def show_balance_page(db, exchange_rate):
         else:
             fixed_total_cny += val_origin
 
-    # 【修改点 2】: 耗材/其他资产 (分别统计 CNY 和 JPY)
+    # 耗材/其他资产 (分别统计 CNY 和 JPY)
     consumable_total_cny = 0.0
     consumable_total_jpy = 0.0
     for c in consumables:
@@ -133,10 +133,8 @@ def show_balance_page(db, exchange_rate):
             wip_final_list.append((p_name, net_wip))
             wip_total_cny += net_wip
 
-    # 【修改点 3】: 汇总逻辑调整
-    # total_asset_cny 仅包含人民币资产 (现金+固定+耗材+手动+WIP)
+    # 汇总逻辑调整
     total_asset_cny = cash_cny + fixed_total_cny + consumable_total_cny + manual_asset_cny + wip_total_cny
-    # total_asset_jpy 仅包含日元资产 (现金+固定+耗材+手动)
     total_asset_jpy = cash_jpy + fixed_total_jpy + consumable_total_jpy + manual_asset_jpy
 
     # --- B. 负债 & C. 资本 & D. 净资产 ---
@@ -181,6 +179,32 @@ def show_balance_page(db, exchange_rate):
         </div>
         """
 
+    # === 辅助函数：聚合相同名称的项目 ===
+    def get_aggregated_display_data(items_list):
+        grouped = {}
+        for item in items_list:
+            if abs(item.amount) < 0.01: continue
+            
+            name = item.name
+            if name not in grouped:
+                grouped[name] = {"CNY": 0.0, "JPY": 0.0}
+            
+            if item.currency == "CNY":
+                grouped[name]["CNY"] += item.amount
+            elif item.currency == "JPY":
+                grouped[name]["JPY"] += item.amount
+        
+        result = []
+        for name, amts in grouped.items():
+            cny_val = amts["CNY"]
+            jpy_val = amts["JPY"]
+            result.append({
+                "项目": name,
+                "CNY": f"{cny_val:,.2f}" if abs(cny_val) > 0 else "-",
+                "JPY": f"{jpy_val:,.0f}" if abs(jpy_val) > 0 else "-"
+            })
+        return result
+
     # ================= 3. 界面渲染 =================
     col_left, col_right = st.columns([1.1, 1])
 
@@ -190,24 +214,22 @@ def show_balance_page(db, exchange_rate):
         
         asset_data = []
         # 1. 自动项 (流动资金)
-        if cash_cny != 0: asset_data.append({"项目": "流动资金(CNY)", "CNY": f"{cash_cny:,.2f}", "JPY": "-", "_id": "a1", "_type": "auto"})
-        if cash_jpy != 0: asset_data.append({"项目": "流动资金(JPY)", "CNY": "-", "JPY": f"{cash_jpy:,.0f}", "_id": "a2", "_type": "auto"})
+        if cash_cny != 0: asset_data.append({"项目": "流动资金(CNY)", "CNY": f"{cash_cny:,.2f}", "JPY": "-"})
+        if cash_jpy != 0: asset_data.append({"项目": "流动资金(JPY)", "CNY": "-", "JPY": f"{cash_jpy:,.0f}"})
         
-        # 2. 自动项 (固定资产 & 其他资产) - 【修改点 4】: 双币种同显
+        # 2. 自动项 (固定资产 & 其他资产)
         if fixed_total_cny > 0 or fixed_total_jpy > 0: 
             asset_data.append({
                 "项目": "固定资产(设备)", 
                 "CNY": f"{fixed_total_cny:,.2f}", 
-                "JPY": f"{fixed_total_jpy:,.0f}" if fixed_total_jpy > 0 else "-", 
-                "_id": "a3", "_type": "auto"
+                "JPY": f"{fixed_total_jpy:,.0f}" if fixed_total_jpy > 0 else "-"
             })
             
         if consumable_total_cny > 0 or consumable_total_jpy > 0: 
             asset_data.append({
                 "项目": "其他资产", 
                 "CNY": f"{consumable_total_cny:,.2f}", 
-                "JPY": f"{consumable_total_jpy:,.0f}" if consumable_total_jpy > 0 else "-", 
-                "_id": "a4", "_type": "auto"
+                "JPY": f"{consumable_total_jpy:,.0f}" if consumable_total_jpy > 0 else "-"
             })
         
         # 3. 净 WIP 资产
@@ -215,22 +237,15 @@ def show_balance_page(db, exchange_rate):
             asset_data.append({
                 "项目": f"📦 在制资产-{p_name}", 
                 "CNY": f"{net_val:,.2f}", 
-                "JPY": "-", 
-                "状态": "自动计算"
+                "JPY": "-"
             })
 
-        # 4. 手动项 (其他资产)
-        for item in assets_manual:
-            if abs(item.amount) < 0.01:
-                continue
-            cny = item.amount if item.currency == 'CNY' else 0
-            jpy = item.amount if item.currency == 'JPY' else 0
-            asset_data.append({
-                "项目": item.name, "CNY": f"{cny:,.2f}" if cny else "-", "JPY": f"{jpy:,.0f}" if jpy else "-", "状态": "手动录入"
-            })
+        # 4. 手动项 (其他资产) - 【已修改】应用聚合逻辑
+        manual_display = get_aggregated_display_data(assets_manual)
+        asset_data.extend(manual_display)
 
         if asset_data:
-            st.dataframe(pd.DataFrame(asset_data)[["项目", "CNY", "JPY"]], use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(asset_data), use_container_width=True, hide_index=True)
         else:
             st.info("暂无资产")
 
@@ -242,27 +257,25 @@ def show_balance_page(db, exchange_rate):
     # ---------------- 右侧：负债与资本展示 ----------------
     with col_right:
         st.subheader("📉 负债 (Liabilities)")
-        liab_data = []
-        for item in liabilities:
-            cny = item.amount if item.currency == 'CNY' else 0
-            jpy = item.amount if item.currency == 'JPY' else 0
-            liab_data.append({"项目": item.name, "CNY": f"{cny:,.2f}" if cny else "-", "JPY": f"{jpy:,.0f}" if jpy else "-"})
-
-        if liab_data:
-            st.dataframe(pd.DataFrame(liab_data), use_container_width=True, hide_index=True)
+        # 【已修改】应用聚合逻辑
+        liab_display = get_aggregated_display_data(liabilities)
         
+        if liab_display:
+            st.dataframe(pd.DataFrame(liab_display), use_container_width=True, hide_index=True)
+        else:
+            if not liab_display: st.caption("暂无负债")
+
         st.markdown(get_summary_html("负债总计", total_liab_cny, total_liab_jpy, exchange_rate, "orange"), unsafe_allow_html=True)
 
         st.divider()
 
         st.subheader("🏛️ 资本 (Equity)")
-        eq_data = []
-        for item in equities:
-            cny = item.amount if item.currency == 'CNY' else 0
-            jpy = item.amount if item.currency == 'JPY' else 0
-            eq_data.append({"项目": item.name, "CNY": f"{cny:,.2f}" if cny else "-", "JPY": f"{jpy:,.0f}" if jpy else "-"})
+        # 【已修改】应用聚合逻辑
+        eq_display = get_aggregated_display_data(equities)
 
-        if eq_data:
-            st.dataframe(pd.DataFrame(eq_data), use_container_width=True, hide_index=True)
+        if eq_display:
+            st.dataframe(pd.DataFrame(eq_display), use_container_width=True, hide_index=True)
+        else:
+            if not eq_display: st.caption("暂无资本记录")
         
         st.markdown(get_summary_html("资本总计", total_eq_cny, total_eq_jpy, exchange_rate, "green"), unsafe_allow_html=True)

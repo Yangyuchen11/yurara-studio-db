@@ -137,11 +137,31 @@ def show_product_page(db):
             target_prod = db.query(Product).filter(Product.id == selected_prod_id).first()
             
             if target_prod:
+                if st.session_state.get("last_edited_prod_id") != target_prod.id:
+                    st.session_state["edit_name"] = target_prod.name
+                    
+                    # 这里的 key 要和你下面 selectbox 的 key 对应
+                    # 注意：selectbox 存的是 index，不是字符串，需要做一点处理
+                    # 但 Streamlit 的 selectbox 比较智能，如果 value 在 options 里，可以直接赋值
+                    st.session_state["edit_platform"] = target_prod.target_platform
+                    
+                    # 强制刷新所有价格框
+                    st.session_state["edit_p_w"] = target_prod.price_weidian
+                    st.session_state["edit_p_cn"] = target_prod.price_offline_cn
+                    st.session_state["edit_p_other"] = target_prod.price_other
+                    
+                    st.session_state["edit_p_b"] = target_prod.price_booth
+                    st.session_state["edit_p_insta"] = getattr(target_prod, 'price_instagram', 0.0)
+                    st.session_state["edit_p_jp"] = target_prod.price_offline_jp
+                    st.session_state["edit_p_other_jpy"] = getattr(target_prod, 'price_other_jpy', 0.0)
+                    
+                    # 更新“上次编辑ID”，防止无限刷新
+                    st.session_state["last_edited_prod_id"] = target_prod.id
                 st.divider()
                 
                 # --- A. 基础信息 ---
                 ec1, ec2 = st.columns(2)
-                edit_name = ec1.text_input("产品名称", value=target_prod.name, key="edit_name")
+                edit_name = ec1.text_input("修改产品名称", value=target_prod.name, help="如果需要重命名产品，请在此修改")
                 
                 platform_idx = 0
                 if target_prod.target_platform in platform_options:

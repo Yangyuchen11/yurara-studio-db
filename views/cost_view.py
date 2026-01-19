@@ -291,8 +291,41 @@ def show_cost_page(db):
                                 db.commit()
                                 st.rerun()
 
+                # 1. 计算小计实付 (所有项目的 actual_cost 之和)
                 cat_total_real = sum([i.actual_cost for i in cat_items])
-                st.caption(f"小计实付: ¥ {cat_total_real:,.2f}")
+
+                # 2. 计算小计预算 (混合逻辑：优先预算，无预算则取实付)
+                cat_budget_map = {}
+                
+                # A. 先提取该分类下所有的“显式预算”
+                for i in cat_items:
+                    if i.supplier == "预算设定":
+                        # 如果有重复名字的预算，累加金额
+                        current_val = i.unit_price * i.quantity
+                        cat_budget_map[i.item_name] = cat_budget_map.get(i.item_name, 0) + current_val
+                
+                cat_total_budget = sum(cat_budget_map.values())
+
+                # B. 遍历“实付项”，填补没有预算的空缺
+                for i in cat_items:
+                    if i.supplier != "预算设定":
+                        # 如果这个项目名称不在预算表里，说明是计划外支出，预算额 = 实付额
+                        if i.item_name not in cat_budget_map:
+                            cat_total_budget += i.actual_cost
+
+                # 3. 计算单价 (使用 make_qty)
+                cat_unit_real = cat_total_real / make_qty if make_qty > 0 else 0
+                cat_unit_budget = cat_total_budget / make_qty if make_qty > 0 else 0
+
+                # 4. 四列展示
+                sub_c1, sub_c2, sub_c3, sub_c4 = st.columns(4)
+                
+                sub_c1.caption(f"**小计实付**: ¥ {cat_total_real:,.2f}")
+                sub_c2.caption(f"实付单价: ¥ {cat_unit_real:,.2f}")
+                
+                sub_c3.caption(f"**小计预算**: ¥ {cat_total_budget:,.2f}")
+                sub_c4.caption(f"预算单价: ¥ {cat_unit_budget:,.2f}")
+                
                 st.divider()
 
         if not has_data:
