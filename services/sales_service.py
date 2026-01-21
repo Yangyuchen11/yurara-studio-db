@@ -2,6 +2,7 @@
 import pandas as pd
 from sqlalchemy import or_
 from models import InventoryLog
+from constants import Currency, StockLogReason
 
 class SalesService:
     """
@@ -17,7 +18,7 @@ class SalesService:
         return db.query(InventoryLog).filter(
             or_(
                 InventoryLog.is_sold == True, 
-                InventoryLog.reason == "发货撤销"
+                InventoryLog.reason == StockLogReason.UNDO_SHIP
             )
         ).order_by(InventoryLog.id.asc()).all()
 
@@ -47,7 +48,7 @@ class SalesService:
                 "product": log.product_name,
                 "variant": log.variant,
                 "platform": log.platform or "其他/未知", # 默认填充
-                "currency": log.currency or "CNY",
+                "currency": log.currency or Currency.CNY,
                 "qty": 0,
                 "amount": 0.0,
                 "type": "unknown"
@@ -110,7 +111,7 @@ class SalesService:
             
         # 按产品聚合
         df_prod_summary = df.groupby('product').agg({
-            'amount': lambda x: x[df['currency'] == 'CNY'].sum(), # 简便起见，榜单仅按CNY排序
+            'amount': lambda x: x[df['currency'] == Currency.CNY].sum(), # 简便起见，榜单仅按CNY排序
             'qty': 'sum'
         }).reset_index().rename(columns={'amount': 'CNY总额', 'qty': '净销量'})
         
