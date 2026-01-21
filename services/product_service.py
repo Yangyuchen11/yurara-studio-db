@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session, joinedload
 from models import Product, ProductColor, ProductPrice
+from constants import PLATFORM_CURRENCY_MAP
 
 class ProductService:
     def __init__(self, db: Session):
@@ -30,33 +31,22 @@ class ProductService:
         策略：删除旧价格 -> 写入新价格
         prices_dict: {'weidian': 100, 'booth': 200, ...}
         """
-        # 1. 定义平台与币种的映射关系
-        # (平台代码, 币种)
-        platform_map = {
-            "weidian": "CNY",
-            "offline_cn": "CNY",
-            "other": "CNY",
-            "booth": "JPY",
-            "instagram": "JPY",
-            "offline_jp": "JPY",
-            "other_jpy": "JPY"
-        }
-
-        # 2. 删除旧价格
+        # 1. 删除旧价格
         self.db.query(ProductPrice).filter(ProductPrice.product_id == product_id).delete()
 
-        # 3. 写入新价格
+        # 2. 写入新价格
         for pf_key, price_val in prices_dict.items():
             # 只有金额 > 0 才存入数据库 (节省空间)
             if price_val and float(price_val) > 0:
-                currency = platform_map.get(pf_key, "CNY")
-                new_price = ProductPrice(
-                    product_id=product_id,
-                    platform=pf_key,
-                    currency=currency,
-                    price=float(price_val)
-                )
-                self.db.add(new_price)
+                currency = PLATFORM_CURRENCY_MAP.get(pf_key)
+                if currency:  # 只有在映射中存在的平台才写入
+                    new_price = ProductPrice(
+                        product_id=product_id,
+                        platform=pf_key,
+                        currency=currency,
+                        price=float(price_val)
+                    )
+                    self.db.add(new_price)
 
     def create_product(self, name, platform, prices, colors):
         """
