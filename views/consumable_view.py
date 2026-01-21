@@ -2,14 +2,15 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 from services.consumable_service import ConsumableService
+from constants import PRODUCT_COST_CATEGORIES
 
 def show_other_asset_page(db, exchange_rate):
     st.header("📦 其他资产管理")
     
     service = ConsumableService(db)
-    
+
     # 定义与成本核算一致的分类列表
-    COST_CATEGORIES = ["大货材料费", "大货加工费", "物流邮费", "包装费", "设计开发费", "检品发货等人工费", "宣发费", "其他成本"]
+    COST_CATEGORIES = PRODUCT_COST_CATEGORIES
     
     # === 1. 库存操作区 ===
     with st.container(border=True):
