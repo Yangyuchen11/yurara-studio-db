@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 from services.inventory_service import InventoryService
+from constants import PRODUCT_COST_CATEGORIES, StockLogReason
 
 def show_inventory_page(db):
     st.header("📦 库存管理")
@@ -194,9 +195,9 @@ def show_inventory_page(db):
     st.subheader("📝 库存变动录入")
     
     f_date, f_type, f_var, f_qty, f_remark, f_btn = st.columns([1, 1.1, 1.1, 0.7, 1.2, 0.7])
-    
+
     input_date = f_date.date_input("日期", value=date.today())
-    move_type = f_type.selectbox("变动类型", ["出库", "入库", "退货入库", "预入库", "额外生产入库", "计划入库减少"])
+    move_type = f_type.selectbox("变动类型", [StockLogReason.OUT_STOCK, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.PRE_IN, StockLogReason.EXTRA_PROD, StockLogReason.PRE_IN_REDUCE])
     
     color_options = [c.color_name for c in colors] if selected_product_id and colors else ["通用"]
     p_var = f_var.selectbox("款式", color_options)
@@ -216,7 +217,7 @@ def show_inventory_page(db):
     cons_cat = "其他成本"
     cons_content = ""
 
-    if move_type == "出库":
+    if move_type == StockLogReason.OUT_STOCK:
         with extra_info_col:
             out_type = st.radio("出库类型", ["售出", "消耗", "其他"], horizontal=True)
             if out_type == "售出":
@@ -236,7 +237,7 @@ def show_inventory_page(db):
                 cons_cat = c_cons1.selectbox("计入成本分类", service.COST_CATEGORIES, index=service.COST_CATEGORIES.index("宣发费") if "宣发费" in service.COST_CATEGORIES else 0)
                 cons_content = c_cons2.text_input("消耗内容 (必填)", placeholder="如：宣发样衣、赠送KOL")
 
-    elif move_type == "退货入库":
+    elif move_type == StockLogReason.RETURN_IN:
         with extra_info_col:
             st.info("💡 退货入库：增加库存，同时从流动资金中扣除退款。")
             rc1, rc2, rc3 = st.columns(3)
@@ -249,7 +250,7 @@ def show_inventory_page(db):
         if st.button("提交", type="primary"):
             if p_name == "暂无产品":
                 st.error("无效产品")
-            elif move_type == "出库" and out_type == "消耗" and not cons_content.strip():
+            elif move_type == StockLogReason.OUT_STOCK and out_type == "消耗" and not cons_content.strip():
                 st.error("❌ 失败：请填写【消耗内容】。")
             else:
                 try:
@@ -274,7 +275,7 @@ def show_inventory_page(db):
                     # 提交事务
                     service.commit()
                     
-                    icon_map = {"出库": "📤", "入库": "📥", "退货入库": "↩️", "预入库": "📥", "计划入库减少": "📉", "额外生产入库": "📥"}
+                    icon_map = {StockLogReason.OUT_STOCK: "📤", StockLogReason.IN_STOCK: "📥", StockLogReason.RETURN_IN: "↩️", StockLogReason.PRE_IN: "📥", StockLogReason.PRE_IN_REDUCE: "📉", StockLogReason.EXTRA_PROD: "📥"}
                     st.toast(msg, icon=icon_map.get(move_type, "✅"))
                     st.rerun()
                 except ValueError as ve:
