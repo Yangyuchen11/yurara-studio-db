@@ -1,6 +1,7 @@
 # services/balance_service.py
 from sqlalchemy import func
 from models import CompanyBalanceItem, FixedAsset, ConsumableItem, FinanceRecord, Product, CostItem
+from constants import AssetPrefix, BalanceCategory, Currency
 
 class BalanceService:
     """
@@ -17,9 +18,9 @@ class BalanceService:
         deletable = []
         for i in all_items:
             # 排除自动生成的特殊项
-            if i.name and (i.name.startswith("在制资产冲销-") or 
-                           i.name.startswith("预入库大货资产-") or 
-                           i.name.startswith("大货资产-")):
+            if i.name and (i.name.startswith(AssetPrefix.WIP_OFFSET) or
+                           i.name.startswith(AssetPrefix.PRE_STOCK) or
+                           i.name.startswith(AssetPrefix.STOCK)):
                 continue
             deletable.append(i)
         return deletable
@@ -59,16 +60,16 @@ class BalanceService:
         # --- B. 计算各类具体资产 ---
         
         # 1. 现金 (Flowing Cash) - 从流水记录累加
-        cash_cny = sum(r.amount for r in finance_records if r.currency == 'CNY')
-        cash_jpy = sum(r.amount for r in finance_records if r.currency == 'JPY')
+        cash_cny = sum(r.amount for r in finance_records if r.currency == Currency.CNY)
+        cash_jpy = sum(r.amount for r in finance_records if r.currency == Currency.JPY)
 
         # 2. 固定资产 (按币种汇总剩余价值)
-        fixed_cny = sum(fa.unit_price * fa.remaining_qty for fa in fixed_assets if getattr(fa, 'currency', 'CNY') != 'JPY')
-        fixed_jpy = sum(fa.unit_price * fa.remaining_qty for fa in fixed_assets if getattr(fa, 'currency', 'CNY') == 'JPY')
+        fixed_cny = sum(fa.unit_price * fa.remaining_qty for fa in fixed_assets if getattr(fa, 'currency', Currency.CNY) != Currency.JPY)
+        fixed_jpy = sum(fa.unit_price * fa.remaining_qty for fa in fixed_assets if getattr(fa, 'currency', Currency.CNY) == Currency.JPY)
 
         # 3. 耗材/其他资产
-        cons_cny = sum(c.unit_price * c.remaining_qty for c in consumables if getattr(c, 'currency', 'CNY') != 'JPY')
-        cons_jpy = sum(c.unit_price * c.remaining_qty for c in consumables if getattr(c, 'currency', 'CNY') == 'JPY')
+        cons_cny = sum(c.unit_price * c.remaining_qty for c in consumables if getattr(c, 'currency', Currency.CNY) != Currency.JPY)
+        cons_jpy = sum(c.unit_price * c.remaining_qty for c in consumables if getattr(c, 'currency', Currency.CNY) == Currency.JPY)
 
         # 4. 手动资产、负债、资本分类
         manual_assets = []
@@ -77,16 +78,16 @@ class BalanceService:
         equities = []
 
         for i in all_balance_items:
-            if i.category == 'liability':
+            if i.category == BalanceCategory.LIABILITY:
                 liabilities.append(i)
-            elif i.category == 'equity':
+            elif i.category == BalanceCategory.EQUITY:
                 equities.append(i)
-            elif i.category == 'asset':
-                if i.name and i.name.startswith("在制资产冲销-"):
+            elif i.category == BalanceCategory.ASSET:
+                if i.name and i.name.startswith(AssetPrefix.WIP_OFFSET):
                     offset_items.append(i)
                 # 排除预入库和自动生成的流动资金（因为流动资金是上面算出来的）
-                elif i.name and (i.name.startswith("预入库大货资产-") or i.name.startswith("流动资金")):
-                    continue 
+                elif i.name and (i.name.startswith(AssetPrefix.PRE_STOCK) or i.name.startswith(AssetPrefix.CASH)):
+                    continue
                 else:
                     manual_assets.append(i)
 
@@ -114,20 +115,20 @@ class BalanceService:
         # --- C. 汇总计算 ---
         
         # 手动资产总额
-        manual_cny = sum(i.amount for i in manual_assets if i.currency == 'CNY')
-        manual_jpy = sum(i.amount for i in manual_assets if i.currency == 'JPY')
+        manual_cny = sum(i.amount for i in manual_assets if i.currency == Currency.CNY)
+        manual_jpy = sum(i.amount for i in manual_assets if i.currency == Currency.JPY)
 
         # 资产总计
         total_asset_cny = cash_cny + fixed_cny + cons_cny + manual_cny + wip_total_cny
         total_asset_jpy = cash_jpy + fixed_jpy + cons_jpy + manual_jpy
 
         # 负债总计
-        total_liab_cny = sum(i.amount for i in liabilities if i.currency == 'CNY')
-        total_liab_jpy = sum(i.amount for i in liabilities if i.currency == 'JPY')
+        total_liab_cny = sum(i.amount for i in liabilities if i.currency == Currency.CNY)
+        total_liab_jpy = sum(i.amount for i in liabilities if i.currency == Currency.JPY)
 
         # 资本总计
-        total_eq_cny = sum(i.amount for i in equities if i.currency == 'CNY')
-        total_eq_jpy = sum(i.amount for i in equities if i.currency == 'JPY')
+        total_eq_cny = sum(i.amount for i in equities if i.currency == Currency.CNY)
+        total_eq_jpy = sum(i.amount for i in equities if i.currency == Currency.JPY)
 
         # 净资产
         net_cny = total_asset_cny - total_liab_cny
