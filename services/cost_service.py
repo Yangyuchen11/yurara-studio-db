@@ -2,14 +2,15 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import date
 from models import Product, CostItem, FinanceRecord, CompanyBalanceItem, InventoryLog
+from constants import PRODUCT_COST_CATEGORIES, AssetPrefix, BalanceCategory, Currency
 
 class CostService:
     def __init__(self, db: Session):
         self.db = db
         # 定义预算/支出的分类
-        self.DETAILED_CATS = ["大货材料费", "大货加工费", "物流邮费", "包装费"]
-        self.SIMPLE_CATS = ["设计开发费", "检品发货等人工费", "宣发费", "其他成本"]
-        self.ALL_CATS = self.DETAILED_CATS + self.SIMPLE_CATS
+        self.DETAILED_CATS = PRODUCT_COST_CATEGORIES[:4]  # ["大货材料费", "大货加工费", "物流邮费", "包装费"]
+        self.SIMPLE_CATS = PRODUCT_COST_CATEGORIES[4:]  # ["设计开发费", "检品发货等人工费", "宣发费", "其他成本"]
+        self.ALL_CATS = PRODUCT_COST_CATEGORIES
 
     # ================= 1. 获取数据 =================
     def get_all_products(self):
@@ -28,7 +29,7 @@ class CostService:
         """获取产品的在制资产冲销额"""
         prod = self.db.query(Product).filter(Product.id == product_id).first()
         if not prod: return 0.0
-        offset_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == f"在制资产冲销-{prod.name}").first()
+        offset_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == f"{AssetPrefix.WIP_OFFSET}{prod.name}").first()
         return offset_item.amount if offset_item else 0.0
 
     # ================= 2. 预算管理 =================
@@ -115,9 +116,9 @@ class CostService:
                 restore_currency = fin_rec.currency
                 
                 cash_asset = self.db.query(CompanyBalanceItem).filter(
-                    CompanyBalanceItem.name.like("流动资金%"),
+                    CompanyBalanceItem.name.like(f"{AssetPrefix.CASH}%"),
                     CompanyBalanceItem.currency == restore_currency,
-                    CompanyBalanceItem.category == "asset"
+                    CompanyBalanceItem.category == BalanceCategory.ASSET
                 ).first()
                 
                 if cash_asset:
@@ -145,7 +146,7 @@ class CostService:
         current_total_cost = sum([i.actual_cost for i in all_items])
         
         # 2. 获取当前的冲销额
-        offset_name = f"在制资产冲销-{prod.name}"
+        offset_name = f"{AssetPrefix.WIP_OFFSET}{prod.name}"
         offset_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == offset_name).first()
         current_offset = offset_item.amount if offset_item else 0.0
         
@@ -155,10 +156,10 @@ class CostService:
 
         # 4. 自动更新“大货资产”并记录流水
         if abs(added_cost_value) > 0.01:
-            inventory_asset_name = f"大货资产-{prod.name}"
+            inventory_asset_name = f"{AssetPrefix.STOCK}{prod.name}"
             inv_item = self.db.query(CompanyBalanceItem).filter(
                 CompanyBalanceItem.name == inventory_asset_name,
-                CompanyBalanceItem.category == "asset"
+                CompanyBalanceItem.category == BalanceCategory.ASSET
             ).first()
 
             if inv_item:
@@ -167,16 +168,16 @@ class CostService:
                 new_inv = CompanyBalanceItem(
                     name=inventory_asset_name,
                     amount=added_cost_value,
-                    category="asset",
-                    currency="CNY"
+                    category=BalanceCategory.ASSET,
+                    currency=Currency.CNY
                 )
                 self.db.add(new_inv)
             
             # 记录虚拟流水
             fix_rec = FinanceRecord(
                 date=date.today(),
-                amount=0, 
-                currency="CNY",
+                amount=0,
+                currency=Currency.CNY,
                 category="成本结转",
                 description=f"【{prod.name}】追加成本结转: 将 {added_cost_value:.2f} 从在制转入大货资产"
             )
@@ -192,7 +193,7 @@ class CostService:
             offset_item.amount = target_offset
         
         # 6. 清理残留预入库资产
-        pre_stock_name = f"预入库大货资产-{prod.name}"
+        pre_stock_name = f"{AssetPrefix.PRE_STOCK}{prod.name}"
         self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == pre_stock_name).delete()
         
         self.db.commit()
@@ -251,21 +252,21 @@ class CostService:
             inventory_asset_name = f"大货资产-{p_name}"
             inv_item = self.db.query(CompanyBalanceItem).filter(
                 CompanyBalanceItem.name == inventory_asset_name,
-                CompanyBalanceItem.category == "asset"
+                CompanyBalanceItem.category == BalanceCategory.ASSET
             ).first()
 
             if inv_item:
                 inv_item.amount += diff
             else:
                 self.db.add(CompanyBalanceItem(
-                    name=inventory_asset_name, amount=diff, category="asset", currency="CNY"
+                    name=inventory_asset_name, amount=diff, category=BalanceCategory.ASSET, currency=Currency.CNY
                 ))
             
             # 记录虚拟流水
             self.db.add(FinanceRecord(
                 date=date.today(),
-                amount=0, 
-                currency="CNY",
+                amount=0,
+                currency=Currency.CNY,
                 category="库存重估",
                 description=f"【{p_name}】资产重估补差: 从 {data['current_inv_val']:.2f} 调整为 {data['target_inv_val']:.2f} (差额 {diff:.2f})"
             ))
