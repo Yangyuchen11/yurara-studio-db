@@ -149,7 +149,7 @@ from views.cost_view import show_cost_page
 from views.inventory_view import show_inventory_page
 from views.finance_view import show_finance_page
 from views.balance_view import show_balance_page
-from views.asset_view import show_fixed_asset_page
+from views.asset_view import show_asset_page
 from views.consumable_view import show_other_asset_page
 from views.sales_view import show_sales_page
 from streamlit_option_menu import option_menu
@@ -355,6 +355,6 @@ elif selected == "财务流水录入":
 elif selected == "公司账面概览":
     show_balance_page(db, exchange_rate)
 elif selected == "固定资产管理":
-    show_fixed_asset_page(db, exchange_rate)
+    show_asset_page(db, exchange_rate)
 elif selected == "其他资产管理":
     show_other_asset_page(db, exchange_rate)

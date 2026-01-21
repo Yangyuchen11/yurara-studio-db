@@ -1,9 +1,11 @@
 import streamlit as st
 import pandas as pd
-from models import Product, ProductColor, InventoryLog
-from datetime import datetime
+from services.product_service import ProductService
 
 def show_product_page(db):
+    # 初始化 Service
+    service = ProductService(db)
+
     # --- 0. 全局消息提示逻辑 ---
     if "toast_msg" in st.session_state:
         msg, icon = st.session_state.toast_msg
@@ -84,49 +86,38 @@ def show_product_page(db):
             elif not st.session_state.create_temp_colors:
                 st.error("请至少添加一个颜色")
             else:
-                # 1. 计算总数量
-                total_q = sum([item['qty'] for item in st.session_state.create_temp_colors])
-
-                # 2. 创建主表
-                new_prod = Product(
-                    name=new_name,
-                    target_platform=new_platform,
-                    price_weidian=price_w,
-                    price_booth=price_b,
-                    price_offline_jp=price_jp,
-                    price_offline_cn=price_cn,
-                    price_other=price_other,
-                    price_instagram=price_insta,
-                    price_other_jpy=price_other_jpy,
-                    total_quantity=total_q,
-                    # 初始化可销售数量等于总预计数量
-                    marketable_quantity=total_q
-                )
-                db.add(new_prod)
-                db.flush()
-                
-                # 3. 插入颜色
-                for item in st.session_state.create_temp_colors:
-                    db.add(ProductColor(
-                        product_id=new_prod.id, 
-                        color_name=item['name'],
-                        quantity=item['qty'] # 这里只记录设定数量，不产生库存日志
-                    ))
+                try:
+                    # 封装价格字典
+                    prices = {
+                        "weidian": price_w,
+                        "offline_cn": price_cn,
+                        "other": price_other,
+                        "booth": price_b,
+                        "instagram": price_insta,
+                        "offline_jp": price_jp,
+                        "other_jpy": price_other_jpy
+                    }
                     
-                    # 【修改点】：删除了原先这里的 InventoryLog 预入库代码
-                    # 现在的逻辑是：只设定目标，不产生流水，不影响资产
-                
-                db.commit()
-                
-                st.session_state.create_temp_colors = []
-                st.session_state["toast_msg"] = (f"产品《{new_name}》创建成功！", "✅")
-                st.rerun()
+                    # 调用 Service
+                    new_prod = service.create_product(
+                        name=new_name,
+                        platform=new_platform,
+                        prices=prices,
+                        colors=st.session_state.create_temp_colors
+                    )
+                    
+                    st.session_state.create_temp_colors = []
+                    st.session_state["toast_msg"] = (f"产品《{new_name}》创建成功！", "✅")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"创建失败: {e}")
 
     # ================= 模块 2：编辑产品 =================
     with tab2:
         st.subheader("修改现有产品信息")
         
-        all_products = db.query(Product).order_by(Product.id.desc()).all()
+        # 使用 Service 获取列表
+        all_products = service.get_all_products()
         
         if not all_products:
             st.info("暂无产品可编辑，请先新建产品。")
@@ -134,15 +125,12 @@ def show_product_page(db):
             prod_options = {p.id: p.name for p in all_products}
             selected_prod_id = st.selectbox("选择要编辑的产品", options=list(prod_options.keys()), format_func=lambda x: prod_options[x])
             
-            target_prod = db.query(Product).filter(Product.id == selected_prod_id).first()
+            # 使用 Service 获取详情
+            target_prod = service.get_product_by_id(selected_prod_id)
             
             if target_prod:
                 if st.session_state.get("last_edited_prod_id") != target_prod.id:
                     st.session_state["edit_name"] = target_prod.name
-                    
-                    # 这里的 key 要和你下面 selectbox 的 key 对应
-                    # 注意：selectbox 存的是 index，不是字符串，需要做一点处理
-                    # 但 Streamlit 的 selectbox 比较智能，如果 value 在 options 里，可以直接赋值
                     st.session_state["edit_platform"] = target_prod.target_platform
                     
                     # 强制刷新所有价格框
@@ -155,13 +143,13 @@ def show_product_page(db):
                     st.session_state["edit_p_jp"] = target_prod.price_offline_jp
                     st.session_state["edit_p_other_jpy"] = getattr(target_prod, 'price_other_jpy', 0.0)
                     
-                    # 更新“上次编辑ID”，防止无限刷新
                     st.session_state["last_edited_prod_id"] = target_prod.id
+                
                 st.divider()
                 
                 # --- A. 基础信息 ---
                 ec1, ec2 = st.columns(2)
-                edit_name = ec1.text_input("修改产品名称", value=target_prod.name, help="如果需要重命名产品，请在此修改")
+                edit_name = ec1.text_input("修改产品名称", value=target_prod.name)
                 
                 platform_idx = 0
                 if target_prod.target_platform in platform_options:
@@ -172,10 +160,10 @@ def show_product_page(db):
                 st.markdown("#### 🎨 规格与数量管理")
                 st.caption("请直接在下方表格中修改名称、数量，或添加/删除行。")
 
-                # 初始化数据：如果切换了产品，重新从数据库加载
+                # 初始化数据：如果切换了产品，重新加载
                 if "edit_specs_df" not in st.session_state or st.session_state.get("edit_last_id") != selected_prod_id:
-                    db_colors = db.query(ProductColor).filter(ProductColor.product_id == selected_prod_id).all()
-                    # 构造 DataFrame
+                    # 使用 Service 获取颜色
+                    db_colors = service.get_product_colors(selected_prod_id)
                     data = [{"颜色名称": c.color_name, "库存/预计数量": c.quantity} for c in db_colors]
                     st.session_state.edit_specs_df = pd.DataFrame(data)
                     st.session_state.edit_last_id = selected_prod_id
@@ -183,7 +171,7 @@ def show_product_page(db):
                 # 显示可编辑表格
                 edited_df = st.data_editor(
                     st.session_state.edit_specs_df,
-                    num_rows="dynamic", # 允许添加/删除行
+                    num_rows="dynamic",
                     use_container_width=True,
                     hide_index=True,
                     key="editor_specs",
@@ -218,50 +206,41 @@ def show_product_page(db):
                     elif edited_df.empty:
                         st.error("请至少保留一个颜色规格")
                     else:
-                        # 1. 更新主表基础信息
-                        target_prod.name = edit_name
-                        target_prod.target_platform = edit_platform
-                        target_prod.price_weidian = e_price_w
-                        target_prod.price_booth = e_price_b
-                        target_prod.price_offline_jp = e_price_jp
-                        target_prod.price_offline_cn = e_price_cn
-                        target_prod.price_other = e_price_other
-                        target_prod.price_instagram = e_price_insta
-                        target_prod.price_other_jpy = e_price_other_jpy
-                        
-                        # 2. 更新颜色规格 (策略：清空旧的 -> 写入新的)
-                        # 先删除该产品所有旧规格
-                        db.query(ProductColor).filter(ProductColor.product_id == target_prod.id).delete()
-                        
-                        new_total_qty = 0
-                        # 写入 DataEditor 中的新数据
-                        for index, row in edited_df.iterrows():
-                            c_name = row["颜色名称"]
-                            c_qty = int(row["库存/预计数量"])
-                            if c_name: # 确保名称不为空
-                                db.add(ProductColor(
-                                    product_id=target_prod.id, 
-                                    color_name=str(c_name), 
-                                    quantity=c_qty
-                                ))
-                                new_total_qty += c_qty
-                        
-                        # 3. 更新主表的总数量
-                        target_prod.total_quantity = new_total_qty
+                        try:
+                            # 封装价格字典
+                            prices = {
+                                "weidian": e_price_w,
+                                "offline_cn": e_price_cn,
+                                "other": e_price_other,
+                                "booth": e_price_b,
+                                "instagram": e_price_insta,
+                                "offline_jp": e_price_jp,
+                                "other_jpy": e_price_other_jpy
+                            }
+                            
+                            # 调用 Service 更新
+                            service.update_product(
+                                product_id=target_prod.id,
+                                name=edit_name,
+                                platform=edit_platform,
+                                prices=prices,
+                                colors_df=edited_df
+                            )
 
-                        db.commit()
-                        st.session_state["toast_msg"] = (f"产品《{edit_name}》修改成功！", "✅")
-                        
-                        # 强制清除缓存，触发重新加载
-                        if "edit_last_id" in st.session_state:
-                            del st.session_state["edit_last_id"]
-                        
-                        st.rerun()
+                            st.session_state["toast_msg"] = (f"产品《{edit_name}》修改成功！", "✅")
+                            
+                            # 强制清除缓存
+                            if "edit_last_id" in st.session_state:
+                                del st.session_state["edit_last_id"]
+                            
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"修改失败: {e}")
 
     # ================= 模块 3：产品列表 =================
     with tab3:
         st.subheader("现有产品列表")
-        products = db.query(Product).order_by(Product.id.desc()).all()
+        products = service.get_all_products()
         
         if products:
             for p in products:
@@ -290,9 +269,9 @@ def show_product_page(db):
                     
                     with col_b:
                         st.markdown("#### 🎨 规格明细")
-                        p_colors = db.query(ProductColor).filter(ProductColor.product_id == p.id).all()
+                        # 使用 Service 获取颜色
+                        p_colors = service.get_product_colors(p.id)
                         if p_colors:
-                            # 构造标签显示：名称 (数量)
                             tags_html = "".join([
                                 f'<span style="background-color:#3E3E3E; border:1px solid #666666; padding:4px 12px; border-radius:15px; margin:4px; display:inline-block; color:#FFFFFF; font-size:14px;">'
                                 f'<b>{c.color_name}</b> <span style="color:#aaa; font-size:12px; margin-left:5px;">x{c.quantity}</span>'
@@ -312,10 +291,8 @@ def show_product_page(db):
                             st.warning(f"⚠️ 确定要删除《{p.name}》吗？")
                             if st.button("确认删除", type="primary", key=f"btn_confirm_del_{p.id}"):
                                 try:
-                                    # 注意：因为 ProductColor 设置了 cascade="all, delete-orphan"，
-                                    # 所以删除 Product 会自动删除关联的 colors
-                                    db.delete(p)
-                                    db.commit()
+                                    # 调用 Service 删除
+                                    service.delete_product(p.id)
                                     st.session_state["toast_msg"] = (f"已删除产品：{p.name}", "🗑️")
                                     st.rerun()
                                 except Exception as e:
