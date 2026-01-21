@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from datetime import date
 from models import ConsumableItem, ConsumableLog, Product, CostItem, FinanceRecord, CompanyBalanceItem
+from constants import AssetPrefix, BalanceCategory, Currency, FinanceCategory
 
 class ConsumableService:
     def __init__(self, db: Session):
@@ -11,9 +12,9 @@ class ConsumableService:
     def _get_cash_asset(self, currency):
         """获取流动资金账户 (复用财务逻辑)"""
         return self.db.query(CompanyBalanceItem).filter(
-            CompanyBalanceItem.name.like("流动资金%"), 
+            CompanyBalanceItem.name.like(f"{AssetPrefix.CASH}%"),
             CompanyBalanceItem.currency == currency,
-            CompanyBalanceItem.category == "asset"
+            CompanyBalanceItem.category == BalanceCategory.ASSET
         ).order_by(CompanyBalanceItem.id.asc()).first()
 
     # ================= 1. 数据获取 =================
@@ -76,7 +77,7 @@ class ConsumableService:
                     date=date_obj,
                     amount=sale_info['amount'],
                     currency=sale_info['currency'],
-                    category="销售收入",
+                    category=FinanceCategory.SALES_INCOME,
                     description=f"{sale_info['content']} [{note_detail}]"
                 )
                 self.db.add(fin_rec)
@@ -86,8 +87,8 @@ class ConsumableService:
                 target_cash = self._get_cash_asset(sale_info['currency'])
                 if not target_cash:
                     target_cash = CompanyBalanceItem(
-                        category="asset",
-                        name=f"流动资金({sale_info['currency']})",
+                        category=BalanceCategory.ASSET,
+                        name=f"{AssetPrefix.CASH}({sale_info['currency']})",
                         amount=0.0,
                         currency=sale_info['currency']
                     )
