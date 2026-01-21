@@ -3,9 +3,10 @@ from sqlalchemy import or_
 from datetime import date
 import pandas as pd
 from models import (
-    FinanceRecord, Product, CostItem, ConsumableItem, 
+    FinanceRecord, Product, CostItem, ConsumableItem,
     FixedAsset, ConsumableLog, CompanyBalanceItem
 )
+from constants import AssetPrefix, BalanceCategory, Currency, FinanceCategory
 
 class FinanceService:
     """
@@ -18,9 +19,9 @@ class FinanceService:
     def get_cash_asset(db, currency):
         """获取指定币种的流动资金账户对象"""
         return db.query(CompanyBalanceItem).filter(
-            CompanyBalanceItem.name.like("流动资金%"), 
+            CompanyBalanceItem.name.like(f"{AssetPrefix.CASH}%"),
             CompanyBalanceItem.currency == currency,
-            CompanyBalanceItem.category == "asset"
+            CompanyBalanceItem.category == BalanceCategory.ASSET
         ).order_by(CompanyBalanceItem.id.asc()).first()
 
     @staticmethod
@@ -92,12 +93,12 @@ class FinanceService:
         # 1. 记录流水
         rec_out = FinanceRecord(
             date=date_val, amount=-amount_out, currency=source_curr,
-            category="货币兑换", description=f"兑换支出 (-> {target_curr}) | {desc}"
+            category=FinanceCategory.EXCHANGE, description=f"兑换支出 (-> {target_curr}) | {desc}"
         )
         db.add(rec_out)
         rec_in = FinanceRecord(
             date=date_val, amount=amount_in, currency=target_curr,
-            category="货币兑换", description=f"兑换入账 (<- {source_curr}) | {desc}"
+            category=FinanceCategory.EXCHANGE, description=f"兑换入账 (<- {source_curr}) | {desc}"
         )
         db.add(rec_in)
         
@@ -109,7 +110,7 @@ class FinanceService:
         if asset_in: 
             asset_in.amount += amount_in
         else:
-            new_asset = CompanyBalanceItem(category="asset", name=f"流动资金({target_curr})", amount=amount_in, currency=target_curr)
+            new_asset = CompanyBalanceItem(category=BalanceCategory.ASSET, name=f"{AssetPrefix.CASH}({target_curr})", amount=amount_in, currency=target_curr)
             db.add(new_asset)
         
         db.commit()
@@ -121,18 +122,18 @@ class FinanceService:
         if is_to_cash:
             # A. 存入流动资金
             finance_rec = FinanceRecord(
-                date=date_val, amount=amount, currency=curr, category="借入资金",
+                date=date_val, amount=amount, currency=curr, category=FinanceCategory.BORROW,
                 description=f"{related_content} (来源: {source}) | {remark}"
             )
             cash_asset = FinanceService.get_cash_asset(db, curr)
             if cash_asset: 
                 cash_asset.amount += amount
             else:
-                db.add(CompanyBalanceItem(category="asset", name=f"流动资金({curr})", amount=amount, currency=curr))
+                db.add(CompanyBalanceItem(category=BalanceCategory.ASSET, name=f"{AssetPrefix.CASH}({curr})", amount=amount, currency=curr))
         else:
             # B. 形成固定资产或其他资产（不进现金流）
             finance_rec = FinanceRecord(
-                date=date_val, amount=0, currency=curr, category="债务-资产形成",
+                date=date_val, amount=0, currency=curr, category=FinanceCategory.DEBT_ASSET_FORM,
                 description=f"【资产债务】新增资产: {related_content} | 债务: {name} | 金额: {amount}"
             )
         
@@ -141,14 +142,14 @@ class FinanceService:
 
         # 创建负债项
         new_liability = CompanyBalanceItem(
-            name=name, amount=amount, category="liability", currency=curr, finance_record_id=finance_rec.id
+            name=name, amount=amount, category=BalanceCategory.LIABILITY, currency=curr, finance_record_id=finance_rec.id
         )
         db.add(new_liability)
 
         # 如果是非现金资产，创建对应的资产项
         if not is_to_cash:
             new_asset = CompanyBalanceItem(
-                name=related_content, amount=amount, category="asset", currency=curr, finance_record_id=finance_rec.id
+                name=related_content, amount=amount, category=BalanceCategory.ASSET, currency=curr, finance_record_id=finance_rec.id
             )
             db.add(new_asset)
         
@@ -162,7 +163,7 @@ class FinanceService:
 
         # 记录流水
         new_finance = FinanceRecord(
-            date=date_val, amount=-amount, currency=target_liab.currency, category="债务偿还",
+            date=date_val, amount=-amount, currency=target_liab.currency, category=FinanceCategory.DEBT_REPAY,
             description=f"资金偿还: {target_liab.name} | {remark}"
         )
         db.add(new_finance)
@@ -187,7 +188,7 @@ class FinanceService:
         if not target_liab or not target_asset: raise ValueError("债务或资产不存在")
 
         new_finance = FinanceRecord(
-            date=date_val, amount=0, currency=target_liab.currency, category="债务-资产核销",
+            date=date_val, amount=0, currency=target_liab.currency, category=FinanceCategory.DEBT_ASSET_OFFSET,
             description=f"资产抵消: 用 [{target_asset.name}] 抵消 [{target_liab.name}] | 金额: {amount} | {remark}"
         )
         db.add(new_finance)
@@ -235,7 +236,7 @@ class FinanceService:
         target_cash = FinanceService.get_cash_asset(db, base_data['currency'])
         if not target_cash:
             target_cash = CompanyBalanceItem(
-                category="asset", name=f"流动资金({base_data['currency']})", 
+                category=BalanceCategory.ASSET, name=f"{AssetPrefix.CASH}({base_data['currency']})",
                 amount=0.0, currency=base_data['currency']
             )
             db.add(target_cash)
@@ -251,7 +252,7 @@ class FinanceService:
             if link_config.get('is_new'):
                 new_bi = CompanyBalanceItem(
                     name=link_config['name'], amount=balance_delta, 
-                    category='equity' if l_type == 'equity' else 'asset',
+                    category=BalanceCategory.EQUITY if l_type == 'equity' else BalanceCategory.ASSET,
                     currency=base_data['currency'], finance_record_id=new_record.id
                 )
                 db.add(new_bi)
@@ -273,7 +274,7 @@ class FinanceService:
             unit_price_cny = link_config['unit_price']
             final_remark = base_data['desc']
             
-            if base_data['currency'] == "JPY":
+            if base_data['currency'] == Currency.JPY:
                 cost_in_cny = base_data['amount'] * exchange_rate
                 unit_price_cny = cost_in_cny / link_config['qty'] if link_config['qty'] > 0 else 0
                 final_remark = f"{base_data['desc']} (原币支付: {base_data['amount']:.0f} JPY)".strip()
