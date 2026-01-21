@@ -353,37 +353,61 @@ class FinanceService:
         rec = FinanceService.get_record_by_id(db, record_id)
         if not rec: return False
 
-        # 1. 计算差额并更新流动资金
-        new_signed = updates['amount_abs'] if updates['type'] == "收入" else -updates['amount_abs']
-        diff = new_signed - rec.amount
+        # === 修复开始：处理资金回滚与重记 ===
         
-        cash_asset = FinanceService.get_cash_asset(db, updates['currency'])
-        if cash_asset: cash_asset.amount += diff
+        # 1. 回滚旧记录的影响 (Revert old impact)
+        # 获取旧币种的资产账户
+        old_cash_asset = FinanceService.get_cash_asset(db, rec.currency)
+        if old_cash_asset:
+            # rec.amount 本身为有符号数（收入为正，支出为负）
+            # 回滚操作就是减去这个数值
+            old_cash_asset.amount -= rec.amount
         
-        # 2. 更新流水本身
+        # 2. 计算新记录的数据 (Prepare new data)
+        new_signed_amount = updates['amount_abs'] if updates['type'] == "收入" else -updates['amount_abs']
+        new_currency = updates['currency']
+
+        # 3. 应用新记录的影响 (Apply new impact)
+        new_cash_asset = FinanceService.get_cash_asset(db, new_currency)
+        if new_cash_asset:
+            new_cash_asset.amount += new_signed_amount
+        else:
+            # 如果该币种账户不存在，则新建
+            new_cash_asset = CompanyBalanceItem(
+                category="asset", 
+                name=f"流动资金({new_currency})", 
+                amount=new_signed_amount, 
+                currency=new_currency
+            )
+            db.add(new_cash_asset)
+            
+        # === 修复结束 ===
+
+        # 4. 更新流水记录本身
         rec.date = updates['date']
-        rec.currency = updates['currency']
-        rec.amount = new_signed
+        rec.currency = new_currency
+        rec.amount = new_signed_amount
         rec.category = updates['category']
         rec.description = updates['desc']
         
-        # 3. 级联更新关联表
+        # 5. 级联更新关联表 (保持原有逻辑，增加币种同步)
         # CostItem
         for cost in db.query(CostItem).filter(CostItem.finance_record_id == record_id).all():
             cost.actual_cost = updates['amount_abs']
             cost.remarks = f"{updates['desc']} (已修)"
+            # 注意：如果原本是 CostItem，通常不存币种字段(隐含在amount里)或需额外处理，此处保持原逻辑即可
             
         # FixedAsset
         for fa in db.query(FixedAsset).filter(FixedAsset.finance_record_id == record_id).all():
             if fa.quantity > 0: fa.unit_price = updates['amount_abs'] / fa.quantity
-            fa.currency = updates['currency']
+            fa.currency = updates['currency'] # 确保关联资产币种也同步修改
             
         # ConsumableItem
         for ci in db.query(ConsumableItem).filter(ConsumableItem.finance_record_id == record_id).all():
             if ci.initial_quantity > 0: ci.unit_price = updates['amount_abs'] / ci.initial_quantity
             ci.currency = updates['currency']
             
-        # CompanyBalanceItem
+        # CompanyBalanceItem (关联的非现金资产)
         for bi in db.query(CompanyBalanceItem).filter(CompanyBalanceItem.finance_record_id == record_id).all():
             bi.amount = updates['amount_abs']
             bi.currency = updates['currency']

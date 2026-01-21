@@ -239,6 +239,13 @@ def show_cost_page(db):
             st.metric("🔢 预计可销售数量", f"{int(make_qty)} 件", help="此数值通过库存变动（消耗、损耗、增产）自动更新。")
             st.divider()
             
+            def get_price(product_obj, platform_key):
+                if not product_obj or not product_obj.prices:
+                    return 0.0
+                for p in product_obj.prices:
+                    if p.platform == platform_key:
+                        return p.price
+                return 0.0
             # --- 计算单件成本 ---
             if make_qty > 0:
                 unit_real_cost = total_real_cost / make_qty
@@ -249,19 +256,21 @@ def show_cost_page(db):
                 st.divider()
                 st.markdown("**📈 各平台毛利参考 (基于实付)**")
                 
+                # 定义映射 (Platform Key, Display Label, Is JPY)
                 platforms_config = [
-                    ("price_weidian", "微店 (CNY)", False),
-                    ("price_offline_cn", "中国线下 (CNY)", False),
-                    ("price_other", "其他 (CNY)", False),
-                    ("price_booth", "Booth (JPY)", True),
-                    ("price_instagram", "Instagram (JPY)", True),
-                    ("price_offline_jp", "日本线下 (JPY)", True),
-                    ("price_other_jpy", "其他 (JPY)", True),
+                    ("weidian", "微店 (CNY)", False),
+                    ("offline_cn", "中国线下 (CNY)", False),
+                    ("other", "其他 (CNY)", False),
+                    ("booth", "Booth (JPY)", True),
+                    ("instagram", "Instagram (JPY)", True),
+                    ("offline_jp", "日本线下 (JPY)", True),
+                    ("other_jpy", "其他 (JPY)", True),
                 ]
 
                 has_platform_price = False
-                for field, label, is_jpy in platforms_config:
-                    price_val = getattr(prod, field, 0)
+                for pf_key, label, is_jpy in platforms_config:
+                    # 【修改】不再用 getattr，而是用 helper 函数
+                    price_val = get_price(prod, pf_key)
                     
                     if price_val > 0:
                         has_platform_price = True

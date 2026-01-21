@@ -10,7 +10,7 @@ from models import (
     FixedAsset, FixedAssetLog, 
     ConsumableItem, ConsumableLog,  # 确保包含耗材日志
     CompanyBalanceItem, PreShippingItem, # 【新增】预出库表
-    SystemSetting,
+    SystemSetting, ProductPrice
 )
 
 # === 1. 页面配置 (必须放在第一行) ===
@@ -234,10 +234,10 @@ with st.sidebar:
     st.divider()
     with st.popover("💾 数据备份与恢复", use_container_width=True):
         # 定义映射: (CSV文件名, 数据库表名, SQLAlchemy模型类)
-        # 【修改点】加入了 pre_shipping_items 和 consumable_logs
         tables_map = [
             ("products.csv", "products", Product),
             ("product_colors.csv", "product_colors", ProductColor),
+            ("product_prices.csv", "product_prices", ProductPrice),
             ("finance_records.csv", "finance_records", FinanceRecord),
             ("cost_items.csv", "cost_items", CostItem),
             ("inventory_logs.csv", "inventory_logs", InventoryLog),
@@ -246,7 +246,8 @@ with st.sidebar:
             ("consumables.csv", "consumable_items", ConsumableItem),
             ("consumable_logs.csv", "consumable_logs", ConsumableLog),
             ("company_balance.csv", "company_balance_items", CompanyBalanceItem),
-            ("pre_shipping_items.csv", "pre_shipping_items", PreShippingItem), 
+            ("pre_shipping_items.csv", "pre_shipping_items", PreShippingItem),
+            ("system_settings.csv", "system_settings", SystemSetting), 
         ]
         
         # 下载逻辑

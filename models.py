@@ -14,22 +14,34 @@ class Product(Base):
     marketable_quantity = Column(Integer, default=0)
     # 销售相关
     target_platform = Column(String)
-    price_weidian = Column(Float, default=0.0)      # 微店
-    price_booth = Column(Float, default=0.0)        # Booth
-    price_offline_jp = Column(Float, default=0.0)   # 日本线下
-    price_offline_cn = Column(Float, default=0.0)   # 中国线下
-    price_instagram = Column(Float, default=0.0)    # ins日本
-    price_other_jpy = Column(Float, default=0.0)    # 其他（日本)
-    price_other = Column(Float, default=0.0)        # 其他 (中国)
+    
+    # 【优化1】移除硬编码的价格字段 (price_weidian, price_booth 等)
+    # 它们现在通过 prices 关系表来管理
     
     # 关联
-    costs = relationship("CostItem", back_populates="product")
+    # 【优化2】在 Python 层面配置级联删除 (cascade="all, delete-orphan")
+    costs = relationship("CostItem", back_populates="product", cascade="all, delete-orphan")
     colors = relationship("ProductColor", back_populates="product", cascade="all, delete-orphan")
+    # 【新增】关联价格表
+    prices = relationship("ProductPrice", back_populates="product", cascade="all, delete-orphan")
+
+# 【新增】产品价格表 (解决反范式化问题)
+class ProductPrice(Base):
+    __tablename__ = "product_prices"
+    id = Column(Integer, primary_key=True, index=True)
+    # 【优化3】在数据库层面配置级联删除 (ondelete="CASCADE")
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE")) 
+    platform = Column(String) # 平台代号 (如: weidian, booth, offline_jp)
+    currency = Column(String) # 币种 (CNY, JPY)
+    price = Column(Float, default=0.0)
+    
+    product = relationship("Product", back_populates="prices")
 
 class ProductColor(Base):
     __tablename__ = "product_colors"
     id = Column(Integer, primary_key=True, index=True)
-    product_id = Column(Integer, ForeignKey("products.id"))
+    # 【优化3】数据库级联删除
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"))
     color_name = Column(String)
     quantity = Column(Integer)
     produced_quantity = Column(Integer, default=0)
@@ -38,7 +50,8 @@ class ProductColor(Base):
 class CostItem(Base):
     __tablename__ = "cost_items"
     id = Column(Integer, primary_key=True, index=True)
-    product_id = Column(Integer, ForeignKey("products.id"))
+    # 【优化3】数据库级联删除
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"))
     item_name = Column(String)
     actual_cost = Column(Float)   # 实付总价
     supplier = Column(String)
@@ -48,7 +61,8 @@ class CostItem(Base):
     remarks = Column(String, default="")    # 备注
     unit = Column(String, default="") # 单位 (如: 米/个)
 
-    finance_record_id = Column(Integer, ForeignKey("finance_records.id"), nullable=True)
+    # 关联流水 (删除流水时自动清理关联的成本项)
+    finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
     product = relationship("Product", back_populates="costs")
 
 # --- B. 库存变动日志 ---
@@ -85,7 +99,8 @@ class CompanyBalanceItem(Base):
     name = Column(String)     # 项目名：如“现金(CNY账户)”
     amount = Column(Float)    # 金额
     currency = Column(String, default="CNY") # 币种：CNY 或 JPY
-    finance_record_id = Column(Integer, ForeignKey("finance_records.id"), nullable=True)
+    # 【数据库级联删除
+    finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
 
 # --- E. 固定资产管理 ---
 class FixedAsset(Base):
@@ -100,7 +115,8 @@ class FixedAsset(Base):
     purchase_date = Column(Date, default=datetime.now)
     currency = Column(String, default="CNY") # 默认为人民币资产
 
-    finance_record_id = Column(Integer, ForeignKey("finance_records.id"), nullable=True)
+    # 【优化3】数据库级联删除
+    finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
 
 # --- F. 耗材/消耗品管理 ---
 class ConsumableItem(Base):
@@ -116,7 +132,8 @@ class ConsumableItem(Base):
     purchase_date = Column(Date, default=datetime.now)
     currency = Column(String, default="CNY")
 
-    finance_record_id = Column(Integer, ForeignKey("finance_records.id"), nullable=True)
+    # 【优化3】数据库级联删除
+    finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
 
 # --- G. 固定资产核销记录 ---
 class FixedAssetLog(Base):
@@ -137,7 +154,7 @@ class ConsumableLog(Base):
     date = Column(Date, default=datetime.now)
     note = Column(String)            # 备注
 
-# --- 【新增】I. 预出库管理表 ---
+# --- I. 预出库管理表 ---
 class PreShippingItem(Base):
     __tablename__ = "pre_shipping_items"
     id = Column(Integer, primary_key=True, index=True)
@@ -152,7 +169,7 @@ class PreShippingItem(Base):
     created_date = Column(Date, default=datetime.now)
     note = Column(String, default="")
 
-# --- J. 系统全局设置 (新增) ---
+# --- J. 系统全局设置 ---
 class SystemSetting(Base):
     __tablename__ = "system_settings"
     key = Column(String, primary_key=True, index=True) # 例如 "exchange_rate"

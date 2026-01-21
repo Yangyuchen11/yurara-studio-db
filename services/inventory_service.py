@@ -24,7 +24,7 @@ class InventoryService:
 
     def _update_asset_by_name(self, name, delta, category="asset", currency="CNY", finance_id=None):
         """按名称更新资产项"""
-        item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == name).first()
+        item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == name).with_for_update().first()
         if item: 
             item.amount += delta
             # 容错：只有当金额极小且无关联流水时才物理删除，防止误删

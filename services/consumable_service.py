@@ -46,7 +46,7 @@ class ConsumableService:
         """
         处理库存变动，并根据模式处理联动 (销售/成本)
         """
-        item = self.db.query(ConsumableItem).filter(ConsumableItem.name == item_name).first()
+        item = self.db.query(ConsumableItem).filter(ConsumableItem.name == item_name).with_for_update().first()
         if not item:
             raise ValueError("物品不存在")
 
