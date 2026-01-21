@@ -14,7 +14,7 @@ from services.product_service import ProductService
 from services.cost_service import CostService
 from services.sales_service import SalesService
 from services.consumable_service import ConsumableService
-from constants import Currency
+from constants import Currency, PRODUCT_COST_CATEGORIES
 
 # ==========================================
 # === 第一部分：记账相关组件 (Modals & Selects) ===
@@ -303,14 +303,61 @@ class ProductDashboardView(ui.View):
         def logic(db):
             service = CostService(db)
             return service.get_cost_items(self.product_id), service.get_product_by_name(self.product_name)
+        
+        # 获取成本项和商品信息
         items, prod = await run_db_task(logic)
-        total = sum([i.actual_cost for i in items])
+        
+        # 1. 计算分母 (可销售数量)
         denom = prod.marketable_quantity if (prod and prod.marketable_quantity) else (prod.total_quantity if prod else 0)
-        unit = (total / denom) if denom > 0 else 0
-        embed = discord.Embed(title=f"💰 成本: {self.product_name}", color=discord.Color.gold())
-        embed.description = f"**总投入**: ¥{total:,.2f}\n**单品**: ¥{unit:,.2f}"
-        details = "".join([f"• {i.category[:4]}: ¥{i.actual_cost:.0f} - {i.item_name}\n" for i in sorted(items, key=lambda x:x.actual_cost, reverse=True)[:8] if i.actual_cost>0])
-        embed.add_field(name="主要支出", value=details or "无", inline=False)
+        if denom == 0: denom = 1 # 防止除零
+        
+        # 2. 聚合数据 (按分类)
+        cat_data = {}
+        total_actual = 0
+        
+        for i in items:
+            cat = i.category or "其他"
+            if cat not in cat_data:
+                cat_data[cat] = {"actual": 0.0, "budget": 0.0}
+            
+            # 实付累加
+            cat_data[cat]["actual"] += i.actual_cost
+            total_actual += i.actual_cost
+            
+            # 预算累加 (仅统计明确标记为预算的条目)
+            if i.supplier == "预算设定":
+                cat_data[cat]["budget"] += (i.unit_price * i.quantity)
+
+        # 3. 构建显示
+        unit_total = total_actual / denom
+        embed = discord.Embed(title=f"💰 成本分析: {self.product_name}", color=discord.Color.gold())
+        embed.description = f"**总实际投入**: ¥{total_actual:,.2f}\n**单品实际成本**: ¥{unit_total:,.2f}\n(核算数量: {denom})"
+        
+        # 排序分类 (按常量定义的顺序)
+        sorted_cats = [c for c in PRODUCT_COST_CATEGORIES if c in cat_data]
+        for c in cat_data:
+            if c not in sorted_cats: sorted_cats.append(c)
+        
+        # 添加字段
+        for cat in sorted_cats:
+            d = cat_data[cat]
+            act = d["actual"]
+            bud = d["budget"]
+            
+            # 如果都没有数据则跳过
+            if act == 0 and bud == 0: continue
+            
+            act_unit = act / denom
+            bud_unit = bud / denom
+            
+            content = (
+                f"小计实付: ¥{act:,.2f}\n"
+                f"实付单价: ¥{act_unit:,.2f}\n"
+                f"小计预算: ¥{bud:,.2f}\n"
+                f"预算单价: ¥{bud_unit:,.2f}"
+            )
+            embed.add_field(name=f"🔹 {cat}", value=content, inline=True)
+            
         await self.update_display(interaction, embed)
 
     @ui.button(label="库存状态", style=discord.ButtonStyle.blurple, emoji="📦")

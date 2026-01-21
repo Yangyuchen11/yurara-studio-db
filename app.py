@@ -12,6 +12,16 @@ from models import (
     CompanyBalanceItem, PreShippingItem, # 【新增】预出库表
     SystemSetting, ProductPrice
 )
+from database import engine, SessionLocal, get_db, Base
+from views.product_view import show_product_page
+from views.cost_view import show_cost_page
+from views.inventory_view import show_inventory_page
+from views.finance_view import show_finance_page
+from views.balance_view import show_balance_page
+from views.asset_view import show_asset_page
+from views.consumable_view import show_other_asset_page
+from views.sales_view import show_sales_page
+from streamlit_option_menu import option_menu
 
 # === 1. 页面配置 (必须放在第一行) ===
 st.set_page_config(page_title="Yurara综合管理系统", layout="wide")
@@ -135,24 +145,6 @@ def set_system_setting(db, key, new_value):
 # ==========================================
 # === 3. 业务逻辑 (基本保持不变) ===
 # ==========================================
-from database import Base 
-# 引入模型
-from models import (
-    Product, ProductColor, InventoryLog, 
-    FinanceRecord, CostItem, 
-    FixedAsset, FixedAssetLog, 
-    ConsumableItem, CompanyBalanceItem
-)
-# 引入视图
-from views.product_view import show_product_page
-from views.cost_view import show_cost_page
-from views.inventory_view import show_inventory_page
-from views.finance_view import show_finance_page
-from views.balance_view import show_balance_page
-from views.asset_view import show_asset_page
-from views.consumable_view import show_other_asset_page
-from views.sales_view import show_sales_page
-from streamlit_option_menu import option_menu
 
 # 初始化表结构
 Base.metadata.create_all(bind=engine)
