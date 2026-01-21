@@ -2,6 +2,7 @@
 from datetime import date
 from sqlalchemy import func
 from models import FixedAsset, FixedAssetLog
+from constants import Currency
 
 class AssetService:
     """
@@ -30,9 +31,9 @@ class AssetService:
         total_remain_val_jpy_only = 0.0
 
         for a in assets:
-            curr = getattr(a, "currency", "CNY")
+            curr = getattr(a, "currency", Currency.CNY)
             # 计算汇率系数
-            rate = exchange_rate if curr == "JPY" else 1.0
+            rate = exchange_rate if curr == Currency.JPY else 1.0
             
             # 累加采购总值 (折合CNY)
             total_val_cny_equiv += (a.unit_price * a.quantity) * rate
@@ -40,8 +41,8 @@ class AssetService:
             # 计算剩余价值
             remain_origin = a.unit_price * a.remaining_qty
             total_remain_val_cny_equiv += remain_origin * rate
-            
-            if curr == "JPY":
+
+            if curr == Currency.JPY:
                 total_remain_val_jpy_only += remain_origin
                 
         return total_val_cny_equiv, total_remain_val_cny_equiv, total_remain_val_jpy_only
