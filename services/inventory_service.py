@@ -3,12 +3,13 @@ from sqlalchemy import func, or_
 from datetime import date
 import math
 from models import Product, InventoryLog, ProductColor, CompanyBalanceItem, CostItem, PreShippingItem, FinanceRecord
+from constants import PRODUCT_COST_CATEGORIES, AssetPrefix, BalanceCategory, Currency, StockLogReason, FinanceCategory
 
 class InventoryService:
     def __init__(self, db: Session):
         self.db = db
         # 定义成本分类常量
-        self.COST_CATEGORIES = ["大货材料费", "大货加工费", "物流邮费", "包装费", "设计开发费", "检品发货等人工费", "宣发费", "其他成本"]
+        self.COST_CATEGORIES = PRODUCT_COST_CATEGORIES
 
     # ================= 辅助方法 (内部使用) =================
     def _get_unit_cost(self, product_id):
@@ -57,10 +58,10 @@ class InventoryService:
         has_pending_logs_map = {} # 记录哪些款式有挂起的预入库日志
 
         for log in all_logs:
-            if log.reason in ["入库", "出库", "额外生产入库", "退货入库", "发货撤销"]:
+            if log.reason in [StockLogReason.IN_STOCK, StockLogReason.OUT_STOCK, StockLogReason.EXTRA_PROD, StockLogReason.RETURN_IN, StockLogReason.UNDO_SHIP]:
                 real_stock_map[log.variant] = real_stock_map.get(log.variant, 0) + log.change_amount
-            
-            elif log.reason in ["预入库", "计划入库减少"]:
+
+            elif log.reason in [StockLogReason.PRE_IN, StockLogReason.PRE_IN_REDUCE]:
                 pre_in_map[log.variant] = pre_in_map.get(log.variant, 0) + log.change_amount
                 # 标记该款式有未完成的预入库
                 has_pending_logs_map[log.variant] = True
@@ -83,13 +84,13 @@ class InventoryService:
     def action_production_complete(self, product_id, product_name, variant, quantity, date_obj):
         """生产完成：记录预入库，更新在制/预入库资产"""
         self.db.add(InventoryLog(
-            product_name=product_name, variant=variant, 
-            change_amount=quantity, reason="预入库", note="生产完成", date=date_obj
+            product_name=product_name, variant=variant,
+            change_amount=quantity, reason=StockLogReason.PRE_IN, note="生产完成", date=date_obj
         ))
         unit_cost = self._get_unit_cost(product_id)
         val = quantity * unit_cost
-        self._update_asset_by_name(f"预入库大货资产-{product_name}", val)
-        self._update_asset_by_name(f"在制资产冲销-{product_name}", -val)
+        self._update_asset_by_name(f"{AssetPrefix.PRE_STOCK}{product_name}", val)
+        self._update_asset_by_name(f"{AssetPrefix.WIP_OFFSET}{product_name}", -val)
         self.db.commit()
 
     def action_finish_stock_in(self, product_id, product_name, variant_color_obj, pre_in_qty, date_obj):
@@ -100,11 +101,11 @@ class InventoryService:
         # 1. 资产转移：预入库 -> 大货资产
         if pre_in_qty > 0:
             val = pre_in_qty * unit_cost
-            self._update_asset_by_name(f"预入库大货资产-{product_name}", -val)
-            self._update_asset_by_name(f"大货资产-{product_name}", val)
+            self._update_asset_by_name(f"{AssetPrefix.PRE_STOCK}{product_name}", -val)
+            self._update_asset_by_name(f"{AssetPrefix.STOCK}{product_name}", val)
             self.db.add(InventoryLog(
-                product_name=product_name, variant=variant_name, 
-                change_amount=pre_in_qty, reason="入库", note="预入库转实物", date=date_obj
+                product_name=product_name, variant=variant_name,
+                change_amount=pre_in_qty, reason=StockLogReason.IN_STOCK, note="预入库转实物", date=date_obj
             ))
             if variant_color_obj.produced_quantity is None: variant_color_obj.produced_quantity = 0
             variant_color_obj.produced_quantity += pre_in_qty
@@ -113,9 +114,9 @@ class InventoryService:
         pending_logs = self.db.query(InventoryLog).filter(
             InventoryLog.product_name == product_name,
             InventoryLog.variant == variant_name,
-            or_(InventoryLog.reason == "预入库", InventoryLog.reason == "计划入库减少")
+            or_(InventoryLog.reason == StockLogReason.PRE_IN, InventoryLog.reason == StockLogReason.PRE_IN_REDUCE)
         ).all()
-        for pl in pending_logs: pl.reason = "预入库完成"
+        for pl in pending_logs: pl.reason = StockLogReason.PRE_IN_COMPLETE
         
         # 3. 清零计划数量
         variant_color_obj.quantity = 0 
@@ -123,14 +124,14 @@ class InventoryService:
         # 4. 检查是否该产品所有款式都已结单，如果是，清理尾差
         other_pending_count = self.db.query(func.count(InventoryLog.id)).filter(
             InventoryLog.product_name == product_name,
-            or_(InventoryLog.reason == "预入库", InventoryLog.reason == "计划入库减少"),
-            InventoryLog.variant != variant_name 
+            or_(InventoryLog.reason == StockLogReason.PRE_IN, InventoryLog.reason == StockLogReason.PRE_IN_REDUCE),
+            InventoryLog.variant != variant_name
         ).scalar()
         
         residual_val = 0.0
         if other_pending_count == 0:
-            wip_asset_name = f"预入库大货资产-{product_name}"
-            offset_asset_name = f"在制资产冲销-{product_name}"
+            wip_asset_name = f"{AssetPrefix.PRE_STOCK}{product_name}"
+            offset_asset_name = f"{AssetPrefix.WIP_OFFSET}{product_name}"
             wip_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == wip_asset_name).first()
 
             if wip_item:
@@ -139,9 +140,9 @@ class InventoryService:
                     # 记录一笔调账流水
                     self.db.add(FinanceRecord(
                         date=date_obj,
-                        amount=0, 
-                        currency="CNY",
-                        category="资产价值修正",
+                        amount=0,
+                        currency=Currency.CNY,
+                        category=FinanceCategory.ASSET_ADJUST,
                         description=f"【调账】{product_name} 结单修正：{residual_val:,.2f}"
                     ))
                     self.db.delete(wip_item)
@@ -195,13 +196,13 @@ class InventoryService:
             date=date.today(), 
             amount=target_pre.pre_sale_amount, 
             currency=target_pre.currency, 
-            category="销售收入", 
+            category=FinanceCategory.SALES_INCOME, 
             description=f"发货单收款: {target_pre.product_name}-{target_pre.variant} (x{target_pre.quantity})"
         )
         self.db.add(fin_rec)
         self.db.flush()
         
-        target_asset_name = f"流动资金({target_pre.currency})"
+        target_asset_name = f"{AssetPrefix.CASH}({target_pre.currency})"
         self._update_asset_by_name(
             target_asset_name, target_pre.pre_sale_amount, 
             category="asset", currency=target_pre.currency, finance_id=fin_rec.id
@@ -236,19 +237,19 @@ class InventoryService:
             product_name=target_pre_obj.product_name,
             variant=target_pre_obj.variant,
             change_amount=target_pre_obj.quantity, # 正数，加回库存
-            reason="发货撤销",
+            reason=StockLogReason.UNDO_SHIP,
             note=f"撤销发货单: {target_pre_obj.note}",
             date=date.today(),
             platform=platform_str,
             is_sold=False, # 撤销不算已售，但在统计中会用到 sale_amount 抵扣
-            sale_amount=-abs(target_pre_obj.pre_sale_amount), 
+            sale_amount=-abs(target_pre_obj.pre_sale_amount),
             currency=target_pre_obj.currency
         ))
 
         # 3. 回滚库存资产价值 (大货资产)
         unit_cost = self._get_unit_cost(selected_product_id)
         asset_val = target_pre_obj.quantity * unit_cost
-        self._update_asset_by_name(f"大货资产-{target_pre_obj.product_name}", asset_val)
+        self._update_asset_by_name(f"{AssetPrefix.STOCK}{target_pre_obj.product_name}", asset_val)
 
         # 4. 删除发货单
         self.db.delete(target_pre_obj)
@@ -265,12 +266,12 @@ class InventoryService:
         target_prod_obj = self.db.query(Product).filter(Product.id == product_id).first()
         
         # --- A. 计划入库减少 (特殊校验) ---
-        if move_type == "计划入库减少":
+        if move_type == StockLogReason.PRE_IN_REDUCE:
             current_pre_in_qty = 0
             check_logs = self.db.query(InventoryLog).filter(
                 InventoryLog.product_name == product_name,
                 InventoryLog.variant == variant,
-                or_(InventoryLog.reason == "预入库", InventoryLog.reason == "计划入库减少")
+                or_(InventoryLog.reason == StockLogReason.PRE_IN, InventoryLog.reason == StockLogReason.PRE_IN_REDUCE)
             ).all()
             for l in check_logs: current_pre_in_qty += l.change_amount
             
@@ -280,7 +281,7 @@ class InventoryService:
                 raise ValueError(f"减少数量 ({quantity}) 不能超过当前预入库总数 ({current_pre_in_qty})。")
 
         # --- B. 出库逻辑 ---
-        if move_type == "出库":
+        if move_type == StockLogReason.OUT_STOCK:
             unit_cost = self._get_unit_cost(product_id)
             cost_val = quantity * unit_cost
             
@@ -305,14 +306,14 @@ class InventoryService:
 
                 # 3. 记录出库日志 (立即扣库存)
                 log = InventoryLog(
-                    product_name=product_name, variant=variant, change_amount=-quantity, 
-                    reason="出库", note=f"售出待结: {remark}", is_sold=True, 
+                    product_name=product_name, variant=variant, change_amount=-quantity,
+                    reason=StockLogReason.OUT_STOCK, note=f"售出待结: {remark}", is_sold=True,
                     sale_amount=sale_price, currency=sale_curr, platform=sale_platform, date=date_obj
                 )
                 self.db.add(log)
 
                 # 4. 扣减库存资产
-                self._update_asset_by_name(f"大货资产-{product_name}", -cost_val)
+                self._update_asset_by_name(f"{AssetPrefix.STOCK}{product_name}", -cost_val)
                 return "已录入发货单，库存已扣减"
 
             # 分支 B2: 消耗 (扣减可售数量)
@@ -334,10 +335,10 @@ class InventoryService:
 
                 log_note = f"消耗: {cons_content} | {remark}"
                 self.db.add(InventoryLog(
-                    product_name=product_name, variant=variant, change_amount=-quantity, 
-                    reason="出库", note=log_note, is_other_out=True, date=date_obj
+                    product_name=product_name, variant=variant, change_amount=-quantity,
+                    reason=StockLogReason.OUT_STOCK, note=log_note, is_other_out=True, date=date_obj
                 ))
-                self._update_asset_by_name(f"大货资产-{product_name}", -cost_val)
+                self._update_asset_by_name(f"{AssetPrefix.STOCK}{product_name}", -cost_val)
                 return f"可销售数量已减少 {quantity}，记录已添加至【{cons_cat}】"
 
             # 分支 B3: 其他出库
@@ -347,48 +348,48 @@ class InventoryService:
                     product_name=product_name, variant=variant, change_amount=-quantity, 
                     reason="出库", note=log_note, is_other_out=True, date=date_obj
                 ))
-                self._update_asset_by_name(f"大货资产-{product_name}", -cost_val)
+                self._update_asset_by_name(f"{AssetPrefix.STOCK}{product_name}", -cost_val)
                 return "其他出库成功"
 
         # --- C. 退货入库 ---
-        elif move_type == "退货入库":
+        elif move_type == StockLogReason.RETURN_IN:
             # 记录退货日志 (负销售额)
             self.db.add(InventoryLog(
-                product_name=product_name, variant=variant, change_amount=quantity, 
-                reason="退货入库", note=f"平台: {refund_platform} | {remark}", 
-                date=date_obj, is_sold=True, sale_amount=-refund_amount, 
+                product_name=product_name, variant=variant, change_amount=quantity,
+                reason=StockLogReason.RETURN_IN, note=f"平台: {refund_platform} | {remark}",
+                date=date_obj, is_sold=True, sale_amount=-refund_amount,
                 currency=refund_curr, platform=refund_platform
             ))
             # 记录退款流水
             fin_rec = FinanceRecord(
-                date=date_obj, amount=-refund_amount, currency=refund_curr, 
-                category="销售退款", description=f"{product_name}-{variant} 退货 (x{quantity}) | {remark}"
+                date=date_obj, amount=-refund_amount, currency=refund_curr,
+                category=FinanceCategory.SALES_REFUND, description=f"{product_name}-{variant} 退货 (x{quantity}) | {remark}"
             )
             self.db.add(fin_rec)
             # 扣减现金
-            self._update_asset_by_name(f"流动资金({refund_curr})", -refund_amount, category="asset", currency=refund_curr)
+            self._update_asset_by_name(f"{AssetPrefix.CASH}({refund_curr})", -refund_amount, category=BalanceCategory.ASSET, currency=refund_curr)
             
             # 增加库存资产
             unit_cost = self._get_unit_cost(product_id)
             asset_val = quantity * unit_cost
-            self._update_asset_by_name(f"大货资产-{product_name}", asset_val)
+            self._update_asset_by_name(f"{AssetPrefix.STOCK}{product_name}", asset_val)
             return "退货入库完成"
 
         # --- D. 计划入库减少 ---
-        elif move_type == "计划入库减少":
+        elif move_type == StockLogReason.PRE_IN_REDUCE:
             if target_prod_obj:
                 if target_prod_obj.marketable_quantity is None: target_prod_obj.marketable_quantity = target_prod_obj.total_quantity
                 target_prod_obj.marketable_quantity -= quantity
 
             self.db.add(InventoryLog(
-                product_name=product_name, variant=variant, change_amount=-quantity, 
-                reason="计划入库减少", note=f"修正预入库: {remark}", date=date_obj
+                product_name=product_name, variant=variant, change_amount=-quantity,
+                reason=StockLogReason.PRE_IN_REDUCE, note=f"修正预入库: {remark}", date=date_obj
             ))
             unit_cost = self._get_unit_cost(product_id)
             val = quantity * unit_cost
-            self._update_asset_by_name(f"预入库大货资产-{product_name}", -val)
+            self._update_asset_by_name(f"{AssetPrefix.PRE_STOCK}{product_name}", -val)
             # 加回冲销，保持平衡
-            self._update_asset_by_name(f"在制资产冲销-{product_name}", val)
+            self._update_asset_by_name(f"{AssetPrefix.WIP_OFFSET}{product_name}", val)
             return f"预入库数量已减少: {quantity}"
 
         # --- E. 其他入库 (入库, 预入库, 额外生产入库) ---
@@ -398,7 +399,7 @@ class InventoryService:
                 reason=move_type, note=remark, date=date_obj
             ))
             
-            if move_type == "额外生产入库" and product_id:
+            if move_type == StockLogReason.EXTRA_PROD and product_id:
                 c_rec = self.db.query(ProductColor).filter(
                     ProductColor.product_id==product_id, ProductColor.color_name==variant
                 ).first()
@@ -414,10 +415,10 @@ class InventoryService:
             unit_cost = self._get_unit_cost(product_id)
             val_change = quantity * unit_cost
             
-            if move_type in ["入库", "额外生产入库"]: 
-                self._update_asset_by_name(f"大货资产-{product_name}", val_change)
-            elif move_type == "预入库": 
-                self._update_asset_by_name(f"预入库大货资产-{product_name}", val_change)
+            if move_type in [StockLogReason.IN_STOCK, StockLogReason.EXTRA_PROD]:
+                self._update_asset_by_name(f"{AssetPrefix.STOCK}{product_name}", val_change)
+            elif move_type == StockLogReason.PRE_IN: 
+                self._update_asset_by_name(f"{AssetPrefix.PRE_STOCK}{product_name}", val_change)
             
             return f"{move_type} 成功"
 
@@ -456,8 +457,8 @@ class InventoryService:
         
         # 1. 回滚可销售数量 (针对“计划入库减少”、“额外生产入库”和“消耗出库”)
         if target_prod:
-            reasons_affecting_marketable = ["计划入库减少", "额外生产入库"]
-            is_consumable_out = (log_to_del.reason == "出库" and "消耗" in (log_to_del.note or ""))
+            reasons_affecting_marketable = [StockLogReason.PRE_IN_REDUCE, StockLogReason.EXTRA_PROD]
+            is_consumable_out = (log_to_del.reason == StockLogReason.OUT_STOCK and "消耗" in (log_to_del.note or ""))
             
             if log_to_del.reason in reasons_affecting_marketable or is_consumable_out:
                 if target_prod.marketable_quantity is None: 
@@ -473,14 +474,14 @@ class InventoryService:
         asset_delta = log_to_del.change_amount * unit_cost
         
         # 2. 根据类型回滚资产和关联单据
-        if log_to_del.reason in ["入库", "额外生产入库", "退货入库"]:
+        if log_to_del.reason in [StockLogReason.IN_STOCK, StockLogReason.EXTRA_PROD, StockLogReason.RETURN_IN]:
             # 当初是增加资产，现在减回去
-            self._update_asset_by_name(f"大货资产-{log_to_del.product_name}", -asset_delta)
+            self._update_asset_by_name(f"{AssetPrefix.STOCK}{log_to_del.product_name}", -asset_delta)
             msg_list.append("大货资产已回滚")
         
-        elif log_to_del.reason == "出库":
+        elif log_to_del.reason == StockLogReason.OUT_STOCK:
             # A. 回滚大货库存资产 (把扣掉的加回来)
-            self._update_asset_by_name(f"大货资产-{log_to_del.product_name}", -asset_delta)
+            self._update_asset_by_name(f"{AssetPrefix.STOCK}{log_to_del.product_name}", -asset_delta)
             msg_list.append("大货资产已回滚")
             
             # B. 处理销售关联
@@ -489,13 +490,13 @@ class InventoryService:
                 target_fin = self.db.query(FinanceRecord).filter(
                     FinanceRecord.date == log_to_del.date,
                     FinanceRecord.amount == log_to_del.sale_amount,
-                    FinanceRecord.category == "销售收入",
+                    FinanceRecord.category == FinanceCategory.SALES_INCOME,
                     FinanceRecord.description.like(f"%{log_to_del.product_name}%")
                 ).first()
                 
                 if target_fin:
                     # 找到了流水，说明已确认收款 -> 回滚现金流 + 删除流水
-                    cash_name = f"流动资金({log_to_del.currency})"
+                    cash_name = f"{AssetPrefix.CASH}({log_to_del.currency})"
                     cash_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == cash_name).first()
                     if cash_item:
                         cash_item.amount -= target_fin.amount
@@ -538,10 +539,10 @@ class InventoryService:
                 except:
                     pass
 
-        elif log_to_del.reason in ["预入库", "计划入库减少"]:
+        elif log_to_del.reason in [StockLogReason.PRE_IN, StockLogReason.PRE_IN_REDUCE]:
             # 回滚预入库资产和冲销项
-            self._update_asset_by_name(f"预入库大货资产-{log_to_del.product_name}", -asset_delta)
-            self._update_asset_by_name(f"在制资产冲销-{log_to_del.product_name}", asset_delta)
+            self._update_asset_by_name(f"{AssetPrefix.PRE_STOCK}{log_to_del.product_name}", -asset_delta)
+            self._update_asset_by_name(f"{AssetPrefix.WIP_OFFSET}{log_to_del.product_name}", asset_delta)
             msg_list.append("预入库/冲销资产已回滚")
 
         self.db.delete(log_to_del)
