@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from services.cost_service import CostService
+from constants import PRODUCT_COST_CATEGORIES
 
 def show_cost_page(db):
     st.header("🧵 商品成本核算")
