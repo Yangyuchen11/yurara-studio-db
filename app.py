@@ -239,7 +239,7 @@ with st.sidebar:
             ("consumable_logs.csv", "consumable_logs", ConsumableLog),
             ("company_balance.csv", "company_balance_items", CompanyBalanceItem),
             ("pre_shipping_items.csv", "pre_shipping_items", PreShippingItem),
-            ("system_settings.csv", "system_settings", SystemSetting), 
+            # ("system_settings.csv", "system_settings", SystemSetting), 
         ]
         
         # 下载逻辑

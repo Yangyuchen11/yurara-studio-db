@@ -58,10 +58,12 @@ class InventoryService:
         has_pending_logs_map = {} # 记录哪些款式有挂起的预入库日志
 
         for log in all_logs:
-            if log.reason in [StockLogReason.IN_STOCK, StockLogReason.OUT_STOCK, StockLogReason.EXTRA_PROD, StockLogReason.RETURN_IN, StockLogReason.UNDO_SHIP]:
+            # 【修改 1】将 EXTRA_PROD 从现货统计中移除
+            if log.reason in [StockLogReason.IN_STOCK, StockLogReason.OUT_STOCK, StockLogReason.RETURN_IN, StockLogReason.UNDO_SHIP]:
                 real_stock_map[log.variant] = real_stock_map.get(log.variant, 0) + log.change_amount
 
-            elif log.reason in [StockLogReason.PRE_IN, StockLogReason.PRE_IN_REDUCE]:
+            # 【修改 2】将 EXTRA_PROD 加入预入库统计
+            elif log.reason in [StockLogReason.PRE_IN, StockLogReason.PRE_IN_REDUCE, StockLogReason.EXTRA_PROD]:
                 pre_in_map[log.variant] = pre_in_map.get(log.variant, 0) + log.change_amount
                 # 标记该款式有未完成的预入库
                 has_pending_logs_map[log.variant] = True
@@ -415,10 +417,15 @@ class InventoryService:
             unit_cost = self._get_unit_cost(product_id)
             val_change = quantity * unit_cost
             
-            if move_type in [StockLogReason.IN_STOCK, StockLogReason.EXTRA_PROD]:
+            # 【修改 3】修正资产变动逻辑
+            if move_type in [StockLogReason.IN_STOCK]:
                 self._update_asset_by_name(f"{AssetPrefix.STOCK}{product_name}", val_change)
             elif move_type == StockLogReason.PRE_IN: 
                 self._update_asset_by_name(f"{AssetPrefix.PRE_STOCK}{product_name}", val_change)
+            elif move_type == StockLogReason.EXTRA_PROD:
+                # 额外生产：增加预入库资产，同时扣减在制冲销（模拟生产完成的财务过程）
+                self._update_asset_by_name(f"{AssetPrefix.PRE_STOCK}{product_name}", val_change)
+                self._update_asset_by_name(f"{AssetPrefix.WIP_OFFSET}{product_name}", -val_change)
             
             return f"{move_type} 成功"
 
@@ -469,13 +476,23 @@ class InventoryService:
                 target_prod.marketable_quantity -= log_to_del.change_amount
                 msg_list.append(f"可售数量 {old_mq} -> {target_prod.marketable_quantity}")
 
+        # 回滚已生产数量 (Produced Quantity)        
+        if log_to_del.reason == StockLogReason.EXTRA_PROD and target_prod:
+            target_color = self.db.query(ProductColor).filter(
+                ProductColor.product_id == target_prod.id,
+                ProductColor.color_name == log_to_del.variant
+            ).first()
+            if target_color and target_color.produced_quantity is not None:
+                old_pq = target_color.produced_quantity
+                target_color.produced_quantity -= log_to_del.change_amount
+                msg_list.append(f"已产数量 {old_pq} -> {target_color.produced_quantity}")
+
         # 计算资产变动成本
         unit_cost = self._get_unit_cost(target_prod.id) if target_prod else 0
         asset_delta = log_to_del.change_amount * unit_cost
         
         # 2. 根据类型回滚资产和关联单据
-        if log_to_del.reason in [StockLogReason.IN_STOCK, StockLogReason.EXTRA_PROD, StockLogReason.RETURN_IN]:
-            # 当初是增加资产，现在减回去
+        if log_to_del.reason in [StockLogReason.IN_STOCK, StockLogReason.RETURN_IN]:
             self._update_asset_by_name(f"{AssetPrefix.STOCK}{log_to_del.product_name}", -asset_delta)
             msg_list.append("大货资产已回滚")
         
@@ -539,7 +556,7 @@ class InventoryService:
                 except:
                     pass
 
-        elif log_to_del.reason in [StockLogReason.PRE_IN, StockLogReason.PRE_IN_REDUCE]:
+        elif log_to_del.reason in [StockLogReason.PRE_IN, StockLogReason.PRE_IN_REDUCE, StockLogReason.EXTRA_PROD]:
             # 回滚预入库资产和冲销项
             self._update_asset_by_name(f"{AssetPrefix.PRE_STOCK}{log_to_del.product_name}", -asset_delta)
             self._update_asset_by_name(f"{AssetPrefix.WIP_OFFSET}{log_to_del.product_name}", asset_delta)
