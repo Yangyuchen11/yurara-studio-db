@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  # Streamlit 前端
+  web:
+    build: .
+    container_name: yurara-web
+    restart: always
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro
+    # 移除 depends_on，因为我们不再依赖本地 db 容器
+    networks:
+      - yurara-net
+
+  # Discord Bot
+  bot:
+    build: .
+    container_name: yurara-bot
+    restart: always
+    command: python bot.py
+    volumes:
+      - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro
+      - ./.env:/app/.env
+    networks:
+      - yurara-net
+
+# 移除了 db 服务和 volume，极大降低内存占用
+
+networks:
+  yurara-net:
+    driver: bridge
