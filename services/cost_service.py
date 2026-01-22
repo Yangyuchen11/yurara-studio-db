@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from datetime import date
 from models import Product, CostItem, FinanceRecord, CompanyBalanceItem, InventoryLog
@@ -19,7 +19,9 @@ class CostService:
 
     def get_product_by_name(self, name):
         """按名称获取产品"""
-        return self.db.query(Product).filter(Product.name == name).first()
+        return self.db.query(Product)\
+            .options(joinedload(Product.prices))\
+            .filter(Product.name == name).first()
 
     def get_cost_items(self, product_id):
         """获取某产品的所有成本项"""
