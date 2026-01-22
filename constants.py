@@ -46,10 +46,16 @@ class StockLogReason:
     """库存变动原因 (对应 InventoryLog.reason)"""
     IN_STOCK = "入库"
     OUT_STOCK = "出库"
+    
     PRE_IN = "预入库"
     PRE_IN_REDUCE = "计划入库减少"
     PRE_IN_COMPLETE = "预入库完成"
+    
     EXTRA_PROD = "额外生产入库"
+    
+    WAIT_PROD = "排单待产"             # 对应普通的预入库
+    EXTRA_PROD_WAIT = "额外生产待产"    # 对应额外生产入库
+
     RETURN_IN = "退货入库"
     UNDO_SHIP = "发货撤销"
 

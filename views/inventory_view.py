@@ -26,11 +26,12 @@ def show_inventory_page(db):
         
         with c_view:
             if selected_product_id:
-                # 使用 Service 获取库存概览数据
                 colors = service.get_product_colors(selected_product_id)
-                real_stock_map, pre_in_map, pre_out_map, has_pending_logs_map = service.get_stock_overview(p_name)
+                # 【修改】接收新增的 wait_prod_map
+                real_stock_map, pre_in_map, pre_out_map, wait_prod_map = service.get_stock_overview(p_name)
 
                 if colors:
+                    # 调整列宽
                     cols_cfg = [1.5, 1, 1, 1, 1, 1, 1, 2.5]
                     h1, h2, h3, h4, h5, h6, h7, h8 = st.columns(cols_cfg)
                     h1.markdown("**款式**")
@@ -47,6 +48,7 @@ def show_inventory_page(db):
                     for c in colors:
                         real_qty = real_stock_map.get(c.color_name, 0)
                         pre_in_qty = pre_in_map.get(c.color_name, 0)
+                        wait_qty = wait_prod_map.get(c.color_name, 0) # 获取待产数量
                         pre_out_qty = pre_out_map.get(c.color_name, 0)
                         produced_qty = c.produced_quantity if c.produced_quantity is not None else 0
                         status = "🔴 缺货" if real_qty <= 0 else "🟢 有货"
@@ -56,34 +58,41 @@ def show_inventory_page(db):
                         r2.write(f"**{c.quantity}**")
                         r3.write(f"{produced_qty}")
                         r4.write(f"{int(real_qty)}")
-                        r5.write(f"{int(pre_in_qty)}")
+                        r5.write(f"{int(pre_in_qty)}") # 这里只显示已生产完成等待入库的数量
                         r6.write(f"{int(pre_out_qty)}")
                         r7.write(status)
 
                         with r8:
                             c_btn1, c_btn2 = st.columns([1, 1])
                             
-                            # 按钮 1: 生产完成
-                            if pre_in_qty == 0 and c.quantity > 0:
-                                if c_btn1.button("🏭 生产完成", key=f"btn_prod_done_v2_{c.id}"):
+                            # 按钮 1: 生产完成 (现在根据 wait_qty 判断)
+                            # 如果有录入的排单(WAIT_PROD/EXTRA_PROD_WAIT)，显示生产完成
+                            if wait_qty > 0:
+                                if c_btn1.button(f"🏭 生产完成", key=f"btn_prod_done_{c.id}"):
                                     try:
-                                        service.action_production_complete(selected_product_id, p_name, c.color_name, c.quantity, date.today())
+                                        # 不需要传数量，内部自动处理所有 pending logs
+                                        service.action_production_complete(selected_product_id, p_name, c.color_name, date.today())
+                                        st.toast("生产确认成功，已计入预入库资产", icon="✅")
                                         st.rerun()
                                     except Exception as e:
                                         st.error(f"操作失败: {e}")
 
-                            # 按钮 2: 入库完成
-                            if has_pending_logs_map.get(c.color_name, False):
-                                btn_label = "📥 入库完成" if pre_in_qty > 0 else "✅ 结单/清理"
-                                if c_btn2.button(btn_label, key=f"btn_finish_stock_{c.id}"):
+                            # 按钮 2: 入库完成 (根据 pre_in_qty 判断)
+                            # 如果有预入库数量(已生产但未入大货仓)，显示入库完成
+                            if pre_in_qty > 0:
+                                if c_btn2.button("📥 入库完成", key=f"btn_finish_stock_{c.id}"):
                                     try:
                                         residual = service.action_finish_stock_in(selected_product_id, p_name, c, pre_in_qty, date.today())
                                         if residual:
                                             st.toast(f"已清理账面偏差: {residual:,.2f}", icon="⚖️")
-                                        st.toast("操作成功", icon="✅")
+                                        st.toast("入库成功，库存已更新", icon="✅")
                                         st.rerun()
                                     except Exception as e:
                                         st.error(f"操作发生错误: {e}")
+                            
+                            # (可选) 显示清理按钮：如果所有都为0但有残留日志，保留清理逻辑
+                            elif c.quantity > 0 and produced_qty >= c.quantity and wait_qty == 0 and pre_in_qty == 0:
+                                pass # 暂不显示，保持简洁
 
                         st.markdown("<hr style='margin: 5px 0; opacity:0.1;'>", unsafe_allow_html=True)
                 else:
