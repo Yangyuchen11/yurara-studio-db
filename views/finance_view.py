@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 from services.finance_service import FinanceService
+from constants import PRODUCT_COST_CATEGORIES
 
 def show_finance_page(db, exchange_rate):
     # ================= 0. 全局样式优化 =================
@@ -247,7 +248,7 @@ def show_finance_page(db, exchange_rate):
                     pid = c1.selectbox("归属商品", list(p_opts.keys()), format_func=lambda x: p_opts[x])
                     link_config["product_id"] = pid
                     
-                    cost_cats = ["大货材料费", "大货加工费", "物流邮费", "包装费", "设计开发费", "检品发货等人工费", "宣发费", "其他成本"]
+                    cost_cats = PRODUCT_COST_CATEGORIES
                     final_cat = c2.selectbox("成本分类", cost_cats)
                     base_data["category"] = final_cat
                     

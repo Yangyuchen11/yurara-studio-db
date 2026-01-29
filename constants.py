@@ -80,13 +80,14 @@ PRODUCT_COST_CATEGORIES = [
     "设计开发费", 
     "检品发货等人工费", 
     "宣发费", 
+    "售后成本",
     "其他成本"
 ]
 
 # 销售平台代号 (原 ProductService 中的硬编码)
 PLATFORM_CODES = {
     "weidian": "微店",
-    "booth": "展会/Booth",
+    "booth": "Booth",
     "offline_cn": "国内线下",
     "offline_jp": "日本线下",
     "instagram": "Instagram",

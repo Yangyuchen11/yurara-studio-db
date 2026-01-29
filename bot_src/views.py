@@ -33,24 +33,51 @@ class SimpleExpenseModal(ui.Modal, title="记一笔 - 普通支出"):
 
 # --- 2. 商品成本 Modal ---
 class CostExpenseModal(ui.Modal, title="记一笔 - 商品成本"):
-    def __init__(self, product_id, product_name):
+    def __init__(self, product_id, product_name, cost_category):
         super().__init__()
         self.product_id = product_id
-        self.title = f"成本: {product_name[:15]}..."
+        self.cost_category = cost_category
+        # 动态标题，显示当前分类
+        self.title = f"{cost_category}: {product_name[:10]}..."
     
     amount = ui.TextInput(label="实付金额", placeholder="例如: 500", required=True)
     currency = ui.TextInput(label="币种 (CNY/JPY)", default="CNY", min_length=3, max_length=3, required=True)
-    cost_cat = ui.TextInput(label="成本分类", placeholder="大货材料费/加工费/物流/包装/设计/宣发", required=True)
-    content = ui.TextInput(label="具体内容", placeholder="如: 300g毛绒布料", required=True)
+    shop = ui.TextInput(label="店铺/来源", placeholder="选填", required=False)
+    content = ui.TextInput(label="具体内容", placeholder="如: 布料", required=True)
     qty = ui.TextInput(label="数量", default="1", required=True)
 
     async def on_submit(self, interaction: discord.Interaction):
         extra_data = {
             "product_id": self.product_id,
-            "cost_cat": self.cost_cat.value,
+            "cost_cat": self.cost_category,
             "qty": self.qty.value
         }
         await _handle_expense_submit(interaction, self, "cost", extra_data)
+
+# --- 成本分类选择 View ---
+class CostCategorySelect(ui.Select):
+    def __init__(self, product_id, product_name):
+        self.product_id = product_id
+        self.product_name = product_name
+        
+        # 从常量加载选项
+        options = []
+        for cat in PRODUCT_COST_CATEGORIES:
+            options.append(discord.SelectOption(label=cat, value=cat))
+            
+        super().__init__(placeholder="👇 请选择成本分类...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+
+        selected_cat = self.values[0]
+        await interaction.response.send_modal(
+            CostExpenseModal(self.product_id, self.product_name, selected_cat)
+        )
+
+class CostCategorySelectView(ui.View):
+    def __init__(self, product_id, product_name):
+        super().__init__()
+        self.add_item(CostCategorySelect(product_id, product_name))
 
 # --- 3. 资产购入 Modal ---
 class AssetExpenseModal(ui.Modal, title="记一笔 - 资产购入"):
@@ -180,7 +207,12 @@ class ProductSelectForCost(ui.Select):
     async def callback(self, interaction: discord.Interaction):
         val = self.values[0]
         pid, pname = val.split("|")
-        await interaction.response.send_modal(CostExpenseModal(int(pid), pname))
+        view = CostCategorySelectView(int(pid), pname)
+        await interaction.response.send_message(
+            f"✅ 已选商品：**{pname}**\n👇 请继续选择成本分类：", 
+            view=view, 
+            ephemeral=True
+        )
 
 class ProductSelectForCostView(ui.View):
     def __init__(self, products):
@@ -289,9 +321,20 @@ class ProductDashboardView(ui.View):
         embed.add_field(name="平台", value=prod.target_platform or "无", inline=True)
         embed.add_field(name="总生产数", value=str(prod.total_quantity), inline=True)
         
-        prices_str = ""
-        if prod.prices:
-            prices_str = "\n".join([f"{p.platform}: {p.price} {p.currency}" for p in prod.prices])
+        prices_list = []
+        if prod.colors:
+            seen_prices = set()
+            for c in prod.colors:
+                if c.prices:
+                    for p in c.prices:
+                        # 格式化显示：平台: 价格 币种
+                        p_str = f"{p.platform}: {p.price} {p.currency}"
+                        # 简单去重：如果不同颜色的同平台定价一致，只显示一次
+                        if p_str not in seen_prices:
+                            prices_list.append(p_str)
+                            seen_prices.add(p_str)
+        
+        prices_str = "\n".join(prices_list)
         embed.add_field(name="定价", value=prices_str or "未设置", inline=False)
         
         colors_str = " | ".join([f"{c.color_name}({c.quantity})" for c in prod.colors])
