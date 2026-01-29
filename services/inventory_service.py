@@ -221,16 +221,22 @@ class InventoryService:
 
     def confirm_shipping_receipt(self, pre_item_id):
         """确认收款：删除挂账资产，转入收入流水，增加现金"""
-        target_pre = self.db.query(PreShippingItem).filter(PreShippingItem.id == pre_item_id).first()
+        # 1. 显式加锁查询 (with_for_update)，防止并发或重复点击问题
+        target_pre = self.db.query(PreShippingItem).filter(PreShippingItem.id == pre_item_id).with_for_update().first()
+        
         if not target_pre:
-            raise ValueError("发货单不存在")
+            # 如果找不到（可能已经删除了），直接返回提示，不要报错，避免UI崩溃
+            return "订单不存在或已处理"
 
-        # 1. 删除关联的“待结算”资产
+        deleted_qty = target_pre.quantity  # 记录下被删除的数量
+        
+        # 2. 删除关联的“待结算”资产
         if target_pre.related_debt_id:
             pending_asset = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == target_pre.related_debt_id).first()
-            if pending_asset: self.db.delete(pending_asset)
+            if pending_asset: 
+                self.db.delete(pending_asset)
         
-        # 2. 记录真实收入并增加现金资产
+        # 3. 记录真实收入并增加现金资产
         fin_rec = FinanceRecord(
             date=date.today(), 
             amount=target_pre.pre_sale_amount, 
@@ -247,17 +253,44 @@ class InventoryService:
             category="asset", currency=target_pre.currency, finance_id=fin_rec.id
         )
 
+        # 4. 关键：执行删除
         self.db.delete(target_pre)
+        
+        # 5. 提交事务
         self.db.commit()
-        return target_asset_name
+        
+        return f"{target_asset_name} (已清除待发数量: {deleted_qty})"
 
     def undo_shipping(self, pre_item_id, selected_product_id):
-        """撤销发货：回滚库存，删除待结算资产，删除发货单"""
+        """撤销发货：优先尝试物理删除对应的出库记录（彻底回滚），如果找不到则执行冲红回滚"""
         target_pre_obj = self.db.query(PreShippingItem).filter(PreShippingItem.id == pre_item_id).first()
         if not target_pre_obj:
             raise ValueError("发货单不存在")
 
-        # 1. 回滚账面资产 (待结算款)
+        # 1. 尝试查找匹配的原始出库日志
+        # 匹配维度：产品、款式、日期、数量(取反)、金额、类型(OUT_STOCK)、is_sold
+        target_log = self.db.query(InventoryLog).filter(
+            InventoryLog.product_name == target_pre_obj.product_name,
+            InventoryLog.variant == target_pre_obj.variant,
+            InventoryLog.date == target_pre_obj.created_date,
+            InventoryLog.change_amount == -target_pre_obj.quantity,
+            InventoryLog.sale_amount == target_pre_obj.pre_sale_amount,
+            InventoryLog.reason == StockLogReason.OUT_STOCK,
+            InventoryLog.is_sold == True
+        ).first()
+
+        if target_log:
+            # 【策略 A】: 完美匹配，执行物理删除 (级联删除 Log -> PreItem -> Asset)
+            # 这会自动回滚库存，并删除关联的 PreShippingItem (即 target_pre_obj 本身)
+            # 这样就彻底抹除了这笔交易，避免了用户再去删 Log 导致双重回滚的 Bug
+            
+            platform_str = target_log.platform or "未知"
+            self.delete_log_cascade(target_log.id)
+            return f"{platform_str} (关联记录已物理删除)"
+
+        # 【策略 B】: 未找到原始日志（可能数据被修改过），执行“冲红”逻辑（保留Log，新增抵消Log，物理删PreItem）
+        
+        # 2. 回滚账面资产 (待结算款)
         if target_pre_obj.related_debt_id:
             pending_asset = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == target_pre_obj.related_debt_id).first()
             if pending_asset: self.db.delete(pending_asset)
@@ -271,7 +304,7 @@ class InventoryService:
             except:
                 pass
         
-        # 2. 回滚库存数量 (InventoryLog) - 显式记录金额和平台，方便统计
+        # 3. 回滚库存数量 (InventoryLog) - 显式记录金额和平台，方便统计
         self.db.add(InventoryLog(
             product_name=target_pre_obj.product_name,
             variant=target_pre_obj.variant,
@@ -285,15 +318,15 @@ class InventoryService:
             currency=target_pre_obj.currency
         ))
 
-        # 3. 回滚库存资产价值 (大货资产)
+        # 4. 回滚库存资产价值 (大货资产)
         unit_cost = self._get_unit_cost(selected_product_id)
         asset_val = target_pre_obj.quantity * unit_cost
         self._update_asset_by_name(f"{AssetPrefix.STOCK}{target_pre_obj.product_name}", asset_val)
 
-        # 4. 删除发货单
+        # 5. 删除发货单
         self.db.delete(target_pre_obj)
         self.db.commit()
-        return platform_str
+        return f"{platform_str} (冲红模式)"
 
     # ================= 4. 库存变动提交核心逻辑 =================
     def add_inventory_movement(self, product_id, product_name, variant, quantity, 
@@ -589,12 +622,14 @@ class InventoryService:
             msg_list.append("大货资产已回滚")
             
             if log_to_del.is_sold:
+                # 场景 1: 已入账的 (有 FinanceRecord)
                 target_fin = self.db.query(FinanceRecord).filter(
                     FinanceRecord.date == log_to_del.date,
                     FinanceRecord.amount == log_to_del.sale_amount,
                     FinanceRecord.category == FinanceCategory.SALES_INCOME,
                     FinanceRecord.description.like(f"%{log_to_del.product_name}%")
                 ).first()
+                
                 if target_fin:
                     cash_name = f"{AssetPrefix.CASH}({log_to_del.currency})"
                     cash_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == cash_name).first()
@@ -603,7 +638,10 @@ class InventoryService:
                     self.db.delete(target_fin)
                     msg_list.append("关联销售流水已删除")
                 else:
-                    # 尝试查找发货单... (代码省略，保持原有逻辑)
+                    # 场景 2: 未入账/待发货的 (PreShippingItem)
+                    # 【核心修复】：增加“宽松匹配”逻辑，防止因修改金额导致无法找到记录
+                    
+                    # 尝试 A: 严格全匹配
                     target_pre = self.db.query(PreShippingItem).filter(
                         PreShippingItem.product_name == log_to_del.product_name,
                         PreShippingItem.variant == log_to_del.variant,
@@ -611,6 +649,16 @@ class InventoryService:
                         PreShippingItem.pre_sale_amount == log_to_del.sale_amount,
                         PreShippingItem.created_date == log_to_del.date 
                     ).first()
+                    
+                    # 尝试 B: 宽松匹配 (忽略金额，防止用户改过价格)
+                    if not target_pre:
+                         target_pre = self.db.query(PreShippingItem).filter(
+                            PreShippingItem.product_name == log_to_del.product_name,
+                            PreShippingItem.variant == log_to_del.variant,
+                            PreShippingItem.quantity == abs(log_to_del.change_amount),
+                            PreShippingItem.created_date == log_to_del.date 
+                        ).first()
+                    
                     if target_pre:
                         if target_pre.related_debt_id:
                             pending_asset = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == target_pre.related_debt_id).first()

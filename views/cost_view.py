@@ -22,7 +22,7 @@ def show_cost_page(db):
     selected_prod_name = st.selectbox("请选择要核算的商品", product_names)
     prod = service.get_product_by_name(selected_prod_name)
     
-    # 可销售数量
+    # 可销售数量 (产品级)
     make_qty = prod.marketable_quantity if prod.marketable_quantity is not None else prod.total_quantity
     
     st.divider()
@@ -151,7 +151,6 @@ def show_cost_page(db):
                 )
 
                 # --- 处理编辑保存 ---
-                # 获取修改的行
                 if st.session_state.get(f"editor_{cat}_{prod.id}") and st.session_state[f"editor_{cat}_{prod.id}"].get("edited_rows"):
                     changes = st.session_state[f"editor_{cat}_{prod.id}"]["edited_rows"]
                     any_db_change = False
@@ -161,7 +160,6 @@ def show_cost_page(db):
                         item_id = int(row_data["_id"])
                         is_budget = bool(row_data["_is_budget"])
                         
-                        # 构建更新字典
                         updates = {}
                         if "单位" in diff: updates["unit"] = diff["单位"]
                         if "供应商" in diff: updates["supplier"] = diff["供应商"]
@@ -173,7 +171,6 @@ def show_cost_page(db):
                             if "预算单价" in diff: updates["unit_price"] = diff["预算单价"]
                             if "预算总价" in diff: updates["total_budget"] = diff["预算总价"]
                         
-                        # 调用 Service 更新
                         if service.update_cost_item(item_id, updates):
                             any_db_change = True
                     
@@ -198,11 +195,8 @@ def show_cost_page(db):
 
                 # 计算小计并显示
                 cat_total_real = sum([i.actual_cost for i in cat_items])
-                
-                # 预算小计 (混合逻辑)
                 budget_map = {i.item_name: i.unit_price * i.quantity for i in cat_items if i.supplier == "预算设定"}
                 cat_total_budget = sum(budget_map.values())
-                # 填补没有预算的实付项
                 for i in cat_items:
                     if i.supplier != "预算设定" and i.item_name not in budget_map:
                         cat_total_budget += i.actual_cost
@@ -225,9 +219,8 @@ def show_cost_page(db):
         with st.container(border=True):
             st.subheader("📊 核算面板")
             
-            # --- 计算总成本 ---
+            # --- 计算总成本 (产品级) ---
             total_real_cost = sum([i.actual_cost for i in all_items])
-            
             budget_map = {i.item_name: i.unit_price * i.quantity for i in all_items if i.supplier == "预算设定"}
             total_budget_cost = sum(budget_map.values())
             for i in all_items:
@@ -237,17 +230,21 @@ def show_cost_page(db):
             st.metric("📦 项目总支出 (实付)", f"¥ {total_real_cost:,.2f}")
             st.caption(f"📝 预算总成本: ¥ {total_budget_cost:,.2f}")
             st.divider()
-            st.metric("🔢 预计可销售数量", f"{int(make_qty)} 件", help="此数值通过库存变动（消耗、损耗、增产）自动更新。")
+            
+            # 预计可销售数量 (产品级)
+            st.metric("🔢 预计可销售数量", f"{int(make_qty)} 件", help="此数值通过库存变动自动更新。")
             st.divider()
             
-            def get_price(product_obj, platform_key):
-                if not product_obj or not product_obj.prices:
+            # --- 【修改】价格获取辅助函数：从颜色款式对象获取价格 ---
+            def get_color_price(color_obj, platform_key):
+                if not color_obj or not color_obj.prices:
                     return 0.0
-                for p in product_obj.prices:
+                for p in color_obj.prices:
                     if p.platform == platform_key:
                         return p.price
                 return 0.0
-            # --- 计算单件成本 ---
+
+            # --- 计算单件综合成本 (产品级) ---
             if make_qty > 0:
                 unit_real_cost = total_real_cost / make_qty
                 unit_budget_cost = total_budget_cost / make_qty
@@ -255,9 +252,11 @@ def show_cost_page(db):
                 st.metric("💰 单套综合成本 (实付)", f"¥ {unit_real_cost:,.2f}")
                 st.caption(f"📝 预算单套成本: ¥ {unit_budget_cost:,.2f}")
                 st.divider()
-                st.markdown("**📈 各平台毛利参考 (基于实付)**")
+
+                # --- 【核心修改】分颜色款式显示毛利参考 ---
+                st.markdown("**📈 各款式毛利参考 (基于实付)**")
                 
-                # 定义映射 (Platform Key, Display Label, Is JPY)
+                # 定义平台映射
                 platforms_config = [
                     ("weidian", "微店 (CNY)", False),
                     ("offline_cn", "中国线下 (CNY)", False),
@@ -268,38 +267,46 @@ def show_cost_page(db):
                     ("other_jpy", "其他 (JPY)", True),
                 ]
 
-                has_platform_price = False
-                for pf_key, label, is_jpy in platforms_config:
-                    # 【修改】不再用 getattr，而是用 helper 函数
-                    price_val = get_price(prod, pf_key)
-                    
-                    if price_val > 0:
-                        has_platform_price = True
-                        price_cny = price_val * exchange_rate if is_jpy else price_val
-                        margin = price_cny - unit_real_cost
-                        margin_rate = (margin / price_cny * 100) if price_cny > 0 else 0
+                # 遍历产品的每一个款式
+                for color in prod.colors:
+                    with st.expander(f"🎨 款式：{color.color_name}", expanded=False):
+                        has_price_for_this_color = False
                         
-                        with st.expander(f"{label}", expanded=True):
-                            if is_jpy: st.caption(f"定价: {price_val:,.0f} JPY")
-                            st.metric(
-                                label="单件毛利", 
-                                value=f"¥ {margin:,.2f}", 
-                                delta=f"{margin_rate:.1f}%",
-                                delta_color="normal" if margin > 0 else "inverse"
-                            )
-                            total_profit = margin * make_qty
-                            st.caption(f"总预期毛利: ¥ {total_profit:,.2f}")
-
-                if not has_platform_price:
-                    st.caption("暂未在商品管理中设置任何平台价格")
+                        for pf_key, label, is_jpy in platforms_config:
+                            # 获取该款式在特定平台的价格
+                            price_val = get_color_price(color, pf_key)
+                            
+                            if price_val > 0:
+                                has_price_for_this_color = True
+                                # 换算为 CNY
+                                price_cny = price_val * exchange_rate if is_jpy else price_val
+                                # 毛利 = 平台折算价 - 产品单套综合成本
+                                margin = price_cny - unit_real_cost
+                                margin_rate = (margin / price_cny * 100) if price_cny > 0 else 0
+                                
+                                st.markdown(f"**{label}**")
+                                if is_jpy: st.caption(f"定价: {price_val:,.0f} JPY")
+                                
+                                st.metric(
+                                    label="单件毛利", 
+                                    value=f"¥ {margin:,.2f}", 
+                                    delta=f"{margin_rate:.1f}%",
+                                    delta_color="normal" if margin > 0 else "inverse"
+                                )
+                                # 这里的总预期毛利可以根据该款式的计划数量来算
+                                total_profit = margin * color.quantity
+                                st.caption(f"该款式预期总毛利: ¥ {total_profit:,.2f}")
+                                st.divider()
+                        
+                        if not has_price_for_this_color:
+                            st.caption("该款式暂未在商品管理中设置任何价格")
             else:
-                st.error("⚠️ 预计数量为 0，请调整数量以计算成本。")
+                st.error("⚠️ 预计数量为 0，无法计算毛利。")
 
     # ================= 5. 强制结单/修正功能 =================
     with st.expander("🛠️ 生产结单 / 账目修正 (高级)", expanded=False):
         st.warning("⚠️ **功能说明**：如果该商品已经生产完成，但在【公司资产一览】中仍显示有“在制资产”余额，请点击下方按钮。")
         
-        # 使用 Service 获取 WIP 偏移量，避免直接查 DB
         current_offset = service.get_wip_offset(prod.id)
         remaining_wip = total_real_cost + current_offset
         
@@ -318,7 +325,6 @@ def show_cost_page(db):
         st.subheader("⚖️ 库存价值重估 (Revaluation)")
         st.caption("当单价因追加成本或调整可售数量发生剧烈变化时，使用此功能将账面资产价值同步为 [剩余数量 × 当前单价]。")
 
-        # 获取重估数据
         reval_data = service.calculate_revaluation_data(prod.id)
         if reval_data:
             c_rv1, c_rv2, c_rv3 = st.columns(3)

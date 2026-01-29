@@ -1,17 +1,18 @@
 import streamlit as st
 import pandas as pd
 from services.product_service import ProductService
+from constants import PLATFORM_CODES  # 确保从 constants 导入平台定义
 
 def show_product_page(db):
     # 初始化 Service
     service = ProductService(db)
 
-    # --- 辅助函数：从产品对象的价格列表中提取特定平台价格 ---
-    def get_price(product_obj, platform_key):
-        if not product_obj or not product_obj.prices:
+    # --- 辅助函数：从“颜色/规格”对象的价格列表中提取特定平台价格 ---
+    def get_price(color_obj, platform_key):
+        if not color_obj or not color_obj.prices:
             return 0.0
-        # 遍历查找
-        for p in product_obj.prices:
+        # 遍历该颜色的价格列表
+        for p in color_obj.prices:
             if p.platform == platform_key:
                 return p.price
         return 0.0
@@ -26,7 +27,7 @@ def show_product_page(db):
     
     tab1, tab2, tab3 = st.tabs(["➕ 新建产品", "✏️ 编辑产品", "📋 产品列表"])
     
-    # ================= 模块 1：新建产品 (保持不变，只是Service调用内部变了) =================
+    # ================= 模块 1：新建产品 =================
     with tab1:
         st.subheader("新建 - 基础信息")
         
@@ -37,86 +38,71 @@ def show_product_page(db):
         
         st.divider()
         
-        # --- 颜色与预计产量配置 ---
-        st.subheader("规格与预计制作数量")
-        if "create_temp_colors" not in st.session_state:
-            st.session_state.create_temp_colors = [] 
-
-        col_n, col_q, col_b = st.columns([2, 2, 1])
-
-        with col_n:
-            c_name = st.text_input("颜色名称", key="c_color_name", placeholder="如：水母蓝")
-
-        with col_q:
-            c_qty = st.number_input("预计制作数量", min_value=0, step=1, key="c_color_qty")
-
-        with col_b:
-            st.markdown('<div style="margin-top:28px;"></div>', unsafe_allow_html=True) 
-            if st.button("➕ 添加规格", key="btn_add_color_create", use_container_width=True):
-                if c_name.strip():
-                    if any(d['name'] == c_name.strip() for d in st.session_state.create_temp_colors):
-                        st.toast("该颜色已在列表中", icon="⚠️")
-                    else:
-                        st.session_state.create_temp_colors.append({"name": c_name.strip(), "qty": c_qty})
-                        st.rerun() 
-                else:
-                    st.toast("请输入颜色名称", icon="⚠️")
-
-        if st.session_state.create_temp_colors:
-            df_temp = pd.DataFrame(st.session_state.create_temp_colors)
-            df_temp.columns = ["颜色名称", "预计产量"]
-            st.table(df_temp)
-            if st.button("清空规格列表", key="btn_clear_color_create"):
-                st.session_state.create_temp_colors = []
-                st.rerun()
-
-        st.divider()
-
-        # --- 定价策略 ---
-        st.subheader("多平台定价")
+        # --- 规格与多平台定价矩阵 ---
+        st.subheader("规格与各平台定价")
+        st.caption("请在下方表格中添加颜色款式，并直接为每个款式设置各平台价格。")
         
-        st.caption("🇨🇳 人民币 (CNY) 定价")
-        p_cn1, p_cn2, p_cn3 = st.columns(3)
-        price_w = p_cn1.number_input("微店 (CNY)", min_value=0.0, key="create_p_w")
-        price_cn = p_cn2.number_input("中国线下 (CNY)", min_value=0.0, key="create_p_cn")
-        price_other = p_cn3.number_input("其他 (CNY)", min_value=0.0, key="create_p_other")
+        # 初始化新建用的矩阵数据
+        if "create_matrix_df" not in st.session_state:
+            # 基础列
+            initial_data = {"颜色名称": [""], "预计制作数量": [0]}
+            # 动态添加平台价格列
+            for pf_key in PLATFORM_CODES.keys():
+                initial_data[pf_key] = [0.0]
+            st.session_state.create_matrix_df = pd.DataFrame(initial_data)
 
-        st.caption("🇯🇵 日元 (JPY) 定价")
-        p_jp1, p_jp2, p_jp3, p_jp4 = st.columns(4)
-        price_b = p_jp1.number_input("Booth (JPY)", min_value=0.0, key="create_p_b")
-        price_insta = p_jp2.number_input("Instagram (JPY)", min_value=0.0, key="create_p_insta")
-        price_jp = p_jp3.number_input("日本线下 (JPY)", min_value=0.0, key="create_p_jp")
-        price_other_jpy = p_jp4.number_input("其他 (JPY)", min_value=0.0, key="create_p_other_jpy")
-        
+        # 配置列显示（将平台 Key 映射为中文名称）
+        col_config = {
+            # 【修复】删除了不支持的 placeholder 参数
+            "颜色名称": st.column_config.TextColumn("颜色名称", required=True), 
+            "预计制作数量": st.column_config.NumberColumn("预计产量", min_value=0, step=1, format="%d"),
+        }
+        for pf_key, pf_name in PLATFORM_CODES.items():
+            col_config[pf_key] = st.column_config.NumberColumn(f"{pf_name} 价格", min_value=0.0, format="%.2f")
+
+        # 使用数据编辑器
+        new_matrix = st.data_editor(
+            st.session_state.create_matrix_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            key="create_product_editor",
+            column_config=col_config
+        )
+
         st.divider()
         
         if st.button("💾 保存新产品", type="primary", key="btn_save_create"):
+            # 过滤掉空行
+            valid_rows = new_matrix[new_matrix["颜色名称"].str.strip() != ""]
+            
             if not new_name:
                 st.error("产品名称不能为空")
-            elif not st.session_state.create_temp_colors:
-                st.error("请至少添加一个颜色")
+            elif valid_rows.empty:
+                st.error("请至少添加一个颜色规格")
             else:
                 try:
-                    # 封装价格字典 (Key 对应 ProductService 中的 map)
-                    prices = {
-                        "weidian": price_w,
-                        "offline_cn": price_cn,
-                        "other": price_other,
-                        "booth": price_b,
-                        "instagram": price_insta,
-                        "offline_jp": price_jp,
-                        "other_jpy": price_other_jpy
-                    }
+                    # 构造符合新 Service 逻辑的数据结构：[{name, qty, prices: {pf: val}}]
+                    colors_with_prices = []
+                    for _, row in valid_rows.iterrows():
+                        color_data = {
+                            "name": row["颜色名称"].strip(),
+                            "qty": int(row["预计制作数量"]),
+                            "prices": {pf_key: float(row[pf_key]) for pf_key in PLATFORM_CODES.keys()}
+                        }
+                        colors_with_prices.append(color_data)
                     
                     # 调用 Service
-                    new_prod = service.create_product(
+                    service.create_product(
                         name=new_name,
                         platform=new_platform,
-                        prices=prices,
-                        colors=st.session_state.create_temp_colors
+                        colors_with_prices=colors_with_prices
                     )
                     
-                    st.session_state.create_temp_colors = []
+                    # 清空缓存
+                    if "create_matrix_df" in st.session_state:
+                        del st.session_state["create_matrix_df"]
+                    
                     st.session_state["toast_msg"] = (f"产品《{new_name}》创建成功！", "✅")
                     st.rerun()
                 except Exception as e:
@@ -125,8 +111,6 @@ def show_product_page(db):
     # ================= 模块 2：编辑产品 =================
     with tab2:
         st.subheader("修改现有产品信息")
-        
-        # 使用 Service 获取列表
         all_products = service.get_all_products()
         
         if not all_products:
@@ -134,113 +118,70 @@ def show_product_page(db):
         else:
             prod_options = {p.id: p.name for p in all_products}
             selected_prod_id = st.selectbox("选择要编辑的产品", options=list(prod_options.keys()), format_func=lambda x: prod_options[x])
-            
-            # 使用 Service 获取详情
             target_prod = service.get_product_by_id(selected_prod_id)
             
             if target_prod:
-                # 【关键修改】数据回填逻辑：从 prices 列表读取
+                # 准备编辑用的矩阵数据（回填现有数据）
                 if st.session_state.get("last_edited_prod_id") != target_prod.id:
-                    st.session_state["edit_name"] = target_prod.name
-                    st.session_state["edit_platform"] = target_prod.target_platform
+                    matrix_data = []
+                    for c in target_prod.colors:
+                        row = {
+                            "颜色名称": c.color_name,
+                            "库存/预计数量": c.quantity
+                        }
+                        # 填充各平台价格
+                        for pf_key in PLATFORM_CODES.keys():
+                            row[pf_key] = get_price(c, pf_key)
+                        matrix_data.append(row)
                     
-                    # 使用辅助函数读取价格
-                    st.session_state["edit_p_w"] = get_price(target_prod, "weidian")
-                    st.session_state["edit_p_cn"] = get_price(target_prod, "offline_cn")
-                    st.session_state["edit_p_other"] = get_price(target_prod, "other")
-                    
-                    st.session_state["edit_p_b"] = get_price(target_prod, "booth")
-                    st.session_state["edit_p_insta"] = get_price(target_prod, "instagram")
-                    st.session_state["edit_p_jp"] = get_price(target_prod, "offline_jp")
-                    st.session_state["edit_p_other_jpy"] = get_price(target_prod, "other_jpy")
-                    
-                    st.session_state["last_edited_prod_id"] = target_prod.id
+                    st.session_state.edit_matrix_df = pd.DataFrame(matrix_data)
+                    st.session_state.last_edited_prod_id = target_prod.id
                 
-                st.divider()
+                edit_name = st.text_input("修改产品名称", value=target_prod.name)
                 
-                # --- A. 基础信息 ---
-                ec1, ec2 = st.columns(2)
-                edit_name = ec1.text_input("修改产品名称", value=target_prod.name)
-                
-                platform_idx = 0
-                if target_prod.target_platform in platform_options:
-                    platform_idx = platform_options.index(target_prod.target_platform)
-                edit_platform = ec2.selectbox("首发平台", platform_options, index=platform_idx, key="edit_platform")
+                platform_idx = platform_options.index(target_prod.target_platform) if target_prod.target_platform in platform_options else 0
+                edit_platform = st.selectbox("首发平台", platform_options, index=platform_idx)
 
-                # --- B. 规格与数量修改 ---
-                st.markdown("#### 🎨 规格与数量管理")
-                st.caption("请直接在下方表格中修改名称、数量，或添加/删除行。")
+                st.markdown("#### 📊 规格与多平台定价矩阵")
+                st.caption("修改规格名称或价格后点击下方的确认修改。")
 
-                if "edit_specs_df" not in st.session_state or st.session_state.get("edit_last_id") != selected_prod_id:
-                    db_colors = service.get_product_colors(selected_prod_id)
-                    data = [{"颜色名称": c.color_name, "库存/预计数量": c.quantity} for c in db_colors]
-                    st.session_state.edit_specs_df = pd.DataFrame(data)
-                    st.session_state.edit_last_id = selected_prod_id
+                # 编辑器的列配置
+                edit_col_config = {
+                    "颜色名称": st.column_config.TextColumn("颜色名称", required=True),
+                    "库存/预计数量": st.column_config.NumberColumn("库存/预计数量", min_value=0, step=1, format="%d"),
+                }
+                for pf_key, pf_name in PLATFORM_CODES.items():
+                    edit_col_config[pf_key] = st.column_config.NumberColumn(pf_name, format="%.2f")
 
-                edited_df = st.data_editor(
-                    st.session_state.edit_specs_df,
+                edited_matrix = st.data_editor(
+                    st.session_state.edit_matrix_df,
                     num_rows="dynamic",
                     use_container_width=True,
                     hide_index=True,
-                    key="editor_specs",
-                    column_config={
-                        "颜色名称": st.column_config.TextColumn(required=True),
-                        "库存/预计数量": st.column_config.NumberColumn(min_value=0, step=1, required=True, format="%d")
-                    }
+                    key="edit_product_matrix",
+                    column_config=edit_col_config
                 )
 
-                # --- C. 价格修改 ---
-                st.markdown("#### 定价策略修改")
-                
-                # 从 Session State 读取初始值 (已由上方逻辑填充)
-                st.caption("🇨🇳 CNY")
-                ep_cn1, ep_cn2, ep_cn3 = st.columns(3)
-                e_price_w = ep_cn1.number_input("微店", min_value=0.0, key="edit_p_w")
-                e_price_cn = ep_cn2.number_input("中国线下", min_value=0.0, key="edit_p_cn")
-                e_price_other = ep_cn3.number_input("其他 (CNY)", min_value=0.0, key="edit_p_other")
-
-                st.caption("🇯🇵 JPY")
-                ep_jp1, ep_jp2, ep_jp3, ep_jp4 = st.columns(4)
-                e_price_b = ep_jp1.number_input("Booth", min_value=0.0, key="edit_p_b")
-                e_price_insta = ep_jp2.number_input("Instagram", min_value=0.0, key="edit_p_insta")
-                e_price_jp = ep_jp3.number_input("日本线下", min_value=0.0, key="edit_p_jp")
-                e_price_other_jpy = ep_jp4.number_input("其他 (JPY)", min_value=0.0, key="edit_p_other_jpy")
-
-                st.divider()
-
-                # --- D. 保存逻辑 ---
                 if st.button("💾 确认修改", type="primary", key="btn_save_edit"):
+                    valid_edit_rows = edited_matrix[edited_matrix["颜色名称"].str.strip() != ""]
+                    
                     if not edit_name:
                         st.error("产品名称不能为空")
-                    elif edited_df.empty:
-                        st.error("请至少保留一个颜色规格")
+                    elif valid_edit_rows.empty:
+                        st.error("请至少保留一个规格")
                     else:
                         try:
-                            # 封装价格
-                            prices = {
-                                "weidian": e_price_w,
-                                "offline_cn": e_price_cn,
-                                "other": e_price_other,
-                                "booth": e_price_b,
-                                "instagram": e_price_insta,
-                                "offline_jp": e_price_jp,
-                                "other_jpy": e_price_other_jpy
-                            }
-                            
-                            # 调用 Service 更新
+                            # 调用更新方法，传入包含价格的矩阵 DataFrame
                             service.update_product(
                                 product_id=target_prod.id,
                                 name=edit_name,
                                 platform=edit_platform,
-                                prices=prices,
-                                colors_df=edited_df
+                                color_matrix_data=valid_edit_rows
                             )
 
                             st.session_state["toast_msg"] = (f"产品《{edit_name}》修改成功！", "✅")
-                            
-                            if "edit_last_id" in st.session_state:
-                                del st.session_state["edit_last_id"]
-                            
+                            if "last_edited_prod_id" in st.session_state:
+                                del st.session_state["last_edited_prod_id"]
                             st.rerun()
                         except Exception as e:
                             st.error(f"修改失败: {e}")
@@ -248,55 +189,32 @@ def show_product_page(db):
     # ================= 模块 3：产品列表 =================
     with tab3:
         st.subheader("现有产品列表")
-        # 这里的 products 已经 eager load 了 prices
         products = service.get_all_products()
         
         if products:
             for p in products:
                 with st.expander(f"📦 {p.name}"):
-                    col_a, col_b = st.columns([1, 1])
+                    st.markdown(f"**首发平台**: {p.target_platform} | **制作总数**: {p.total_quantity} 件")
                     
-                    with col_a:
-                        st.markdown("#### 🏷️ 基础信息")
-                        st.write(f"**首发平台**: {p.target_platform}")
-                        st.write(f"**制作总数**: {p.total_quantity} 件")
-                        
-                        st.caption("定价明细")
-                        # 【关键修改】从 prices 关系中读取显示
-                        price_data = {
-                            "渠道": ["微店", "Booth", "Instagram", "日本线下", "中国线下", "其他(CNY)", "其他(JPY)"],
-                            "价格": [
-                                f"¥ {get_price(p, 'weidian')}", 
-                                f"¥ {get_price(p, 'booth')} (JPY)",
-                                f"¥ {get_price(p, 'instagram')} (JPY)",
-                                f"¥ {get_price(p, 'offline_jp')} (JPY)",
-                                f"¥ {get_price(p, 'offline_cn')}",
-                                f"¥ {get_price(p, 'other')}",
-                                f"¥ {get_price(p, 'other_jpy')} (JPY)"
-                            ]
-                        }
-                        st.dataframe(pd.DataFrame(price_data), use_container_width=True, hide_index=True)
+                    st.markdown("#### 🎨 规格与定价详情")
                     
-                    with col_b:
-                        st.markdown("#### 🎨 规格明细")
-                        # p.colors 已经预加载了
-                        if p.colors:
-                            tags_html = "".join([
-                                f'<span style="background-color:#3E3E3E; border:1px solid #666666; padding:4px 12px; border-radius:15px; margin:4px; display:inline-block; color:#FFFFFF; font-size:14px;">'
-                                f'<b>{c.color_name}</b> <span style="color:#aaa; font-size:12px; margin-left:5px;">x{c.quantity}</span>'
-                                f'</span>' 
-                                for c in p.colors
-                            ])
-                            st.markdown(tags_html, unsafe_allow_html=True)
-                        else:
-                            st.caption("暂无颜色规格")
+                    # 构建展示表格：每一行是一个款式，每一列是一个平台价格
+                    display_data = []
+                    for c in p.colors:
+                        row = {"规格": c.color_name, "库存/预计": c.quantity}
+                        for pf_key, pf_name in PLATFORM_CODES.items():
+                            price = get_price(c, pf_key)
+                            row[pf_name] = f"¥ {price:,.2f}" if price > 0 else "-"
+                        display_data.append(row)
+                    
+                    st.dataframe(pd.DataFrame(display_data), use_container_width=True, hide_index=True)
 
                     st.divider()
                     
                     _, col_delete = st.columns([5, 1])
                     with col_delete:
                         with st.popover("🗑️ 删除产品", use_container_width=True):
-                            st.warning(f"⚠️ 确定要删除《{p.name}》吗？")
+                            st.warning(f"确定要删除《{p.name}》吗？")
                             if st.button("确认删除", type="primary", key=f"btn_confirm_del_{p.id}"):
                                 try:
                                     service.delete_product(p.id)

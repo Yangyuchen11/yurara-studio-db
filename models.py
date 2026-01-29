@@ -22,30 +22,29 @@ class Product(Base):
     # 【优化2】在 Python 层面配置级联删除 (cascade="all, delete-orphan")
     costs = relationship("CostItem", back_populates="product", cascade="all, delete-orphan")
     colors = relationship("ProductColor", back_populates="product", cascade="all, delete-orphan")
-    # 【新增】关联价格表
-    prices = relationship("ProductPrice", back_populates="product", cascade="all, delete-orphan")
-
-# 【新增】产品价格表 (解决反范式化问题)
-class ProductPrice(Base):
-    __tablename__ = "product_prices"
-    id = Column(Integer, primary_key=True, index=True)
-    # 【优化3】在数据库层面配置级联删除 (ondelete="CASCADE")
-    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE")) 
-    platform = Column(String) # 平台代号 (如: weidian, booth, offline_jp)
-    currency = Column(String) # 币种 (CNY, JPY)
-    price = Column(Float, default=0.0)
-    
-    product = relationship("Product", back_populates="prices")
 
 class ProductColor(Base):
     __tablename__ = "product_colors"
     id = Column(Integer, primary_key=True, index=True)
-    # 【优化3】数据库级联删除
     product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"))
     color_name = Column(String)
     quantity = Column(Integer)
     produced_quantity = Column(Integer, default=0)
+    
     product = relationship("Product", back_populates="colors")
+    # 【新增】颜色关联价格
+    prices = relationship("ProductPrice", back_populates="color", cascade="all, delete-orphan")
+
+class ProductPrice(Base):
+    __tablename__ = "product_prices"
+    id = Column(Integer, primary_key=True, index=True)
+    color_id = Column(Integer, ForeignKey("product_colors.id", ondelete="CASCADE")) 
+    platform = Column(String) 
+    currency = Column(String) 
+    price = Column(Float, default=0.0)
+    
+    # 【修改】反向关联指向 color
+    color = relationship("ProductColor", back_populates="prices")
 
 class CostItem(Base):
     __tablename__ = "cost_items"

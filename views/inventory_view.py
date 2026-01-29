@@ -163,13 +163,17 @@ def show_inventory_page(db):
             )
             
         with c_p2:
-            if st.button("✅ 确认收款 (转收入)", type="primary", use_container_width=True):
-                try:
-                    asset_name = service.confirm_shipping_receipt(selected_pre_id)
-                    st.toast(f"收款完成！资金已存入 {asset_name}", icon="💰")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"操作失败: {e}")
+            # 增加 disabled 状态：如果没有待结算订单，按钮不可点
+            if st.button("✅ 确认收款 (转收入)", type="primary", use_container_width=True, disabled=not pre_items):
+                if not selected_pre_id:
+                     st.error("请先选择一个订单！")
+                else:
+                    try:
+                        result_msg = service.confirm_shipping_receipt(selected_pre_id)
+                        st.toast(f"收款完成！{result_msg}", icon="💰")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"操作失败: {e}")
     else:
         st.info("当前没有待结算的发货单。")
 
