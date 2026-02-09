@@ -28,11 +28,12 @@ def show_sales_order_page(db):
     with st.expander("➕ 创建新订单", expanded=False):
         st.subheader("订单信息")
 
-        # 平台和币种
-        col_p1, col_p2, col_p3 = st.columns(3)
-        platform = col_p1.selectbox("销售平台", list(PLATFORM_CODES.values()))
-        currency = col_p2.selectbox("币种", ["CNY", "JPY"])
-        order_date = col_p3.date_input("订单日期", value=date.today())
+        # 【修改】订单号、平台和币种
+        col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+        order_no = col_p1.text_input("订单号", placeholder="输入订单号（必填）", key="order_no_input")
+        platform = col_p2.selectbox("销售平台", list(PLATFORM_CODES.values()))
+        currency = col_p3.selectbox("币种", ["CNY", "JPY"])
+        order_date = col_p4.date_input("订单日期", value=date.today())
 
         notes = st.text_area("订单备注", placeholder="如：客户名称、特殊要求等")
 
@@ -118,20 +119,25 @@ def show_sales_order_page(db):
                 st.rerun()
 
             if col_btn2.button("✅ 提交订单", type="primary", use_container_width=True):
-                order, error = service.create_order(
-                    items_data=st.session_state.order_items,
-                    platform=platform,
-                    currency=currency,
-                    notes=notes,
-                    order_date=order_date
-                )
-
-                if error:
-                    st.error(f"创建失败: {error}")
+                # 【新增】验证订单号
+                if not order_no or not order_no.strip():
+                    st.error("❌ 请输入订单号")
                 else:
-                    st.success(f"✅ 订单 {order.order_no} 创建成功！库存已扣减。")
-                    st.session_state.order_items = []
-                    st.rerun()
+                    order, error = service.create_order(
+                        items_data=st.session_state.order_items,
+                        platform=platform,
+                        currency=currency,
+                        notes=notes,
+                        order_date=order_date,
+                        order_no=order_no.strip()  # 【新增】传递用户输入的订单号
+                    )
+
+                    if error:
+                        st.error(f"创建失败: {error}")
+                    else:
+                        st.success(f"✅ 订单 {order.order_no} 创建成功！库存已扣减。")
+                        st.session_state.order_items = []
+                        st.rerun()
         else:
             st.info("请添加至少一件商品")
 
