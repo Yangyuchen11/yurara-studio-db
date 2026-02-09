@@ -206,11 +206,12 @@ def show_inventory_page(db):
 
     # ================= 3. 变动录入表单 =================
     st.subheader("📝 库存变动录入")
-    
+
     f_date, f_type, f_var, f_qty, f_remark, f_btn = st.columns([1, 1.1, 1.1, 0.7, 1.2, 0.7])
 
     input_date = f_date.date_input("日期", value=date.today())
-    move_type = f_type.selectbox("变动类型", [StockLogReason.OUT_STOCK, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.PRE_IN, StockLogReason.EXTRA_PROD, StockLogReason.PRE_IN_REDUCE])
+    # 【修改】移除 RETURN_IN (退货入库)
+    move_type = f_type.selectbox("变动类型", [StockLogReason.OUT_STOCK, StockLogReason.IN_STOCK, StockLogReason.PRE_IN, StockLogReason.EXTRA_PROD, StockLogReason.PRE_IN_REDUCE])
     
     color_options = [c.color_name for c in colors] if selected_product_id and colors else ["通用"]
     p_var = f_var.selectbox("款式", color_options)
@@ -218,45 +219,22 @@ def show_inventory_page(db):
     p_remark = f_remark.text_input("备注")
     
     extra_info_col = st.container()
-    
+
     # 额外字段初始化
     out_type = "其他"
-    sale_price = 0.0
-    sale_curr = "CNY"
-    sale_platform = "其他"
-    refund_amount = 0.0
-    refund_curr = "CNY"
-    refund_platform = "其他"
     cons_cat = "其他成本"
     cons_content = ""
 
+    # 【修改】出库类型移除"售出"，只保留"消耗"和"其他"
     if move_type == StockLogReason.OUT_STOCK:
         with extra_info_col:
-            out_type = st.radio("出库类型", ["售出", "消耗", "其他"], horizontal=True)
-            if out_type == "售出":
-                st.info("ℹ️ **流程说明**：点击提交后，库存将**立即扣减**，订单将进入【发货/出库管理】列表待确认收款。")
-                c1, c2, c3 = st.columns(3)
-                sale_curr = c1.selectbox("销售币种", ["CNY", "JPY"], key="out_curr")
-                pf_options = ["微店", "中国线下", "其他"] if sale_curr == "CNY" else ["Booth", "Instagram", "日本线下", "其他"]
-                sale_platform = c2.selectbox("销售平台", pf_options)
-                sale_price = c3.number_input("销售总价 (应收)", min_value=0.0, step=100.0, format="%.2f")
-                if input_qty > 0 and sale_price > 0:
-                    unit_val = sale_price / input_qty
-                    st.caption(f"📊 折合单价: {unit_val:,.2f} {sale_curr}")
+            out_type = st.radio("出库类型", ["消耗", "其他"], horizontal=True)
 
-            elif out_type == "消耗":
+            if out_type == "消耗":
                 st.warning(f"⚠️ 注意：选择【消耗】将自动扣减该商品的【可销售数量】。（记入成本但不产生金额）")
                 c_cons1, c_cons2 = st.columns([1, 2])
                 cons_cat = c_cons1.selectbox("计入成本分类", service.COST_CATEGORIES, index=service.COST_CATEGORIES.index("宣发费") if "宣发费" in service.COST_CATEGORIES else 0)
                 cons_content = c_cons2.text_input("消耗内容 (必填)", placeholder="如：宣发样衣、赠送KOL")
-
-    elif move_type == StockLogReason.RETURN_IN:
-        with extra_info_col:
-            st.info("💡 退货入库：增加库存，同时从流动资金中扣除退款。")
-            rc1, rc2, rc3 = st.columns(3)
-            refund_curr = rc1.selectbox("退款币种", ["CNY", "JPY"], key="ref_curr")
-            refund_amount = rc2.number_input("退款总额", min_value=0.0, step=100.0)
-            refund_platform = rc3.text_input("退款平台", placeholder="如：微店")
 
     with f_btn:
         st.write("")
@@ -267,6 +245,7 @@ def show_inventory_page(db):
                 st.error("❌ 失败：请填写【消耗内容】。")
             else:
                 try:
+                    # 【修改】移除售出和退货相关参数
                     msg = service.add_inventory_movement(
                         product_id=selected_product_id,
                         product_name=p_name,
@@ -276,19 +255,19 @@ def show_inventory_page(db):
                         date_obj=input_date,
                         remark=p_remark,
                         out_type=out_type,
-                        sale_curr=sale_curr,
-                        sale_platform=sale_platform,
-                        sale_price=sale_price,
+                        sale_curr="CNY",  # 默认值
+                        sale_platform="其他",  # 默认值
+                        sale_price=0.0,  # 默认值
                         cons_cat=cons_cat,
                         cons_content=cons_content,
-                        refund_curr=refund_curr,
-                        refund_amount=refund_amount,
-                        refund_platform=refund_platform
+                        refund_curr="CNY",  # 默认值
+                        refund_amount=0.0,  # 默认值
+                        refund_platform="其他"  # 默认值
                     )
                     # 提交事务
                     service.commit()
-                    
-                    icon_map = {StockLogReason.OUT_STOCK: "📤", StockLogReason.IN_STOCK: "📥", StockLogReason.RETURN_IN: "↩️", StockLogReason.PRE_IN: "📥", StockLogReason.PRE_IN_REDUCE: "📉", StockLogReason.EXTRA_PROD: "📥"}
+
+                    icon_map = {StockLogReason.OUT_STOCK: "📤", StockLogReason.IN_STOCK: "📥", StockLogReason.PRE_IN: "📥", StockLogReason.PRE_IN_REDUCE: "📉", StockLogReason.EXTRA_PROD: "📥"}
                     st.toast(msg, icon=icon_map.get(move_type, "✅"))
                     st.rerun()
                 except ValueError as ve:
