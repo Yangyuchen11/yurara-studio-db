@@ -1,32 +1,18 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from datetime import date, datetime
+from datetime import date
 from models import (
     SalesOrder, SalesOrderItem, OrderRefund,
-    Product, ProductColor, InventoryLog, CompanyBalanceItem,
+    Product, InventoryLog, CompanyBalanceItem,
     CostItem, FinanceRecord
 )
-from constants import OrderStatus, FinanceCategory, AssetPrefix, Currency
-import random
-import string
+from constants import OrderStatus, FinanceCategory, AssetPrefix
 
 class SalesOrderService:
     def __init__(self, db: Session):
         self.db = db
 
     # ================= 辅助方法 =================
-
-    def _generate_order_no(self):
-        """生成唯一订单号: YS + 日期 + 4位随机数"""
-        date_str = datetime.now().strftime("%Y%m%d")
-        random_str = ''.join(random.choices(string.digits, k=4))
-        order_no = f"YS{date_str}{random_str}"
-
-        # 检查是否重复
-        exists = self.db.query(SalesOrder).filter(SalesOrder.order_no == order_no).first()
-        if exists:
-            return self._generate_order_no()  # 递归重新生成
-        return order_no
 
     def _update_asset_by_name(self, name, delta, category="asset", currency="CNY"):
         """按名称更新资产项"""
@@ -94,7 +80,7 @@ class SalesOrderService:
 
     # ================= 2. 创建订单 =================
 
-    def create_order(self, items_data, platform, currency, notes="", order_date=None):
+    def create_order(self, items_data, platform, currency, notes="", order_date=None, order_no=None):
         """
         创建订单并扣减库存
 
@@ -106,13 +92,24 @@ class SalesOrderService:
         currency: 币种
         notes: 订单备注
         order_date: 订单日期（默认今天）
+        order_no: 订单号（用户输入，必填）
 
         返回: (order, error_message)
         """
         if not items_data:
             return None, "订单明细不能为空"
 
+        # 【新增】验证订单号
+        if not order_no or not order_no.strip():
+            return None, "订单号不能为空"
+
+        order_no = order_no.strip()
         order_date = order_date or date.today()
+
+        # 【新增】检查订单号是否已存在
+        existing = self.db.query(SalesOrder).filter(SalesOrder.order_no == order_no).first()
+        if existing:
+            return None, f"订单号 {order_no} 已存在，请使用其他订单号"
 
         # 1. 校验库存是否充足
         for item in items_data:
@@ -130,13 +127,10 @@ class SalesOrderService:
             if current_stock < quantity:
                 return None, f"库存不足：{product_name}-{variant} (需要:{quantity}, 可用:{current_stock})"
 
-        # 2. 生成订单号
-        order_no = self._generate_order_no()
-
-        # 3. 计算订单总金额
+        # 2. 计算订单总金额
         total_amount = sum(item["quantity"] * item["unit_price"] for item in items_data)
 
-        # 4. 创建订单主记录
+        # 3. 创建订单主记录（使用用户输入的订单号）
         order = SalesOrder(
             order_no=order_no,
             status=OrderStatus.PENDING,
@@ -149,7 +143,7 @@ class SalesOrderService:
         self.db.add(order)
         self.db.flush()  # 获取 order.id
 
-        # 5. 创建订单明细并扣减库存
+        # 4. 创建订单明细并扣减库存
         for item in items_data:
             product_name = item["product_name"]
             variant = item["variant"]
