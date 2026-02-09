@@ -59,6 +59,7 @@ class CostItem(Base):
     quantity = Column(Float, default=1)   # 数量
     remarks = Column(String, default="")    # 备注
     unit = Column(String, default="") # 单位 (如: 米/个)
+    order_no = Column(String, nullable=True) # 【新增】订单号 (用于售后成本)
 
     # 关联流水 (删除流水时自动清理关联的成本项)
     finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
@@ -174,3 +175,56 @@ class SystemSetting(Base):
     key = Column(String, primary_key=True, index=True) # 例如 "exchange_rate"
     value = Column(String) # 存为字符串，使用时再转换类型
     description = Column(String, nullable=True)
+
+# --- K. 销售订单管理 ---
+class SalesOrder(Base):
+    __tablename__ = "sales_orders"
+    id = Column(Integer, primary_key=True, index=True)
+    order_no = Column(String, unique=True, index=True) # 订单号
+    status = Column(String, default="待发货") # 状态: 待发货/已发货/订单完成/售后中
+    total_amount = Column(Float, default=0.0) # 订单总金额
+    currency = Column(String, default="CNY") # 币种
+    platform = Column(String) # 销售平台
+
+    # 时间节点
+    created_date = Column(Date, default=datetime.now) # 创建日期
+    shipped_date = Column(Date, nullable=True) # 发货日期
+    completed_date = Column(Date, nullable=True) # 完成日期
+
+    notes = Column(String, default="") # 备注
+
+    # 关联
+    items = relationship("SalesOrderItem", back_populates="order", cascade="all, delete-orphan")
+    refunds = relationship("OrderRefund", back_populates="order", cascade="all, delete-orphan")
+
+class SalesOrderItem(Base):
+    __tablename__ = "sales_order_items"
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("sales_orders.id", ondelete="CASCADE"))
+
+    product_name = Column(String) # 商品名称
+    variant = Column(String) # 款式/颜色
+    quantity = Column(Integer) # 数量
+    unit_price = Column(Float) # 单价
+    subtotal = Column(Float) # 小计 (quantity * unit_price)
+
+    # 关联
+    order = relationship("SalesOrder", back_populates="items")
+
+class OrderRefund(Base):
+    __tablename__ = "order_refunds"
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("sales_orders.id", ondelete="CASCADE"))
+
+    refund_amount = Column(Float) # 退款金额
+    refund_reason = Column(String) # 退款原因
+    refund_date = Column(Date, default=datetime.now) # 退款日期
+
+    is_returned = Column(Boolean, default=False) # 是否退货
+    returned_quantity = Column(Integer, default=0) # 退货数量
+
+    # 关联到成本项 (售后成本)
+    cost_item_id = Column(Integer, ForeignKey("cost_items.id", ondelete="SET NULL"), nullable=True)
+
+    # 关联
+    order = relationship("SalesOrder", back_populates="refunds")
