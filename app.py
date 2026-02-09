@@ -151,14 +151,6 @@ def set_system_setting(db, key, new_value):
 # 初始化表结构
 Base.metadata.create_all(bind=engine)
 
-# 【新增】运行数据库迁移
-from database_migrations import run_all_migrations
-try:
-    run_all_migrations(engine)
-except Exception as e:
-    # 迁移失败不阻止应用启动
-    pass
-
 # 获取会话
 db = next(get_db())
 
@@ -180,9 +172,9 @@ with st.sidebar:
             "公司账面概览",
             "商品管理",
             "商品成本核算",
-            "销售订单管理",  # 【新增】
-            "销售额一览",
+            "销售订单管理",
             "库存管理",
+            "销售额一览",
             "固定资产管理",
             "其他资产管理"
         ],
@@ -191,9 +183,9 @@ with st.sidebar:
             "clipboard-data",
             "bag-heart",
             "calculator",
-            "cart-check",  # 【新增】订单图标
-            "graph-up-arrow",
+            "cart-check",
             "arrow-left-right",
+            "graph-up-arrow",
             "camera-reels",
             "box-seam"
         ],

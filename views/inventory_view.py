@@ -287,8 +287,8 @@ def show_inventory_page(db):
             desc = l.note or ""
             if l.is_sold:
                 prefix = ""
-                if l.change_amount < 0: prefix = f"售出: ¥{l.sale_amount:.1f}{l.currency} ({l.platform}) | "
-                else: prefix = f"退货: -¥{abs(l.sale_amount):.1f}{l.currency} ({l.platform}) | "
+                if l.change_amount < 0: prefix = f"售出: ¥{l.sale_amount}{l.currency} ({l.platform}) | "
+                else: prefix = f"退货: -¥{abs(l.sale_amount)}{l.currency} ({l.platform}) | "
                 if not desc.startswith("售出:") and not desc.startswith("退货:"):
                     desc = prefix + desc
             elif l.is_other_out and not desc.startswith("其他出库:"):
