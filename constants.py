@@ -46,18 +46,25 @@ class StockLogReason:
     """库存变动原因 (对应 InventoryLog.reason)"""
     IN_STOCK = "入库"
     OUT_STOCK = "出库"
-    
+
     PRE_IN = "预入库"
     PRE_IN_REDUCE = "计划入库减少"
     PRE_IN_COMPLETE = "预入库完成"
-    
+
     EXTRA_PROD = "额外生产入库"
-    
+
     WAIT_PROD = "排单待产"             # 对应普通的预入库
     EXTRA_PROD_WAIT = "额外生产待产"    # 对应额外生产入库
 
     RETURN_IN = "退货入库"
     UNDO_SHIP = "发货撤销"
+
+class OrderStatus:
+    """销售订单状态 (对应 SalesOrder.status)"""
+    PENDING = "待发货"       # 已创建订单，已扣减库存
+    SHIPPED = "已发货"       # 已发货
+    COMPLETED = "订单完成"   # 已收款，计入收入
+    AFTER_SALES = "售后中"   # 有售后问题
 
 class AssetPrefix:
     """自动生成的资产名称前缀 (用于 Logic Key 匹配)"""
