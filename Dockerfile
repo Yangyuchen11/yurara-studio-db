@@ -28,10 +28,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ==========================================
 COPY . .
 
-# 暴露 Streamlit 端口
-EXPOSE 8501
+# 暴露 Streamlit 端口 (改成 8080 迎合 Zeabur)
+EXPOSE 8080
 
-# 注意：删除了 HEALTHCHECK，由 Zeabur 平台接管容器状态监控
-
-# 默认启动命令 (用于 Web 前端)
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# 默认启动命令 (改成 8080 迎合 Zeabur)
+CMD ["streamlit", "run", "app.py", "--server.port=8080", "--server.address=0.0.0.0"]
