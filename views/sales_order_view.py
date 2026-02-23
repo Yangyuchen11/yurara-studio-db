@@ -165,50 +165,10 @@ def show_sales_order_page(db):
             st.info("暂无订单")
             return
 
-        order_data = []
-        for o in orders:
-            # 计算商品数量
-            item_count = len(o.items)
-            items_summary = ", ".join([f"{i.product_name}-{i.variant}×{i.quantity}" for i in o.items[:2]])
-            if item_count > 2:
-                items_summary += f" 等{item_count}项"
-
-            # 计算已退款金额
-            total_refunded = sum([r.refund_amount for r in o.refunds])
-
-            # 【新增】为状态添加图标
-            status_display = o.status
-            if o.status == OrderStatus.PENDING:
-                status_display = "📦 待发货"
-            elif o.status == OrderStatus.SHIPPED:
-                status_display = "🚚 已发货"
-            elif o.status == OrderStatus.COMPLETED:
-                status_display = "✅ 订单完成"
-            elif o.status == OrderStatus.AFTER_SALES:
-                status_display = "🔧 售后中"
-
-            order_data.append({
-                "ID": o.id,
-                "订单号": o.order_no,
-                "状态": status_display,
-                "商品": items_summary,
-                "金额": o.total_amount,
-                "已退款": total_refunded,
-                "币种": o.currency,
-                "平台": o.platform,
-                "日期": o.created_date,
-                "备注": o.notes
-            })
-
         # 初始化批量操作的session state
         if "batch_selected_orders" not in st.session_state:
             st.session_state.batch_selected_orders = set()
 
-        # 根据状态筛选显示批量操作按钮
-        # 全部选项卡：不显示
-        # 待发货：显示批量发货
-        # 已发货：显示批量完成
-        # 已完成/售后中：不显示
         show_batch_actions = False
         batch_action_type = None
 
@@ -225,17 +185,21 @@ def show_sales_order_page(db):
 
             batch_col1, batch_col2, batch_col3, batch_col4 = st.columns([1, 1, 1.5, 4.5])
 
-            # 全选按钮
+            # 【修复点1】全选按钮：不仅更新集合，还要强制更新复选框的 Session State 组件状态
             if batch_col1.button("全选", key=f"select_all_{status_filter}", use_container_width=True):
-                st.session_state.batch_selected_orders = set([o.id for o in orders])
+                st.session_state.batch_selected_orders.update([o.id for o in orders])
+                for o in orders:
+                    st.session_state[f"select_{o.id}_{status_filter}"] = True
                 st.rerun()
 
-            # 取消全选按钮
+            # 【修复点2】取消全选按钮：同理，强制移除状态
             if batch_col2.button("取消全选", key=f"deselect_all_{status_filter}", use_container_width=True):
-                st.session_state.batch_selected_orders = set()
+                st.session_state.batch_selected_orders.difference_update([o.id for o in orders])
+                for o in orders:
+                    st.session_state[f"select_{o.id}_{status_filter}"] = False
                 st.rerun()
 
-            # 批量操作按钮（只在有选中订单时启用）
+            # 批量操作执行按钮
             if batch_action_type == "ship":
                 button_label = f"📦 批量发货 ({selected_count})" if selected_count > 0 else "📦 批量发货"
                 if batch_col3.button(button_label,
@@ -255,7 +219,7 @@ def show_sales_order_page(db):
                     if success_count > 0:
                         st.toast(f"✅ 成功发货 {success_count} 个订单", icon="✅")
                     if error_messages:
-                        for err_msg in error_messages[:5]:  # 只显示前5条错误
+                        for err_msg in error_messages[:5]:
                             st.error(err_msg)
 
                     st.session_state.batch_selected_orders = set()
@@ -280,7 +244,7 @@ def show_sales_order_page(db):
                     if success_count > 0:
                         st.toast(f"✅ 成功完成 {success_count} 个订单", icon="💰")
                     if error_messages:
-                        for err_msg in error_messages[:5]:  # 只显示前5条错误
+                        for err_msg in error_messages[:5]:
                             st.error(err_msg)
 
                     st.session_state.batch_selected_orders = set()
@@ -288,7 +252,6 @@ def show_sales_order_page(db):
 
             st.divider()
 
-        # 【修改】使用表头 + 循环渲染每行，在最后添加操作按钮
         # 表头
         with st.container(border=True):
             header_cols = st.columns([0.5, 1.2, 1, 2.3, 1, 1, 0.8, 1, 1, 2.5])
@@ -303,26 +266,23 @@ def show_sales_order_page(db):
             header_cols[8].markdown("**日期**")
             header_cols[9].markdown("**操作**")
 
-        # 复选框状态切换函数
-        def toggle_selection(order_id):
+        # 【修复点3】复选框状态切换函数优化，通过读取组件自身状态来判定
+        def toggle_selection(order_id, widget_key):
             """切换订单选择状态"""
-            if order_id in st.session_state.batch_selected_orders:
-                st.session_state.batch_selected_orders.discard(order_id)
-            else:
+            if st.session_state.get(widget_key, False):
                 st.session_state.batch_selected_orders.add(order_id)
+            else:
+                st.session_state.batch_selected_orders.discard(order_id)
 
-        # 【修改】渲染每一行订单
+        # 渲染每一行订单
         for o in orders:
-            # 计算商品摘要
             item_count = len(o.items)
             items_summary = ", ".join([f"{i.product_name}-{i.variant}×{i.quantity}" for i in o.items[:2]])
             if item_count > 2:
                 items_summary += f" 等{item_count}项"
 
-            # 计算已退款金额
             total_refunded = sum([r.refund_amount for r in o.refunds])
 
-            # 状态显示
             status_display = o.status
             if o.status == OrderStatus.PENDING:
                 status_display = "📦 待发货"
@@ -336,12 +296,15 @@ def show_sales_order_page(db):
             with st.container(border=True):
                 row_cols = st.columns([0.5, 1.2, 1, 2.3, 1, 1, 0.8, 1, 1, 2.5])
 
-                # 复选框
-                is_selected = o.id in st.session_state.batch_selected_orders
-                row_cols[0].checkbox("", value=is_selected, key=f"select_{o.id}_{status_filter}",
+                # 【修复点4】渲染复选框前确保状态一致性
+                cb_key = f"select_{o.id}_{status_filter}"
+                if cb_key not in st.session_state:
+                    st.session_state[cb_key] = (o.id in st.session_state.batch_selected_orders)
+
+                row_cols[0].checkbox(f"选择订单 {o.order_no}", key=cb_key,
                                     label_visibility="collapsed",
                                     on_change=toggle_selection,
-                                    args=(o.id,))
+                                    args=(o.id, cb_key))
 
                 row_cols[1].write(o.order_no)
                 row_cols[2].write(status_display)
@@ -352,11 +315,10 @@ def show_sales_order_page(db):
                 row_cols[7].write(o.platform)
                 row_cols[8].write(str(o.created_date))
 
-                # 【新增】操作按钮列 - 所有按钮始终显示，根据状态启用/禁用
                 with row_cols[9]:
                     btn_cols = st.columns(5)
 
-                    # 按钮1: 发货（仅待发货状态可用）
+                    # 发货
                     with btn_cols[0]:
                         can_ship = (o.status == OrderStatus.PENDING)
                         help_text = "标记发货" if can_ship else "仅待发货订单可发货"
@@ -369,7 +331,7 @@ def show_sales_order_page(db):
                             except Exception as e:
                                 st.error(str(e))
 
-                    # 按钮2: 完成（仅已发货状态可用，必须先发货）
+                    # 完成
                     with btn_cols[1]:
                         can_complete = (o.status == OrderStatus.SHIPPED)
                         if o.status == OrderStatus.PENDING:
@@ -387,56 +349,46 @@ def show_sales_order_page(db):
                             except Exception as e:
                                 st.error(str(e))
 
-                    # 按钮3: 售后（仅已发货、已完成、售后中状态可用）
+                    # 售后
                     with btn_cols[2]:
                         can_refund = (o.status in [OrderStatus.SHIPPED, OrderStatus.COMPLETED, OrderStatus.AFTER_SALES])
                         help_text = "申请售后" if can_refund else "待发货订单不能申请售后"
                         if st.button("🔧", key=f"refund_{o.id}_{status_filter}", help=help_text,
                                     use_container_width=True, disabled=not can_refund):
-                            # 关闭所有其他订单的售后和详情
                             for order in orders:
                                 if order.id != o.id:
                                     st.session_state.pop(f"show_refund_form_{order.id}", None)
                                     st.session_state.pop(f"show_detail_{order.id}", None)
-                            # 切换当前订单的售后显示状态
                             st.session_state[f"show_refund_form_{o.id}"] = not st.session_state.get(f"show_refund_form_{o.id}", False)
-                            # 关闭详情
                             st.session_state.pop(f"show_detail_{o.id}", None)
                             st.rerun()
 
-                    # 按钮4: 详情（所有状态都可用）
+                    # 详情
                     with btn_cols[3]:
                         if st.button("📄", key=f"detail_{o.id}_{status_filter}", help="查看详情",
                                     use_container_width=True):
-                            # 关闭所有其他订单的售后和详情
                             for order in orders:
                                 if order.id != o.id:
                                     st.session_state.pop(f"show_refund_form_{order.id}", None)
                                     st.session_state.pop(f"show_detail_{order.id}", None)
-                            # 切换当前订单的详情显示状态
                             st.session_state[f"show_detail_{o.id}"] = not st.session_state.get(f"show_detail_{o.id}", False)
-                            # 关闭售后
                             st.session_state.pop(f"show_refund_form_{o.id}", None)
                             st.rerun()
 
-                    # 按钮5: 删除（所有状态都可用）
+                    # 删除
                     with btn_cols[4]:
                         if st.button("🗑️", key=f"delete_{o.id}_{status_filter}", help="删除订单",
                                     use_container_width=True):
-                            # 显示确认对话框
                             st.session_state[f"show_delete_confirm_{o.id}"] = True
                             st.rerun()
 
-                # 【新增】删除确认对话框
+                # 删除确认对话框
                 if st.session_state.get(f"show_delete_confirm_{o.id}"):
                     st.divider()
                     with st.container(border=True):
                         st.warning(f"⚠️ 确认删除订单 **{o.order_no}** 吗？")
                         st.markdown("**此操作将：**")
-                        st.markdown("- 完整回滚订单数据")
-                        st.markdown("- 回滚库存、资产、财务流水")
-                        st.markdown("- 删除所有售后记录")
-                        st.markdown("- **此操作不可恢复！**")
+                        st.markdown("- 完整回滚订单数据\n- 回滚库存、资产、财务流水\n- 删除所有售后记录\n- **此操作不可恢复！**")
 
                         col_del1, col_del2 = st.columns(2)
 
@@ -455,12 +407,11 @@ def show_sales_order_page(db):
                             st.session_state.pop(f"show_delete_confirm_{o.id}", None)
                             st.rerun()
 
-                # 【新增】在订单行下方显示售后管理界面
+                # 售后管理界面
                 if st.session_state.get(f"show_refund_form_{o.id}"):
                     st.divider()
                     st.markdown(f"**售后管理**")
 
-                    # 显示已有的售后记录
                     if o.refunds:
                         st.markdown("**已有售后记录:**")
                         for idx, r in enumerate(o.refunds):
@@ -473,11 +424,9 @@ def show_sales_order_page(db):
 
                                 with col_r5:
                                     btn_c1, btn_c2 = st.columns(2)
-                                    # 修改按钮
                                     if btn_c1.button("✏️", key=f"edit_refund_{r.id}_{status_filter}", help="修改", use_container_width=True):
                                         st.session_state[f"edit_refund_{r.id}"] = True
                                         st.rerun()
-                                    # 删除按钮
                                     if btn_c2.button("🗑️", key=f"del_refund_{r.id}_{status_filter}", help="删除", use_container_width=True):
                                         try:
                                             msg = service.delete_refund(r.id)
@@ -486,7 +435,6 @@ def show_sales_order_page(db):
                                         except Exception as e:
                                             st.error(str(e))
 
-                                # 修改表单
                                 if st.session_state.get(f"edit_refund_{r.id}"):
                                     with st.form(f"edit_refund_form_{r.id}_{status_filter}"):
                                         st.markdown("**修改售后记录:**")
@@ -516,7 +464,6 @@ def show_sales_order_page(db):
 
                         st.divider()
 
-                    # 添加新售后记录
                     with st.form(f"new_refund_form_{o.id}_{status_filter}"):
                         st.markdown("**添加新售后:**")
                         refund_amount = st.number_input("售后金额", min_value=0.0, step=10.0, format="%.2f")
@@ -565,7 +512,7 @@ def show_sales_order_page(db):
                             del st.session_state[f"show_refund_form_{o.id}"]
                             st.rerun()
 
-                # 【新增】在订单行下方显示订单详情
+                # 订单详情
                 if st.session_state.get(f"show_detail_{o.id}"):
                     st.divider()
                     st.markdown(f"**订单详情**")
@@ -607,7 +554,6 @@ def show_sales_order_page(db):
 
                     st.write(f"**订单总额: {o.total_amount:.2f} {o.currency}**")
 
-                    # 售后记录
                     if o.refunds:
                         st.divider()
                         st.markdown("**售后记录:**")

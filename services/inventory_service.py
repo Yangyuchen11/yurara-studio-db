@@ -161,9 +161,9 @@ class InventoryService:
             pl.reason = StockLogReason.PRE_IN_COMPLETE
             pl.note = (pl.note or "") + f" [已入库:{original_type}]"
         
-        # 3. 清零计划数量 (如果是计划内的)
-        if variant_color_obj.quantity > 0:
-            variant_color_obj.quantity = 0 
+        # # 3. 清零计划数量 (如果是计划内的) -> 该功能废止，UI界面保留计划生产数据
+        # if variant_color_obj.quantity > 0:
+        #     variant_color_obj.quantity = 0 
         
         # 4. 清理尾差 (保持原有逻辑)
         # ... (保留原有清理尾差逻辑，注意查询条件也要包含 EXTRA_PROD)
