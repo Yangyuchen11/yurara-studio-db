@@ -207,7 +207,7 @@ def show_inventory_page(db):
     # ================= 3. 变动录入表单 =================
     st.subheader("📝 库存变动录入")
 
-    f_date, f_type, f_var, f_qty, f_remark, f_btn = st.columns([1, 1.1, 1.1, 0.7, 1.2, 0.7])
+    f_date, f_type, f_var, f_qty, f_remark, f_btn = st.columns([1, 1.1, 1.1, 0.7, 1.2, 0.7], vertical_alignment="bottom")
 
     input_date = f_date.date_input("日期", value=date.today())
     # 【修改】移除 RETURN_IN (退货入库)

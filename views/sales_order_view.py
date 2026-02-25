@@ -113,8 +113,9 @@ def show_sales_order_page(db):
                 currency = col_p3.selectbox("币种", ["CNY", "JPY"])
                 order_date = col_p4.date_input("订单日期", value=date.today())
 
-                col_price, col_notes = st.columns([1, 3])
+                col_price, col_fee, col_notes = st.columns([1, 1, 2], vertical_alignment="bottom")
                 total_price = col_price.number_input("订单总价", min_value=0.0, step=10.0, value=0.0, format="%.2f", key="order_total_price")
+                deduct_fee = col_fee.checkbox("扣除平台手续费", value=False, help="微店(0.6%), Booth(5.6%+22 JPY/笔)")
                 notes = col_notes.text_input("订单备注", placeholder="如：客户名称、特殊要求等", key="order_notes_input")
                 st.divider()
 
@@ -130,32 +131,51 @@ def show_sales_order_page(db):
                         variant_quantities[color] = qty
 
                     st.divider()
+                    
+                    # === 计算逻辑：处理手续费 ===
                     total_quantity = sum(variant_quantities.values())
-                    col_qty_display, col_price_display, col_spacer = st.columns([1, 1.5, 2])
+                    gross_price = total_price
+                    fee = 0.0
+                    
+                    if deduct_fee:
+                        if platform == "微店":
+                            fee = gross_price * 0.006
+                        elif platform == "Booth":
+                            # Booth 计算：仅在选择日元时严格+22JPY；如错选了CNY暂以近1 CNY替代
+                            base_fixed_fee = 22 if currency == "JPY" else 1.0 
+                            fee = gross_price * 0.056 + base_fixed_fee
+                            
+                    net_price = gross_price - fee
+                    
+                    # === 显示数据 ===
+                    col_qty_display, col_price_display, col_spacer = st.columns([1, 1.8, 1.2])
                     col_qty_display.markdown(f"**总数量: {total_quantity} 件**")
 
-                    if total_quantity > 0 and total_price > 0:
-                        unit_price = total_price / total_quantity
-                        col_price_display.markdown(f"**平均单价: {unit_price:.2f} {currency}/件**")
+                    if total_quantity > 0 and gross_price > 0:
+                        unit_price = net_price / total_quantity
+                        fee_str = f" (已扣除预估手续费: {fee:.2f})" if fee > 0 else ""
+                        col_price_display.markdown(f"**实际净收: {net_price:.2f} {currency} | 平均单价: {unit_price:.2f} {currency}/件**{fee_str}")
                     else:
                         col_price_display.markdown(f"**平均单价: - {currency}/件**")
 
                     if st.button("✅ 提交订单", type="primary", width="stretch"):
                         if not order_no or not order_no.strip(): st.error("❌ 请输入订单号")
                         elif total_quantity == 0: st.error("❌ 请至少输入一个款式的数量")
-                        elif total_price <= 0: st.error("❌ 请输入订单总价")
+                        elif gross_price <= 0: st.error("❌ 请输入订单总价")
+                        elif net_price <= 0: st.error("❌ 扣除手续费后的净金额小于等于 0，请检查")
                         else:
                             items_data = []
-                            unit_price = total_price / total_quantity
+                            # 注意：保存至数据库的是扣除过手续费之后的净额(net_price)
+                            final_unit_price = net_price / total_quantity
                             for color, qty in variant_quantities.items():
                                 if qty > 0:
-                                    items_data.append({"product_name": product_filter, "variant": color, "quantity": qty, "unit_price": unit_price, "subtotal": qty * unit_price})
+                                    items_data.append({"product_name": product_filter, "variant": color, "quantity": qty, "unit_price": final_unit_price, "subtotal": qty * final_unit_price})
                             
                             order, error = service.create_order(items_data=items_data, platform=platform, currency=currency, notes=notes, order_date=order_date, order_no=order_no.strip())
                             if error:
                                 st.error(f"创建失败: {error}")
                             else:
-                                st.success(f"✅ 订单 {order.order_no} 创建成功！")
+                                st.success(f"✅ 订单 {order.order_no} 创建成功！(记账金额: {net_price:.2f} {currency})")
                                 clear_order_caches() # <--- 数据库发生变化，清空缓存
                                 st.rerun()
 

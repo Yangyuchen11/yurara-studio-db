@@ -101,7 +101,7 @@ def show_asset_page(db, exchange_rate):
             active_assets = AssetService.get_active_assets(db)
             
             if active_assets:
-                c_op1, c_op2, c_op3, c_op4 = st.columns([2, 1, 2, 1])
+                c_op1, c_op2, c_op3, c_op4 = st.columns([2, 1, 2, 1], vertical_alignment="bottom")
                 
                 # 构建选择映射
                 asset_map = {f"{a.name} (余: {a.remaining_qty})": a for a in active_assets}

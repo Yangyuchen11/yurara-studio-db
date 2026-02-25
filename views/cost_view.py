@@ -235,7 +235,7 @@ def show_cost_page(db):
             st.metric("🔢 预计可销售数量", f"{int(make_qty)} 件", help="此数值通过库存变动自动更新。")
             st.divider()
             
-            # --- 【修改】价格获取辅助函数：从颜色款式对象获取价格 ---
+            # --- 价格获取辅助函数：从颜色款式对象获取价格 ---
             def get_color_price(color_obj, platform_key):
                 if not color_obj or not color_obj.prices:
                     return 0.0
@@ -253,7 +253,7 @@ def show_cost_page(db):
                 st.caption(f"📝 预算单套成本: ¥ {unit_budget_cost:,.2f}")
                 st.divider()
 
-                # --- 【核心修改】分颜色款式显示毛利参考 ---
+                # --- 分颜色款式显示毛利参考 ---
                 st.markdown("**📈 各款式毛利参考 (基于实付)**")
                 
                 # 定义平台映射
@@ -278,21 +278,34 @@ def show_cost_page(db):
                             
                             if price_val > 0:
                                 has_price_for_this_color = True
-                                # 换算为 CNY
+                                
+                                # 平台手续费计算 (针对微店和Booth)
+                                fee_val = 0.0
+                                if pf_key == "weidian":
+                                    fee_val = price_val * 0.006 # 微店0.6%
+                                elif pf_key == "booth":
+                                    fee_val = price_val * 0.056 + 22 # Booth 5.6% + 22JPY
+                                    
+                                # 换算为 CNY (含手续费折算)
                                 price_cny = price_val * exchange_rate if is_jpy else price_val
-                                # 毛利 = 平台折算价 - 产品单套综合成本
-                                margin = price_cny - unit_real_cost
+                                fee_cny = fee_val * exchange_rate if is_jpy else fee_val
+                                
+                                # 毛利 = 平台折算价 - 预估手续费 - 产品单套综合成本
+                                margin = price_cny - fee_cny - unit_real_cost
                                 margin_rate = (margin / price_cny * 100) if price_cny > 0 else 0
                                 
                                 st.markdown(f"**{label}**")
                                 if is_jpy: st.caption(f"定价: {price_val:,.0f} JPY")
                                 
                                 st.metric(
-                                    label="单件毛利", 
+                                    label="单件毛利 (已扣手续费)", 
                                     value=f"¥ {margin:,.2f}", 
                                     delta=f"{margin_rate:.1f}%",
                                     delta_color="normal" if margin > 0 else "inverse"
                                 )
+                                # 新增：上方小字显示预估手续费
+                                st.caption(f"预估单件手续费: ¥ {fee_cny:,.2f}")
+                                
                                 # 这里的总预期毛利可以根据该款式的计划数量来算
                                 total_profit = margin * color.quantity
                                 st.caption(f"该款式预期总毛利: ¥ {total_profit:,.2f}")
