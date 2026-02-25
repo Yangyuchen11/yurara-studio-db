@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from datetime import date
 from models import (
@@ -44,13 +44,15 @@ class SalesOrderService:
     # ================= 1. 查询方法 =================
 
     def get_all_orders(self, status=None, product_name=None, limit=100):
-        """获取订单列表，支持按状态和商品筛选"""
-        query = self.db.query(SalesOrder)
+        """获取订单列表，支持按状态和商品筛选（已加入 joinedload 优化性能）"""
+        query = self.db.query(SalesOrder).options(
+            joinedload(SalesOrder.items),
+            joinedload(SalesOrder.refunds)
+        )
 
         if status:
             query = query.filter(SalesOrder.status == status)
 
-        # 如果指定了商品名，筛选包含该商品的订单
         if product_name:
             query = query.join(SalesOrder.items).filter(
                 SalesOrderItem.product_name == product_name

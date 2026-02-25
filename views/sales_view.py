@@ -1,32 +1,40 @@
-# views/sales_view.py
 import streamlit as st
 import pandas as pd
 from services.sales_service import SalesService
+from database import SessionLocal
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_cached_sales_df():
+    # 为了缓存机制安全工作，这里重新生成一个短链接
+    db_cache = SessionLocal()
+    try:
+        raw_logs = SalesService.get_raw_sales_logs(db_cache)
+        df = SalesService.process_sales_data(raw_logs)
+        return df
+    finally:
+        db_cache.close()
 
 def show_sales_page(db):
     st.header("📈 销售数据透视")
 
-    # === 1. 获取并处理数据 (Service调用) ===
-    raw_logs = SalesService.get_raw_sales_logs(db)
+    # === 1. 获取并处理数据 (带缓存加速) ===
+    with st.spinner("正在加载销售大数据..."):
+        df = get_cached_sales_df()
     
-    if not raw_logs:
+    if df.empty:
         st.info("暂无销售数据。")
         return
 
-    # 获取清洗后的 DataFrame
-    df = SalesService.process_sales_data(raw_logs)
-    
     # === 2. 全局概览 ===
-    if not df.empty:
-        total_cny = df[df['currency'] == 'CNY']['amount'].sum()
-        total_jpy = df[df['currency'] == 'JPY']['amount'].sum()
-        total_qty = df['qty'].sum()
-        
-        with st.container(border=True):
-            c1, c2, c3 = st.columns(3)
-            c1.metric("累计销售额 (CNY)", f"¥ {total_cny:,.2f}")
-            c2.metric("累计销售额 (JPY)", f"¥ {total_jpy:,.0f}")
-            c3.metric("累计净销量", f"{total_qty} 件")
+    total_cny = df[df['currency'] == 'CNY']['amount'].sum()
+    total_jpy = df[df['currency'] == 'JPY']['amount'].sum()
+    total_qty = df['qty'].sum()
+    
+    with st.container(border=True):
+        c1, c2, c3 = st.columns(3)
+        c1.metric("累计销售额 (CNY)", f"¥ {total_cny:,.2f}")
+        c2.metric("累计销售额 (JPY)", f"¥ {total_jpy:,.0f}")
+        c3.metric("累计净销量", f"{total_qty} 件")
     
     st.divider()
 
@@ -42,7 +50,7 @@ def show_sales_page(db):
         # 显示简略表格
         st.dataframe(
             df_prod_summary,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "CNY总额": st.column_config.NumberColumn(format="¥%.0f"),
@@ -94,7 +102,7 @@ def show_sales_page(db):
                 
                 st.dataframe(
                     pivot_table, 
-                    use_container_width=True,
+                    width="stretch",
                     column_config={
                         col: st.column_config.NumberColumn(format="%d") 
                         for col in pivot_table.columns
@@ -142,6 +150,6 @@ def show_sales_page(db):
                 
                 st.dataframe(
                     df_display[['日期', '类型', '款式', '变动数量', '平台', '金额', '币种']],
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
