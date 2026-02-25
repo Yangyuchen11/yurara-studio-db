@@ -4,7 +4,25 @@ import pandas as pd
 from datetime import date
 from services.finance_service import FinanceService
 from constants import PRODUCT_COST_CATEGORIES
+from database import SessionLocal
 
+# ================= 🚀 性能优化：独立数据层缓存 =================
+@st.cache_data(ttl=300, show_spinner=False)
+def get_cached_finance_data():
+    """缓存流水明细和余额，避免每次输入字符时重新全表计算"""
+    db_cache = SessionLocal()
+    try:
+        df_display = FinanceService.get_finance_records_with_balance(db_cache)
+        cur_cny, cur_jpy = FinanceService.get_current_balances(db_cache)
+        return df_display, cur_cny, cur_jpy
+    finally:
+        db_cache.close()
+
+def clear_finance_cache():
+    """当发生增删改记录时，清空缓存以获取最新数据"""
+    get_cached_finance_data.clear()
+
+# ================= 主页面逻辑 =================
 def show_finance_page(db, exchange_rate):
     # ================= 0. 全局样式优化 =================
     st.markdown("""
@@ -61,13 +79,14 @@ def show_finance_page(db, exchange_rate):
             amount_in = c_ex2.number_input(f"入账金额 ({target_curr})", value=est_val, min_value=0.0, step=100.0, format="%.2f")
             desc = st.text_input("备注说明", placeholder="如：支付宝购汇")
             
-            if st.button("💾 确认兑换", type="primary"):
+            if st.button("💾 确认兑换", type="primary", width="stretch"):
                 if amount_out <= 0 or amount_in <= 0:
                     st.warning("金额必须大于0")
                 else:
                     try:
                         FinanceService.execute_exchange(db, f_date, source_curr, target_curr, amount_out, amount_in, desc)
                         st.toast(f"兑换成功：-{amount_out}{source_curr}, +{amount_in}{target_curr}", icon="💱")
+                        clear_finance_cache()  # 清理缓存
                         st.rerun()
                     except Exception as e:
                         st.error(f"兑换失败: {e}")
@@ -96,7 +115,7 @@ def show_finance_page(db, exchange_rate):
                 d_amount = c_d4.number_input("金额", min_value=0.0, step=100.0)
                 d_remark = st.text_input("备注说明")
 
-                if st.button("💾 确认新增", type="primary"):
+                if st.button("💾 确认新增", type="primary", width="stretch"):
                     if not d_name or not rel_content or d_amount <= 0:
                         st.error("请填写完整信息")
                     else:
@@ -106,6 +125,7 @@ def show_finance_page(db, exchange_rate):
                                 is_to_cash=(dest=="存入流动资金"), related_content=rel_content
                             )
                             st.toast("债务记录成功", icon="📝")
+                            clear_finance_cache()  # 清理缓存
                             st.rerun()
                         except Exception as e:
                             st.error(f"保存失败: {e}")
@@ -126,10 +146,11 @@ def show_finance_page(db, exchange_rate):
                         c_r1, c_r2 = st.columns(2)
                         amt = c_r1.number_input("金额", min_value=0.0, step=100.0)
                         rem = c_r2.text_input("备注")
-                        if st.button("确认还款", type="primary"):
+                        if st.button("确认还款", type="primary", width="stretch"):
                             try:
                                 FinanceService.repay_debt(db, f_date, sel_id, amt, rem)
                                 st.toast("还款成功", icon="💸")
+                                clear_finance_cache()  # 清理缓存
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"失败: {e}")
@@ -140,10 +161,11 @@ def show_finance_page(db, exchange_rate):
                         asset_label = c1.selectbox("选择资产", list(asset_map.keys()))
                         amt = c2.number_input("抵消金额", min_value=0.0)
                         rem = st.text_input("备注")
-                        if st.button("确认抵消", type="primary"):
+                        if st.button("确认抵消", type="primary", width="stretch"):
                             try:
                                 FinanceService.offset_debt(db, f_date, sel_id, asset_map[asset_label], amt, rem)
                                 st.toast("抵消成功", icon="🔄")
+                                clear_finance_cache()  # 清理缓存
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"失败: {e}")
@@ -312,7 +334,7 @@ def show_finance_page(db, exchange_rate):
             base_data["desc"] = st.text_input("备注", placeholder="选填")
 
             # 提交通用收支
-            if st.button("💾 确认记账", type="primary"):
+            if st.button("💾 确认记账", type="primary", width="stretch"):
                 if base_data["amount"] == 0:
                     st.warning("金额不能为0")
                 elif not link_config["name"] and not base_data.get("desc") and not base_data.get("category"):
@@ -321,13 +343,15 @@ def show_finance_page(db, exchange_rate):
                     try:
                         msg = FinanceService.create_general_transaction(db, base_data, link_config, exchange_rate)
                         st.toast(f"记账成功！{msg}", icon="✅")
+                        clear_finance_cache()  # 清理缓存
                         st.rerun()
                     except Exception as e:
                         st.error(f"写入失败: {e}")
 
-    # ================= 2. 数据与余额 =================
-    df_display = FinanceService.get_finance_records_with_balance(db)
-    cur_cny, cur_jpy = FinanceService.get_current_balances(db)
+    # ================= 2. 数据与余额 (秒开) =================
+    # ⚡ 替代原有每次重新查询数据库和 Pandas 计算的代码
+    with st.spinner("加载流水历史中..."):
+        df_display, cur_cny, cur_jpy = get_cached_finance_data()
 
     st.divider()
     m1, m2, m3, m4 = st.columns(4)
@@ -382,6 +406,7 @@ def show_finance_page(db, exchange_rate):
                                 try:
                                     if FinanceService.update_record(db, sel['ID'], updates):
                                         st.toast("已修改", icon="💾")
+                                        clear_finance_cache()  # 清理缓存
                                         st.rerun()
                                 except Exception as e:
                                     st.error(f"修改失败: {e}")
@@ -390,11 +415,12 @@ def show_finance_page(db, exchange_rate):
             with st.popover("🗑️ 删除记录", width="stretch"):
                 if record_options:
                     sel = st.selectbox("删除记录", record_options, format_func=lambda x: f"{x['日期']} | {x['金额']} | {x['备注']}")
-                    if st.button("确认删除"):
+                    if st.button("确认删除", width="stretch"):
                         try:
                             msg = FinanceService.delete_record(db, sel['ID'])
                             if msg:
                                 st.toast(f"已删除: {msg}", icon="🗑️")
+                                clear_finance_cache()  # 清理缓存
                                 st.rerun()
                         except Exception as e:
                             st.error(f"删除失败: {e}")
