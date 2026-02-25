@@ -64,7 +64,7 @@ def show_product_page(db):
         new_matrix = st.data_editor(
             st.session_state.create_matrix_df,
             num_rows="dynamic",
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             key="create_product_editor",
             column_config=col_config
@@ -156,7 +156,7 @@ def show_product_page(db):
                 edited_matrix = st.data_editor(
                     st.session_state.edit_matrix_df,
                     num_rows="dynamic",
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                     key="edit_product_matrix",
                     column_config=edit_col_config
@@ -207,13 +207,13 @@ def show_product_page(db):
                             row[pf_name] = f"¥ {price:,.2f}" if price > 0 else "-"
                         display_data.append(row)
                     
-                    st.dataframe(pd.DataFrame(display_data), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(display_data), width="stretch", hide_index=True)
 
                     st.divider()
                     
                     _, col_delete = st.columns([5, 1])
                     with col_delete:
-                        with st.popover("🗑️ 删除产品", use_container_width=True):
+                        with st.popover("🗑️ 删除产品", width="stretch"):
                             st.warning(f"确定要删除《{p.name}》吗？")
                             if st.button("确认删除", type="primary", key=f"btn_confirm_del_{p.id}"):
                                 try:

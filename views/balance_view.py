@@ -22,14 +22,14 @@ def show_balance_page(db, exchange_rate):
         })
     
     with c_del:
-        with st.popover("🗑️ 删除项目", use_container_width=True):
+        with st.popover("🗑️ 删除项目", width="stretch"):
             if not deletable_options:
                 st.caption("暂无项目可删除")
             else:
                 target_dict = st.selectbox("选择要删除的项目", deletable_options, format_func=lambda x: x["display"])
                 st.caption("⚠️ 注意：删除此项将同时删除关联的财务流水记录！")
                 
-                if st.button("🔴 确认删除", type="primary", use_container_width=True):
+                if st.button("🔴 确认删除", type="primary", width="stretch"):
                     try:
                         # --- 调用 Service 执行删除 ---
                         deleted_name = BalanceService.delete_item(db, target_dict["id"])
@@ -154,7 +154,7 @@ def show_balance_page(db, exchange_rate):
         asset_data.extend(manual_display)
 
         if asset_data:
-            st.dataframe(pd.DataFrame(asset_data), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(asset_data), width="stretch", hide_index=True)
         else:
             st.info("暂无资产")
 
@@ -179,7 +179,7 @@ def show_balance_page(db, exchange_rate):
         liab_display = get_aggregated_display_data(summary["liabilities"])
         
         if liab_display:
-            st.dataframe(pd.DataFrame(liab_display), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(liab_display), width="stretch", hide_index=True)
         else:
             st.caption("暂无负债")
 
@@ -194,7 +194,7 @@ def show_balance_page(db, exchange_rate):
         eq_display = get_aggregated_display_data(summary["equities"])
 
         if eq_display:
-            st.dataframe(pd.DataFrame(eq_display), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(eq_display), width="stretch", hide_index=True)
         else:
             st.caption("暂无资本记录")
         

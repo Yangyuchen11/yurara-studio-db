@@ -228,7 +228,7 @@ with st.sidebar:
 
 # === 备份/恢复 ===
     st.divider()
-    with st.popover("💾 数据备份与恢复", use_container_width=True):
+    with st.popover("💾 数据备份与恢复", width="stretch"):
         # 定义映射: (CSV文件名, 数据库表名, SQLAlchemy模型类)
         tables_map = [
             ("products.csv", "products", Product),
@@ -299,13 +299,13 @@ with st.sidebar:
     # === 清空所有数据 ===
     # ==========================================
 
-    with st.popover("🔴 清空所有数据 (保留表结构)", use_container_width=True):
+    with st.popover("🔴 清空所有数据 (保留表结构)", width="stretch"):
         st.error("⚠️ **严重警告**：此操作将删除所有业务数据！但会保留数据库表结构。")
         st.markdown("请务必先点击上方的 **⬇️ 下载全量备份** 以防万一。")
         
         confirm_input = st.text_input("请输入确认口令", placeholder="输入 DELETE 以确认")
         
-        if st.button("💣 确认清空", type="primary", disabled=(confirm_input != "DELETE"), use_container_width=True):
+        if st.button("💣 确认清空", type="primary", disabled=(confirm_input != "DELETE"), width="stretch"):
             try:
                 # 按照依赖关系顺序删除 (先删子表，再删主表)
 

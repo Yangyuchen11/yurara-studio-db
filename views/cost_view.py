@@ -147,7 +147,7 @@ def show_cost_page(db):
 
                 edited_df = st.data_editor(
                     df, key=f"editor_{cat}_{prod.id}", column_order=col_order,
-                    use_container_width=True, hide_index=True, column_config=col_cfg
+                    width="stretch", hide_index=True, column_config=col_cfg
                 )
 
                 # --- 处理编辑保存 ---
@@ -183,7 +183,7 @@ def show_cost_page(db):
                 selected_del_label = c_del_sel.selectbox("选择要删除的项目", options=list(delete_options.keys()), key=f"sel_del_{cat}", label_visibility="collapsed", index=None, placeholder="选择要删除的项目...")
                 
                 if selected_del_label:
-                    with c_del_btn.popover("🗑️ 删除", use_container_width=True):
+                    with c_del_btn.popover("🗑️ 删除", width="stretch"):
                         st.markdown(f"确认删除 `{selected_del_label.split('|')[0].strip()}` ？")
                         if st.button("🔴 确认", key=f"btn_confirm_del_{cat}", type="primary"):
                             try:

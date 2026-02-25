@@ -126,7 +126,7 @@ def show_inventory_page(db):
         st.data_editor(
             df_pre, 
             key="pre_shipping_editor",
-            use_container_width=True, 
+            width="stretch", 
             hide_index=True,
             disabled=["ID", "日期", "产品", "款式"],
             column_config={
@@ -164,7 +164,7 @@ def show_inventory_page(db):
             
         with c_p2:
             # 增加 disabled 状态：如果没有待结算订单，按钮不可点
-            if st.button("✅ 确认收款 (转收入)", type="primary", use_container_width=True, disabled=not pre_items):
+            if st.button("✅ 确认收款 (转收入)", type="primary", width="stretch", disabled=not pre_items):
                 if not selected_pre_id:
                      st.error("请先选择一个订单！")
                 else:
@@ -179,7 +179,7 @@ def show_inventory_page(db):
 
     # --- 撤销/删除预出库逻辑 ---
     st.write("") 
-    with st.popover("🗑️ 撤销发货 (库存回滚)", use_container_width=True):
+    with st.popover("🗑️ 撤销发货 (库存回滚)", width="stretch"):
         st.error("⚠️ 注意：此操作将删除发货单，并**自动把库存加回去**。")
         
         del_pre_options = {
@@ -193,7 +193,7 @@ def show_inventory_page(db):
             key="del_pre_select_box"
         )
         
-        if st.button("🔴 确认撤销并回滚", type="primary", use_container_width=True):
+        if st.button("🔴 确认撤销并回滚", type="primary", width="stretch"):
             try:
                 target_pre_id = del_pre_options[selected_del_pre_label]
                 platform_str = service.undo_shipping(target_pre_id, selected_product_id)
@@ -304,7 +304,7 @@ def show_inventory_page(db):
         st.data_editor(
             df_logs,
             key="log_editor",
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "_id": None,
@@ -329,7 +329,7 @@ def show_inventory_page(db):
                 st.rerun()
 
         # 处理日志删除
-        with st.popover("🗑️ 删除记录 (级联回滚)", use_container_width=True):
+        with st.popover("🗑️ 删除记录 (级联回滚)", width="stretch"):
             st.warning("⚠️ 删除操作将自动回滚：库存、资产价值、可销售数量。请谨慎操作！")
             del_options = {f"{l.date} | {l.product_name} {l.variant} ({l.reason} {l.change_amount}) | {l.note or ''}": l.id for l in logs}
             selected_del_label = st.selectbox("选择要删除的记录", list(del_options.keys()))

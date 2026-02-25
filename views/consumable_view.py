@@ -82,7 +82,7 @@ def show_other_asset_page(db, exchange_rate):
 
         # --- 提交按钮 ---
         st.write("") 
-        if st.button("🚀 提交更新", type="primary", use_container_width=True):
+        if st.button("🚀 提交更新", type="primary", width="stretch"):
             if selected_name and selected_name != "暂无库存":
                 try:
                     # 确定变动方向
@@ -201,7 +201,7 @@ def show_other_asset_page(db, exchange_rate):
         
         if not df.empty:
             edited_df = st.data_editor(
-                df, key="other_asset_editor", use_container_width=True, hide_index=True,
+                df, key="other_asset_editor", width="stretch", hide_index=True,
                 disabled=["ID", "项目", "分类", "剩余价值 (CNY)", "剩余价值 (JPY)"],
                 column_config={
                     "ID": None,
@@ -250,7 +250,7 @@ def show_other_asset_page(db, exchange_rate):
         
         edited_logs = st.data_editor(
             df_logs, 
-            use_container_width=True, 
+            width="stretch", 
             hide_index=True,
             height=int(calc_height),
             key="cons_log_editor",

@@ -53,7 +53,7 @@ def show_asset_page(db, exchange_rate):
         edited_df = st.data_editor(
             df,
             key="asset_editor",
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             disabled=["ID", "项目", "币种", "单价 (原币)", "初始数量", "剩余数量", "总价 (原币)", "剩余价值 (CNY)", "剩余价值 (JPY)"],
             column_config={
@@ -147,7 +147,7 @@ def show_asset_page(db, exchange_rate):
             
             st.dataframe(
                 pd.DataFrame(log_data),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "日期": st.column_config.DateColumn(format="YYYY-MM-DD")

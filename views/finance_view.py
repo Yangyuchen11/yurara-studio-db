@@ -353,7 +353,7 @@ def show_finance_page(db, exchange_rate):
         styler = df_styled.style.apply(highlight_rows, axis=1)
         styler = styler.format({"金额": "¥ {:.2f}", "当前CNY余额": "¥ {:.2f}", "当前JPY余额": "¥ {:.0f}"})
 
-        st.dataframe(styler, use_container_width=True, hide_index=True, height=600, column_config={"ID": None})
+        st.dataframe(styler, width="stretch", hide_index=True, height=600, column_config={"ID": None})
 
         # ================= 4. 编辑与删除 =================
         st.divider()
@@ -361,7 +361,7 @@ def show_finance_page(db, exchange_rate):
         record_options = df_display.to_dict('records')
 
         with c_edit:
-            with st.popover("✏️ 编辑记录", use_container_width=True):
+            with st.popover("✏️ 编辑记录", width="stretch"):
                 if record_options:
                     sel = st.selectbox("选择记录", record_options, format_func=lambda x: f"{x['日期']} | {x['收支']} {x['金额']} | {x['备注']}")
                     if sel:
@@ -387,7 +387,7 @@ def show_finance_page(db, exchange_rate):
                                     st.error(f"修改失败: {e}")
 
         with c_del:
-            with st.popover("🗑️ 删除记录", use_container_width=True):
+            with st.popover("🗑️ 删除记录", width="stretch"):
                 if record_options:
                     sel = st.selectbox("删除记录", record_options, format_func=lambda x: f"{x['日期']} | {x['金额']} | {x['备注']}")
                     if st.button("确认删除"):
