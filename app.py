@@ -5,13 +5,25 @@ import zipfile
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from models import (
-    Product, ProductColor, InventoryLog, 
-    FinanceRecord, CostItem, 
-    FixedAsset, FixedAssetLog, 
+    Product, ProductColor, InventoryLog,
+    FinanceRecord, CostItem,
+    FixedAsset, FixedAssetLog,
     ConsumableItem, ConsumableLog,  # 确保包含耗材日志
     CompanyBalanceItem, PreShippingItem, # 【新增】预出库表
-    SystemSetting,
+    SystemSetting, ProductPrice,
+    SalesOrder, SalesOrderItem, OrderRefund  # 【新增】销售订单表
 )
+from database import engine, SessionLocal, get_db, Base
+from views.product_view import show_product_page
+from views.cost_view import show_cost_page
+from views.inventory_view import show_inventory_page
+from views.finance_view import show_finance_page
+from views.balance_view import show_balance_page
+from views.asset_view import show_asset_page
+from views.consumable_view import show_other_asset_page
+from views.sales_view import show_sales_page
+from views.sales_order_view import show_sales_order_page  # 【新增】销售订单管理
+from streamlit_option_menu import option_menu
 
 # === 1. 页面配置 (必须放在第一行) ===
 st.set_page_config(page_title="Yurara综合管理系统", layout="wide")
@@ -135,24 +147,6 @@ def set_system_setting(db, key, new_value):
 # ==========================================
 # === 3. 业务逻辑 (基本保持不变) ===
 # ==========================================
-from database import Base 
-# 引入模型
-from models import (
-    Product, ProductColor, InventoryLog, 
-    FinanceRecord, CostItem, 
-    FixedAsset, FixedAssetLog, 
-    ConsumableItem, CompanyBalanceItem
-)
-# 引入视图
-from views.product_view import show_product_page
-from views.cost_view import show_cost_page
-from views.inventory_view import show_inventory_page
-from views.finance_view import show_finance_page
-from views.balance_view import show_balance_page
-from views.asset_view import show_fixed_asset_page
-from views.consumable_view import show_other_asset_page
-from views.sales_view import show_sales_page
-from streamlit_option_menu import option_menu
 
 # 初始化表结构
 Base.metadata.create_all(bind=engine)
@@ -175,22 +169,24 @@ with st.sidebar:
         menu_icon="dataset",
         options=[
             "财务流水录入",
-            "公司账面概览",  
-            "商品管理", 
-            "商品成本核算", 
+            "公司账面概览",
+            "商品管理",
+            "商品成本核算",
+            "销售订单管理",
+            "库存管理",
             "销售额一览",
-            "库存管理", 
-            "固定资产管理", 
+            "固定资产管理",
             "其他资产管理"
         ],
         icons=[
-            "currency-yen", 
-            "clipboard-data", 
-            "bag-heart", 
-            "calculator", 
+            "currency-yen",
+            "clipboard-data",
+            "bag-heart",
+            "calculator",
+            "cart-check",
+            "arrow-left-right",
             "graph-up-arrow",
-            "arrow-left-right", 
-            "camera-reels", 
+            "camera-reels",
             "box-seam"
         ],
         default_index=0,
@@ -234,10 +230,10 @@ with st.sidebar:
     st.divider()
     with st.popover("💾 数据备份与恢复", use_container_width=True):
         # 定义映射: (CSV文件名, 数据库表名, SQLAlchemy模型类)
-        # 【修改点】加入了 pre_shipping_items 和 consumable_logs
         tables_map = [
             ("products.csv", "products", Product),
             ("product_colors.csv", "product_colors", ProductColor),
+            ("product_prices.csv", "product_prices", ProductPrice),
             ("finance_records.csv", "finance_records", FinanceRecord),
             ("cost_items.csv", "cost_items", CostItem),
             ("inventory_logs.csv", "inventory_logs", InventoryLog),
@@ -246,7 +242,11 @@ with st.sidebar:
             ("consumables.csv", "consumable_items", ConsumableItem),
             ("consumable_logs.csv", "consumable_logs", ConsumableLog),
             ("company_balance.csv", "company_balance_items", CompanyBalanceItem),
-            ("pre_shipping_items.csv", "pre_shipping_items", PreShippingItem), 
+            ("pre_shipping_items.csv", "pre_shipping_items", PreShippingItem),
+            ("sales_orders.csv", "sales_orders", SalesOrder),
+            ("sales_order_items.csv", "sales_order_items", SalesOrderItem),
+            ("order_refunds.csv", "order_refunds", OrderRefund),
+            # ("system_settings.csv", "system_settings", SystemSetting),
         ]
         
         # 下载逻辑
@@ -308,23 +308,26 @@ with st.sidebar:
         if st.button("💣 确认清空", type="primary", disabled=(confirm_input != "DELETE"), use_container_width=True):
             try:
                 # 按照依赖关系顺序删除 (先删子表，再删主表)
-                
+
                 # 1. 删除关联表/子表
                 db.query(ProductColor).delete()
-                db.query(CostItem).delete()        
-                db.query(FixedAsset).delete()      
+                db.query(CostItem).delete()
+                db.query(FixedAsset).delete()
                 db.query(ConsumableItem).delete()
                 db.query(PreShippingItem).delete() # 【新增】
-                
+                db.query(SalesOrderItem).delete() # 【新增】订单明细
+                db.query(OrderRefund).delete() # 【新增】售后记录
+
                 # 2. 删除日志表/独立表
                 db.query(InventoryLog).delete()
                 db.query(FixedAssetLog).delete()
                 db.query(ConsumableLog).delete()   # 【新增】
                 db.query(CompanyBalanceItem).delete()
-                
+
                 # 3. 删除主表 (父表)
                 db.query(Product).delete()
                 db.query(FinanceRecord).delete()
+                db.query(SalesOrder).delete() # 【新增】销售订单
                 
                 db.commit()
                 
@@ -341,20 +344,22 @@ with st.sidebar:
                 db.rollback()
                 st.error(f"清空失败: {e}")
 
-# 路由分发 (保持不变)
+# 路由分发
 if selected == "商品管理":
     show_product_page(db)
 elif selected == "商品成本核算":
     show_cost_page(db)
 elif selected == "库存管理":
-    show_inventory_page(db) # 只显示库存
+    show_inventory_page(db)
+elif selected == "销售订单管理":  # 【新增】
+    show_sales_order_page(db)
 elif selected == "销售额一览":
-    show_sales_page(db)     # 新增页面
+    show_sales_page(db)
 elif selected == "财务流水录入":
     show_finance_page(db, exchange_rate)
 elif selected == "公司账面概览":
     show_balance_page(db, exchange_rate)
 elif selected == "固定资产管理":
-    show_fixed_asset_page(db, exchange_rate)
+    show_asset_page(db, exchange_rate)
 elif selected == "其他资产管理":
     show_other_asset_page(db, exchange_rate)

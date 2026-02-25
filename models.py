@@ -14,31 +14,43 @@ class Product(Base):
     marketable_quantity = Column(Integer, default=0)
     # 销售相关
     target_platform = Column(String)
-    price_weidian = Column(Float, default=0.0)      # 微店
-    price_booth = Column(Float, default=0.0)        # Booth
-    price_offline_jp = Column(Float, default=0.0)   # 日本线下
-    price_offline_cn = Column(Float, default=0.0)   # 中国线下
-    price_instagram = Column(Float, default=0.0)    # ins日本
-    price_other_jpy = Column(Float, default=0.0)    # 其他（日本)
-    price_other = Column(Float, default=0.0)        # 其他 (中国)
+    
+    # 【优化1】移除硬编码的价格字段 (price_weidian, price_booth 等)
+    # 它们现在通过 prices 关系表来管理
     
     # 关联
-    costs = relationship("CostItem", back_populates="product")
+    # 【优化2】在 Python 层面配置级联删除 (cascade="all, delete-orphan")
+    costs = relationship("CostItem", back_populates="product", cascade="all, delete-orphan")
     colors = relationship("ProductColor", back_populates="product", cascade="all, delete-orphan")
 
 class ProductColor(Base):
     __tablename__ = "product_colors"
     id = Column(Integer, primary_key=True, index=True)
-    product_id = Column(Integer, ForeignKey("products.id"))
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"))
     color_name = Column(String)
     quantity = Column(Integer)
     produced_quantity = Column(Integer, default=0)
+    
     product = relationship("Product", back_populates="colors")
+    # 【新增】颜色关联价格
+    prices = relationship("ProductPrice", back_populates="color", cascade="all, delete-orphan")
+
+class ProductPrice(Base):
+    __tablename__ = "product_prices"
+    id = Column(Integer, primary_key=True, index=True)
+    color_id = Column(Integer, ForeignKey("product_colors.id", ondelete="CASCADE")) 
+    platform = Column(String) 
+    currency = Column(String) 
+    price = Column(Float, default=0.0)
+    
+    # 【修改】反向关联指向 color
+    color = relationship("ProductColor", back_populates="prices")
 
 class CostItem(Base):
     __tablename__ = "cost_items"
     id = Column(Integer, primary_key=True, index=True)
-    product_id = Column(Integer, ForeignKey("products.id"))
+    # 【优化3】数据库级联删除
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"))
     item_name = Column(String)
     actual_cost = Column(Float)   # 实付总价
     supplier = Column(String)
@@ -47,8 +59,10 @@ class CostItem(Base):
     quantity = Column(Float, default=1)   # 数量
     remarks = Column(String, default="")    # 备注
     unit = Column(String, default="") # 单位 (如: 米/个)
+    order_no = Column(String, nullable=True) # 【新增】订单号 (用于售后成本)
 
-    finance_record_id = Column(Integer, ForeignKey("finance_records.id"), nullable=True)
+    # 关联流水 (删除流水时自动清理关联的成本项)
+    finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
     product = relationship("Product", back_populates="costs")
 
 # --- B. 库存变动日志 ---
@@ -85,7 +99,8 @@ class CompanyBalanceItem(Base):
     name = Column(String)     # 项目名：如“现金(CNY账户)”
     amount = Column(Float)    # 金额
     currency = Column(String, default="CNY") # 币种：CNY 或 JPY
-    finance_record_id = Column(Integer, ForeignKey("finance_records.id"), nullable=True)
+    # 【数据库级联删除
+    finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
 
 # --- E. 固定资产管理 ---
 class FixedAsset(Base):
@@ -100,7 +115,8 @@ class FixedAsset(Base):
     purchase_date = Column(Date, default=datetime.now)
     currency = Column(String, default="CNY") # 默认为人民币资产
 
-    finance_record_id = Column(Integer, ForeignKey("finance_records.id"), nullable=True)
+    # 【优化3】数据库级联删除
+    finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
 
 # --- F. 耗材/消耗品管理 ---
 class ConsumableItem(Base):
@@ -116,7 +132,8 @@ class ConsumableItem(Base):
     purchase_date = Column(Date, default=datetime.now)
     currency = Column(String, default="CNY")
 
-    finance_record_id = Column(Integer, ForeignKey("finance_records.id"), nullable=True)
+    # 【优化3】数据库级联删除
+    finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
 
 # --- G. 固定资产核销记录 ---
 class FixedAssetLog(Base):
@@ -137,7 +154,7 @@ class ConsumableLog(Base):
     date = Column(Date, default=datetime.now)
     note = Column(String)            # 备注
 
-# --- 【新增】I. 预出库管理表 ---
+# --- I. 预出库管理表 ---
 class PreShippingItem(Base):
     __tablename__ = "pre_shipping_items"
     id = Column(Integer, primary_key=True, index=True)
@@ -152,9 +169,62 @@ class PreShippingItem(Base):
     created_date = Column(Date, default=datetime.now)
     note = Column(String, default="")
 
-# --- J. 系统全局设置 (新增) ---
+# --- J. 系统全局设置 ---
 class SystemSetting(Base):
     __tablename__ = "system_settings"
     key = Column(String, primary_key=True, index=True) # 例如 "exchange_rate"
     value = Column(String) # 存为字符串，使用时再转换类型
     description = Column(String, nullable=True)
+
+# --- K. 销售订单管理 ---
+class SalesOrder(Base):
+    __tablename__ = "sales_orders"
+    id = Column(Integer, primary_key=True, index=True)
+    order_no = Column(String, unique=True, index=True) # 订单号
+    status = Column(String, default="待发货") # 状态: 待发货/已发货/订单完成/售后中
+    total_amount = Column(Float, default=0.0) # 订单总金额
+    currency = Column(String, default="CNY") # 币种
+    platform = Column(String) # 销售平台
+
+    # 时间节点
+    created_date = Column(Date, default=datetime.now) # 创建日期
+    shipped_date = Column(Date, nullable=True) # 发货日期
+    completed_date = Column(Date, nullable=True) # 完成日期
+
+    notes = Column(String, default="") # 备注
+
+    # 关联
+    items = relationship("SalesOrderItem", back_populates="order", cascade="all, delete-orphan")
+    refunds = relationship("OrderRefund", back_populates="order", cascade="all, delete-orphan")
+
+class SalesOrderItem(Base):
+    __tablename__ = "sales_order_items"
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("sales_orders.id", ondelete="CASCADE"))
+
+    product_name = Column(String) # 商品名称
+    variant = Column(String) # 款式/颜色
+    quantity = Column(Integer) # 数量
+    unit_price = Column(Float) # 单价
+    subtotal = Column(Float) # 小计 (quantity * unit_price)
+
+    # 关联
+    order = relationship("SalesOrder", back_populates="items")
+
+class OrderRefund(Base):
+    __tablename__ = "order_refunds"
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("sales_orders.id", ondelete="CASCADE"))
+
+    refund_amount = Column(Float) # 退款金额
+    refund_reason = Column(String) # 退款原因
+    refund_date = Column(Date, default=datetime.now) # 退款日期
+
+    is_returned = Column(Boolean, default=False) # 是否退货
+    returned_quantity = Column(Integer, default=0) # 退货数量
+
+    # 关联到成本项 (售后成本)
+    cost_item_id = Column(Integer, ForeignKey("cost_items.id", ondelete="SET NULL"), nullable=True)
+
+    # 关联
+    order = relationship("SalesOrder", back_populates="refunds")

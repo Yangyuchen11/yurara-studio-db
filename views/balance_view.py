@@ -1,152 +1,87 @@
+# views/balance_view.py
 import streamlit as st
 import pandas as pd
-from sqlalchemy import func
-from models import CompanyBalanceItem, FixedAsset, ConsumableItem, FinanceRecord, Product, CostItem
+from services.balance_service import BalanceService
 
 def show_balance_page(db, exchange_rate):
     # ================= 1. 顶部标题与统一管理区 =================
     c_title, c_del = st.columns([5, 1])
     c_title.header("📊 公司账面概览 (资产负债表)")
     
-    # 获取所有可删除的项目
-    all_items = db.query(CompanyBalanceItem).all()
+    # --- 调用 Service 获取可删除项 ---
+    deletable_items_objs = BalanceService.get_deletable_items(db)
     
-    deletable_items = []
-    for i in all_items:
-        # 排除自动生成的在制资产冲销项
-        if i.name and (i.name.startswith("在制资产冲销-") or i.name.startswith("预入库大货资产-") or i.name.startswith("大货资产-")):
-            continue
-        
-        type_label = {"asset": "资产", "liability": "负债", "equity": "资本"}.get(i.category, "未知")
-        
-        # 只存 ID 和显示文本
-        deletable_items.append({
+    # 转换为下拉框选项格式
+    deletable_options = []
+    type_map = {"asset": "资产", "liability": "负债", "equity": "资本"}
+    
+    for i in deletable_items_objs:
+        deletable_options.append({
             "id": i.id,
-            "display": f"[{type_label}] {i.name} (¥{i.amount:,.2f})"
+            "display": f"[{type_map.get(i.category, '未知')}] {i.name} (¥{i.amount:,.2f})"
         })
     
     with c_del:
         with st.popover("🗑️ 删除项目", use_container_width=True):
-            if not deletable_items:
+            if not deletable_options:
                 st.caption("暂无项目可删除")
             else:
-                target_dict = st.selectbox("选择要删除的项目", deletable_items, format_func=lambda x: x["display"])
+                target_dict = st.selectbox("选择要删除的项目", deletable_options, format_func=lambda x: x["display"])
                 st.caption("⚠️ 注意：删除此项将同时删除关联的财务流水记录！")
                 
                 if st.button("🔴 确认删除", type="primary", use_container_width=True):
-                    del_id = target_dict["id"]
-                    item_to_del = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == del_id).first()
-                    
-                    if item_to_del:
-                        try:
-                            # 1. 尝试删除关联的流水
-                            if item_to_del.finance_record_id:
-                                fin_rec = db.query(FinanceRecord).filter(FinanceRecord.id == item_to_del.finance_record_id).first()
-                                if fin_rec:
-                                    db.delete(fin_rec)
-                            
-                            # 2. 删除资产/负债/资本项本身
-                            name_bak = item_to_del.name
-                            db.delete(item_to_del)
-                            db.commit()
-                            st.toast(f"已删除：{name_bak}", icon="🗑️")
+                    try:
+                        # --- 调用 Service 执行删除 ---
+                        deleted_name = BalanceService.delete_item(db, target_dict["id"])
+                        if deleted_name:
+                            st.toast(f"已删除：{deleted_name}", icon="🗑️")
                             st.rerun()
-                        except Exception as e:
-                            db.rollback()
-                            st.error(f"删除失败: {e}")
-                    else:
-                        st.warning("该项目可能已被删除或不存在。")
-                        st.rerun()
+                        else:
+                            st.warning("该项目可能已被删除。")
+                    except Exception as e:
+                        st.error(f"删除失败: {e}")
 
     st.divider()
 
-    # ================= 2. 核心数据计算 =================
+    # ================= 2. 获取核心数据 =================
     
-    # 重新查询数据
-    all_items = db.query(CompanyBalanceItem).all()
+    # --- 调用 Service 获取所有汇总数据 ---
+    summary = BalanceService.get_financial_summary(db)
     
-    # 分离 "在制资产冲销" 项
-    offset_items = [i for i in all_items if i.name and i.name.startswith("在制资产冲销-")]
+    # 解包数据以方便后续使用
+    cash = summary["cash"]
+    fixed = summary["fixed"]
+    cons = summary["consumable"]
+    wip = summary["wip"]
+    totals = summary["totals"]
     
-    # 过滤掉 冲销项、预入库项、以及流动资金项
-    assets_manual = [
-        i for i in all_items 
-        if i.category == 'asset' 
-        and not i.name.startswith("在制资产冲销-")
-        and not i.name.startswith("预入库大货资产-")  # 避免预入库重复显示
-        and not i.name.startswith("流动资金")          # 避免流动资金重复显示
-    ]
-    
-    liabilities = [i for i in all_items if i.category == 'liability']
-    equities = [i for i in all_items if i.category == 'equity']
+    # === 辅助函数：聚合相同名称的项目 (UI展示逻辑) ===
+    def get_aggregated_display_data(items_list):
+        grouped = {}
+        for item in items_list:
+            if abs(item.amount) < 0.01: continue
+            
+            name = item.name
+            if name not in grouped:
+                grouped[name] = {"CNY": 0.0, "JPY": 0.0}
+            
+            if item.currency == "CNY":
+                grouped[name]["CNY"] += item.amount
+            elif item.currency == "JPY":
+                grouped[name]["JPY"] += item.amount
+        
+        result = []
+        for name, amts in grouped.items():
+            cny_val = amts["CNY"]
+            jpy_val = amts["JPY"]
+            result.append({
+                "项目": name,
+                "CNY": f"{cny_val:,.2f}" if abs(cny_val) > 0 else "-",
+                "JPY": f"{jpy_val:,.0f}" if abs(jpy_val) > 0 else "-"
+            })
+        return result
 
-    finance_records = db.query(FinanceRecord).all()
-    fixed_assets = db.query(FixedAsset).all()
-    consumables = db.query(ConsumableItem).all()
-
-    # --- A. 计算资产总额 ---
-    cash_cny = sum([r.amount for r in finance_records if r.currency == 'CNY'])
-    cash_jpy = sum([r.amount for r in finance_records if r.currency == 'JPY'])
-    
-    # 固定资产 (分别统计 CNY 和 JPY)
-    fixed_total_cny = 0.0
-    fixed_total_jpy = 0.0
-    for fa in fixed_assets:
-        curr = getattr(fa, 'currency', 'CNY')
-        val_origin = fa.unit_price * fa.remaining_qty
-        if curr == "JPY":
-            fixed_total_jpy += val_origin
-        else:
-            fixed_total_cny += val_origin
-
-    # 耗材/其他资产 (分别统计 CNY 和 JPY)
-    consumable_total_cny = 0.0
-    consumable_total_jpy = 0.0
-    for c in consumables:
-        curr = getattr(c, 'currency', 'CNY')
-        val_origin = c.unit_price * c.remaining_qty
-        if curr == "JPY":
-            consumable_total_jpy += val_origin
-        else:
-            consumable_total_cny += val_origin
-    
-    manual_asset_cny = sum([i.amount for i in assets_manual if i.currency == 'CNY'])
-    manual_asset_jpy = sum([i.amount for i in assets_manual if i.currency == 'JPY'])
-
-    # 在制资产计算 (总成本 - 冲销额) -> 默认为 CNY
-    wip_query = db.query(Product.name, func.sum(CostItem.actual_cost)).join(Product).group_by(Product.id).all()
-    
-    offset_map = {}
-    for off in offset_items:
-        p_name = off.name.replace("在制资产冲销-", "")
-        offset_map[p_name] = offset_map.get(p_name, 0) + off.amount 
-
-    wip_final_list = []
-    wip_total_cny = 0
-    
-    for p_name, total_cost in wip_query:
-        if not total_cost: total_cost = 0
-        offset_val = offset_map.get(p_name, 0)
-        net_wip = total_cost + offset_val 
-        # 只显示有价值的在制资产
-        if net_wip > 1.0:
-            wip_final_list.append((p_name, net_wip))
-            wip_total_cny += net_wip
-
-    # 汇总逻辑调整
-    total_asset_cny = cash_cny + fixed_total_cny + consumable_total_cny + manual_asset_cny + wip_total_cny
-    total_asset_jpy = cash_jpy + fixed_total_jpy + consumable_total_jpy + manual_asset_jpy
-
-    # --- B. 负债 & C. 资本 & D. 净资产 ---
-    total_liab_cny = sum([i.amount for i in liabilities if i.currency == 'CNY'])
-    total_liab_jpy = sum([i.amount for i in liabilities if i.currency == 'JPY'])
-    
-    total_eq_cny = sum([i.amount for i in equities if i.currency == 'CNY'])
-    total_eq_jpy = sum([i.amount for i in equities if i.currency == 'JPY'])
-    
-    net_cny = total_asset_cny - total_liab_cny
-    net_jpy = total_asset_jpy - total_liab_jpy
-
+    # === 辅助函数：生成统计卡片 HTML ===
     def get_summary_html(title, cny_total, jpy_total, rate, color_theme):
         colors = {
             "blue":   {"bg": "#e6f3ff", "border": "#2196F3", "text": "#0d47a1"}, 
@@ -179,32 +114,6 @@ def show_balance_page(db, exchange_rate):
         </div>
         """
 
-    # === 辅助函数：聚合相同名称的项目 ===
-    def get_aggregated_display_data(items_list):
-        grouped = {}
-        for item in items_list:
-            if abs(item.amount) < 0.01: continue
-            
-            name = item.name
-            if name not in grouped:
-                grouped[name] = {"CNY": 0.0, "JPY": 0.0}
-            
-            if item.currency == "CNY":
-                grouped[name]["CNY"] += item.amount
-            elif item.currency == "JPY":
-                grouped[name]["JPY"] += item.amount
-        
-        result = []
-        for name, amts in grouped.items():
-            cny_val = amts["CNY"]
-            jpy_val = amts["JPY"]
-            result.append({
-                "项目": name,
-                "CNY": f"{cny_val:,.2f}" if abs(cny_val) > 0 else "-",
-                "JPY": f"{jpy_val:,.0f}" if abs(jpy_val) > 0 else "-"
-            })
-        return result
-
     # ================= 3. 界面渲染 =================
     col_left, col_right = st.columns([1.1, 1])
 
@@ -213,35 +122,35 @@ def show_balance_page(db, exchange_rate):
         st.subheader("🏢 公司资产 (Assets)")
         
         asset_data = []
-        # 1. 自动项 (流动资金)
-        if cash_cny != 0: asset_data.append({"项目": "流动资金(CNY)", "CNY": f"{cash_cny:,.2f}", "JPY": "-"})
-        if cash_jpy != 0: asset_data.append({"项目": "流动资金(JPY)", "CNY": "-", "JPY": f"{cash_jpy:,.0f}"})
+        # 1. 现金 (自动计算)
+        if cash["CNY"] != 0: asset_data.append({"项目": "流动资金(CNY)", "CNY": f"{cash['CNY']:,.2f}", "JPY": "-"})
+        if cash["JPY"] != 0: asset_data.append({"项目": "流动资金(JPY)", "CNY": "-", "JPY": f"{cash['JPY']:,.0f}"})
         
-        # 2. 自动项 (固定资产 & 其他资产)
-        if fixed_total_cny > 0 or fixed_total_jpy > 0: 
+        # 2. 固定资产 & 耗材 (自动计算)
+        if fixed["CNY"] > 0 or fixed["JPY"] > 0: 
             asset_data.append({
                 "项目": "固定资产(设备)", 
-                "CNY": f"{fixed_total_cny:,.2f}", 
-                "JPY": f"{fixed_total_jpy:,.0f}" if fixed_total_jpy > 0 else "-"
+                "CNY": f"{fixed['CNY']:,.2f}", 
+                "JPY": f"{fixed['JPY']:,.0f}" if fixed['JPY'] > 0 else "-"
             })
             
-        if consumable_total_cny > 0 or consumable_total_jpy > 0: 
+        if cons["CNY"] > 0 or cons["JPY"] > 0: 
             asset_data.append({
                 "项目": "其他资产", 
-                "CNY": f"{consumable_total_cny:,.2f}", 
-                "JPY": f"{consumable_total_jpy:,.0f}" if consumable_total_jpy > 0 else "-"
+                "CNY": f"{cons['CNY']:,.2f}", 
+                "JPY": f"{cons['JPY']:,.0f}" if cons['JPY'] > 0 else "-"
             })
         
-        # 3. 净 WIP 资产
-        for p_name, net_val in wip_final_list:
+        # 3. 净 WIP 资产 (自动计算)
+        for p_name, net_val in wip["list"]:
             asset_data.append({
                 "项目": f"📦 在制资产-{p_name}", 
                 "CNY": f"{net_val:,.2f}", 
                 "JPY": "-"
             })
 
-        # 4. 手动项 (其他资产) - 【已修改】应用聚合逻辑
-        manual_display = get_aggregated_display_data(assets_manual)
+        # 4. 手动录入的其他资产 (聚合显示)
+        manual_display = get_aggregated_display_data(summary["manual_assets"])
         asset_data.extend(manual_display)
 
         if asset_data:
@@ -249,33 +158,47 @@ def show_balance_page(db, exchange_rate):
         else:
             st.info("暂无资产")
 
-        st.markdown(get_summary_html("资产总计", total_asset_cny, total_asset_jpy, exchange_rate, "blue"), unsafe_allow_html=True)
+        # 显示资产总计
+        st.markdown(
+            get_summary_html("资产总计", totals["asset"]["CNY"], totals["asset"]["JPY"], exchange_rate, "blue"), 
+            unsafe_allow_html=True
+        )
+        
         st.write("") 
-        st.markdown(get_summary_html("✨ 净资产 (Net Worth)", net_cny, net_jpy, exchange_rate, "purple"), unsafe_allow_html=True)
+        
+        # 显示净资产
+        st.markdown(
+            get_summary_html("✨ 净资产 (Net Worth)", totals["net"]["CNY"], totals["net"]["JPY"], exchange_rate, "purple"), 
+            unsafe_allow_html=True
+        )
 
 
     # ---------------- 右侧：负债与资本展示 ----------------
     with col_right:
         st.subheader("📉 负债 (Liabilities)")
-        # 【已修改】应用聚合逻辑
-        liab_display = get_aggregated_display_data(liabilities)
+        liab_display = get_aggregated_display_data(summary["liabilities"])
         
         if liab_display:
             st.dataframe(pd.DataFrame(liab_display), use_container_width=True, hide_index=True)
         else:
-            if not liab_display: st.caption("暂无负债")
+            st.caption("暂无负债")
 
-        st.markdown(get_summary_html("负债总计", total_liab_cny, total_liab_jpy, exchange_rate, "orange"), unsafe_allow_html=True)
+        st.markdown(
+            get_summary_html("负债总计", totals["liability"]["CNY"], totals["liability"]["JPY"], exchange_rate, "orange"), 
+            unsafe_allow_html=True
+        )
 
         st.divider()
 
         st.subheader("🏛️ 资本 (Equity)")
-        # 【已修改】应用聚合逻辑
-        eq_display = get_aggregated_display_data(equities)
+        eq_display = get_aggregated_display_data(summary["equities"])
 
         if eq_display:
             st.dataframe(pd.DataFrame(eq_display), use_container_width=True, hide_index=True)
         else:
-            if not eq_display: st.caption("暂无资本记录")
+            st.caption("暂无资本记录")
         
-        st.markdown(get_summary_html("资本总计", total_eq_cny, total_eq_jpy, exchange_rate, "green"), unsafe_allow_html=True)
+        st.markdown(
+            get_summary_html("资本总计", totals["equity"]["CNY"], totals["equity"]["JPY"], exchange_rate, "green"), 
+            unsafe_allow_html=True
+        )

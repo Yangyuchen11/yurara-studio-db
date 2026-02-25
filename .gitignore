@@ -1,0 +1,6 @@
+.streamlit/secrets.toml
+.env
+services/__pycache__
+bot_src/__pycache__
+views/__pycache__
+__pycache__
