@@ -4,147 +4,155 @@ from datetime import date
 from services.consumable_service import ConsumableService
 from constants import PRODUCT_COST_CATEGORIES
 
+# 兼容性处理：适配不同版本的 Streamlit
+if hasattr(st, "fragment"):
+    fragment_decorator = st.fragment
+else:
+    fragment_decorator = st.experimental_fragment
+
+# ================= 🚀 核心性能优化：将表单区封装为局部渲染组件 =================
+@fragment_decorator
+def render_operation_panel(db, exchange_rate, service):
+    st.markdown("#### ⚡ 快速库存操作")
+    
+    # 获取活跃库存项用于下拉
+    active_items = service.get_active_consumables()
+    item_names = [i.name for i in active_items]
+    
+    # --- 第一行：日期 | 选择资产 | 操作类型 ---
+    c_date, c_item, c_type = st.columns([1, 1.5, 1.2])
+    op_date = c_date.date_input("📅 日期", value=date.today())
+    selected_name = c_item.selectbox("📦 选择项目", item_names or ["暂无库存"])
+    op_type = c_type.radio("⚙️ 操作类型", ["出库 (消耗/销售) -", "入库 (补货) +"], horizontal=True)
+    
+    # 数量输入
+    c_qty, c_space = st.columns([1, 3.2])
+    op_qty = c_qty.number_input("🔢 操作数量", min_value=0.01, step=1.0, value=1.0, format="%.2f")
+    
+    # 状态变量
+    target_product_id = None
+    target_cost_category = "包装费"
+    is_link_product = False
+    is_sale_mode = False
+    
+    # 销售信息
+    sale_content = ""
+    sale_source = ""
+    sale_amount = 0.0
+    sale_currency = "CNY"
+    sale_remark = ""
+    # 消耗/补货备注
+    op_remark = "" 
+    
+    # === 核心逻辑分支 ===
+    if "出库" in op_type:
+        st.markdown("---")
+        out_mode = st.radio("📤 出库目的", ["🏢 内部消耗 (计入成本)", "💰 对外销售 (计入收入)"], horizontal=True)
+        
+        if "对外销售" in out_mode:
+            is_sale_mode = True
+            st.caption("📝 请填写财务信息 (将自动生成【销售收入】流水并存入流动资金)")
+            
+            r1_c1, r1_c2, r1_c3, r1_c4 = st.columns([2, 1.5, 1, 1])
+            default_content = f"售出 {selected_name}" if selected_name else ""
+            sale_content = r1_c1.text_input("收入内容", value=default_content, placeholder="如：闲鱼出物")
+            sale_source = r1_c2.text_input("收入来源", placeholder="如：闲鱼/线下")
+            sale_amount = r1_c3.number_input("销售总额", min_value=0.0, step=10.0, format="%.2f")
+            sale_currency = r1_c4.selectbox("币种", ["CNY", "JPY"])
+            sale_remark = st.text_input("备注", placeholder="选填，将记录在流水备注中")
+            
+        else:
+            # 内部消耗
+            is_sale_mode = False
+            lc1, lc2, lc3 = st.columns([0.8, 1.6, 1.6])
+            is_link_product = lc1.checkbox("🔗 计入商品成本", help="勾选后，消耗金额将分摊到指定商品的成本中")
+            op_remark = st.text_input("消耗备注", placeholder="如：打包使用") 
+            
+            if is_link_product:
+                products = service.get_all_products()
+                prod_opts = {p.id: p.name for p in products}
+                if prod_opts:
+                    target_product_id = lc2.selectbox("归属商品", options=list(prod_opts.keys()), format_func=lambda x: prod_opts[x], label_visibility="collapsed")
+                    target_cost_category = lc3.selectbox("成本分类", options=PRODUCT_COST_CATEGORIES, index=3, label_visibility="collapsed")
+    
+    else:
+        # 入库
+        op_remark = st.text_input("补货备注", placeholder="如：淘宝补货")
+
+    # --- 提交按钮 ---
+    st.write("") 
+    if st.button("🚀 提交更新", type="primary", width="stretch"):
+        if selected_name and selected_name != "暂无库存":
+            try:
+                # 确定变动方向
+                sign = -1 if "出库" in op_type else 1
+                qty_delta = op_qty * sign
+                
+                # 准备参数
+                mode = "normal"
+                s_info = None
+                c_info = None
+                final_remark = op_remark
+
+                if "出库" in op_type:
+                    if is_sale_mode:
+                        mode = "sale"
+                        if sale_amount <= 0:
+                            st.warning("⚠️ 销售金额为0，仅扣减库存，未生成流水")
+                        
+                        if not sale_content:
+                            st.error("请输入收入内容")
+                            st.stop()
+                            
+                        s_info = {
+                            "content": sale_content,
+                            "source": sale_source,
+                            "amount": sale_amount,
+                            "currency": sale_currency,
+                            "remark": sale_remark
+                        }
+                    elif is_link_product and target_product_id:
+                        mode = "cost"
+                        c_info = {
+                            "product_id": target_product_id,
+                            "category": target_cost_category,
+                            "remark": op_remark
+                        }
+                
+                # 调用 Service
+                name, delta, link_msg = service.process_inventory_change(
+                    item_name=selected_name,
+                    date_obj=op_date,
+                    delta_qty=qty_delta,
+                    exchange_rate=exchange_rate,
+                    mode=mode,
+                    sale_info=s_info,
+                    cost_info=c_info,
+                    base_remark=final_remark
+                )
+                
+                msg_icon = "💰" if is_sale_mode else ("📉" if qty_delta < 0 else "📈")
+                st.toast(f"更新成功：{name} {delta}{link_msg}", icon=msg_icon)
+                st.rerun() # 强制全局刷新，更新下方表格
+                
+            except ValueError as e:
+                st.error(str(e))
+            except Exception as e:
+                st.error(f"操作失败: {e}")
+
+# ================= 主页面入口 =================
 def show_other_asset_page(db, exchange_rate):
     st.header("📦 其他资产管理")
     
     service = ConsumableService(db)
 
-    # 定义与成本核算一致的分类列表
-    COST_CATEGORIES = PRODUCT_COST_CATEGORIES
-    
-    # === 1. 库存操作区 ===
+    # === 1. 库存操作区 (局部渲染) ===
     with st.container(border=True):
-        st.markdown("#### ⚡ 快速库存操作")
-        
-        # 获取活跃库存项用于下拉
-        active_items = service.get_active_consumables()
-        item_names = [i.name for i in active_items]
-        
-        # --- 第一行：日期 | 选择资产 | 操作类型 ---
-        c_date, c_item, c_type = st.columns([1, 1.5, 1.2])
-        op_date = c_date.date_input("📅 日期", value=date.today())
-        selected_name = c_item.selectbox("📦 选择项目", item_names or ["暂无库存"])
-        op_type = c_type.radio("⚙️ 操作类型", ["出库 (消耗/销售) -", "入库 (补货) +"], horizontal=True)
-        
-        # 数量输入
-        c_qty, c_space = st.columns([1, 3.2])
-        op_qty = c_qty.number_input("🔢 操作数量", min_value=0.01, step=1.0, value=1.0, format="%.2f")
-        
-        # 状态变量
-        target_product_id = None
-        target_cost_category = "包装费"
-        is_link_product = False
-        is_sale_mode = False
-        
-        # 销售信息
-        sale_content = ""
-        sale_source = ""
-        sale_amount = 0.0
-        sale_currency = "CNY"
-        sale_remark = ""
-        # 消耗/补货备注
-        op_remark = "" 
-        
-        # === 核心逻辑分支 ===
-        if "出库" in op_type:
-            st.markdown("---")
-            out_mode = st.radio("📤 出库目的", ["🏢 内部消耗 (计入成本)", "💰 对外销售 (计入收入)"], horizontal=True)
-            
-            if "对外销售" in out_mode:
-                is_sale_mode = True
-                st.caption("📝 请填写财务信息 (将自动生成【销售收入】流水并存入流动资金)")
-                
-                r1_c1, r1_c2, r1_c3, r1_c4 = st.columns([2, 1.5, 1, 1])
-                default_content = f"售出 {selected_name}" if selected_name else ""
-                sale_content = r1_c1.text_input("收入内容", value=default_content, placeholder="如：闲鱼出物")
-                sale_source = r1_c2.text_input("收入来源", placeholder="如：闲鱼/线下")
-                sale_amount = r1_c3.number_input("销售总额", min_value=0.0, step=10.0, format="%.2f")
-                sale_currency = r1_c4.selectbox("币种", ["CNY", "JPY"])
-                sale_remark = st.text_input("备注", placeholder="选填，将记录在流水备注中")
-                
-            else:
-                # 内部消耗
-                is_sale_mode = False
-                lc1, lc2, lc3 = st.columns([0.8, 1.6, 1.6])
-                is_link_product = lc1.checkbox("🔗 计入商品成本", help="勾选后，消耗金额将分摊到指定商品的成本中")
-                op_remark = st.text_input("消耗备注", placeholder="如：打包使用") 
-                
-                if is_link_product:
-                    products = service.get_all_products()
-                    prod_opts = {p.id: p.name for p in products}
-                    if prod_opts:
-                        target_product_id = lc2.selectbox("归属商品", options=list(prod_opts.keys()), format_func=lambda x: prod_opts[x], label_visibility="collapsed")
-                        target_cost_category = lc3.selectbox("成本分类", options=COST_CATEGORIES, index=3, label_visibility="collapsed")
-        
-        else:
-            # 入库
-            op_remark = st.text_input("补货备注", placeholder="如：淘宝补货")
-
-        # --- 提交按钮 ---
-        st.write("") 
-        if st.button("🚀 提交更新", type="primary", width="stretch"):
-            if selected_name and selected_name != "暂无库存":
-                try:
-                    # 确定变动方向
-                    sign = -1 if "出库" in op_type else 1
-                    qty_delta = op_qty * sign
-                    
-                    # 准备参数
-                    mode = "normal"
-                    s_info = None
-                    c_info = None
-                    final_remark = op_remark
-
-                    if "出库" in op_type:
-                        if is_sale_mode:
-                            mode = "sale"
-                            if sale_amount <= 0:
-                                st.warning("⚠️ 销售金额为0，仅扣减库存，未生成流水")
-                                # 保持 mode=sale，但在 service 里会处理 amount=0 的情况
-                            
-                            if not sale_content:
-                                st.error("请输入收入内容")
-                                st.stop()
-                                
-                            s_info = {
-                                "content": sale_content,
-                                "source": sale_source,
-                                "amount": sale_amount,
-                                "currency": sale_currency,
-                                "remark": sale_remark
-                            }
-                        elif is_link_product and target_product_id:
-                            mode = "cost"
-                            c_info = {
-                                "product_id": target_product_id,
-                                "category": target_cost_category,
-                                "remark": op_remark
-                            }
-                    
-                    # 调用 Service
-                    name, delta, link_msg = service.process_inventory_change(
-                        item_name=selected_name,
-                        date_obj=op_date,
-                        delta_qty=qty_delta,
-                        exchange_rate=exchange_rate,
-                        mode=mode,
-                        sale_info=s_info,
-                        cost_info=c_info,
-                        base_remark=final_remark
-                    )
-                    
-                    msg_icon = "💰" if is_sale_mode else ("📉" if qty_delta < 0 else "📈")
-                    st.toast(f"更新成功：{name} {delta}{link_msg}", icon=msg_icon)
-                    st.rerun()
-                    
-                except ValueError as e:
-                    st.error(str(e))
-                except Exception as e:
-                    st.error(f"操作失败: {e}")
+        render_operation_panel(db, exchange_rate, service)
 
     st.divider()
 
-    # === 2. 资产列表展示 ===
+    # === 2. 资产列表展示 (保持原逻辑不变) ===
     items = service.get_all_consumables()
     
     if items:
@@ -228,7 +236,7 @@ def show_other_asset_page(db, exchange_rate):
     else:
         st.info("暂无其他资产数据。")
 
-    # === 3. 操作记录 ===
+    # === 3. 操作记录 (保持原逻辑不变) ===
     st.divider()
     st.subheader("📜 操作记录")
     
