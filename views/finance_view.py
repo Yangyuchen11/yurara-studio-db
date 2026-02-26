@@ -1,6 +1,7 @@
 # views/finance_view.py
 import streamlit as st
 import pandas as pd
+import math  # 新增用于分页计算
 from datetime import date
 from services.finance_service import FinanceService
 from constants import PRODUCT_COST_CATEGORIES
@@ -370,19 +371,18 @@ def render_add_transaction_form(exchange_rate):
 
 # ================= 局部组件：编辑与删除 =================
 @fragment_if_available
-def render_edit_delete_panel(df_display):
+def render_edit_delete_panel(df_render):
     db_frag = SessionLocal()
     try:
         c_edit, c_del = st.columns([1, 1])
         
-        # 🚀 性能优化 4：在下拉菜单中也只提供最近 300 条的操作选项，防止下拉框假死
-        df_recent_options = df_display.head(300)
-        record_options = df_recent_options.to_dict('records')
+        # 直接使用当前页展示的数据（最多100条），完美解决下拉框卡顿，且做到“所见即所改”
+        record_options = df_render.to_dict('records')
 
         with c_edit:
-            with st.popover("✏️ 编辑近期记录", width="stretch"):
+            with st.popover("✏️ 编辑当前页记录", width="stretch"):
                 if record_options:
-                    sel = st.selectbox("选择要修改的记录 (仅限最近300条)", record_options, format_func=lambda x: f"{x['日期']} | {x['收支']} {x['金额']} | {x['备注']}")
+                    sel = st.selectbox("选择要修改的记录", record_options, format_func=lambda x: f"{x['日期']} | {x['收支']} {x['金额']} | {x['备注']}")
                     if sel:
                         with st.form(key=f"edit_{sel['ID']}"):
                             n_date = st.date_input("日期", value=sel['日期'])
@@ -407,9 +407,9 @@ def render_edit_delete_panel(df_display):
                                     st.error(f"修改失败: {e}")
 
         with c_del:
-            with st.popover("🗑️ 删除近期记录", width="stretch"):
+            with st.popover("🗑️ 删除当前页记录", width="stretch"):
                 if record_options:
-                    sel = st.selectbox("选择要删除的记录 (仅限最近300条)", record_options, format_func=lambda x: f"{x['日期']} | {x['金额']} | {x['备注']}")
+                    sel = st.selectbox("选择要删除的记录", record_options, format_func=lambda x: f"{x['日期']} | {x['金额']} | {x['备注']}")
                     if st.button("确认删除", width="stretch", type="primary"):
                         try:
                             msg = FinanceService.delete_record(db_frag, sel['ID'])
@@ -440,19 +440,32 @@ def show_finance_page(db, exchange_rate):
     m3.metric("JPY 折合 CNY", f"¥ {cur_jpy * exchange_rate:,.2f}", help=f"实时汇率设置: {exchange_rate*100:.1f}")
     m4.metric("账户总余额 (CNY)", f"¥ {(cur_cny + cur_jpy * exchange_rate):,.2f}")
 
-    # --- 3. 渲染原生表格 ---
+    # --- 3. 渲染原生表格 (附带分页功能) ---
     if not df_display.empty:
         st.subheader("📜 流水明细")
         
-        # 🚀 性能优化 5：只渲染最近的 300 条记录到前端，彻底告别浏览器崩溃卡死！
-        MAX_DISPLAY_ROWS = 300
-        if len(df_display) > MAX_DISPLAY_ROWS:
-            st.caption(f"⚠️ 为保证页面流畅响应，下方表格仅展示最近的 **{MAX_DISPLAY_ROWS}** 条记录（共计 {len(df_display)} 条）。")
-            df_render = df_display.head(MAX_DISPLAY_ROWS)
-        else:
-            df_render = df_display
+        # === 分页逻辑核心 ===
+        if "finance_page" not in st.session_state:
+            st.session_state.finance_page = 1
 
-        # 移除了极其缓慢的 Pandas Styler，使用 Streamlit 原生的 Column Config 加速渲染
+        PAGE_SIZE = 100
+        total_rows = len(df_display)
+        total_pages = math.ceil(total_rows / PAGE_SIZE)
+
+        # 容错边界：如果数据被删除导致当前页超出总页数，自动跳回最后一页
+        if st.session_state.finance_page > total_pages and total_pages > 0:
+            st.session_state.finance_page = total_pages
+
+        current_page = st.session_state.finance_page
+
+        # 执行数据切片
+        start_idx = (current_page - 1) * PAGE_SIZE
+        end_idx = current_page * PAGE_SIZE
+        df_render = df_display.iloc[start_idx:end_idx]
+
+        st.caption(f"共计 **{total_rows}** 条记录，当前显示第 **{start_idx + 1}** 到 **{min(end_idx, total_rows)}** 条。")
+
+        # 渲染截取后的当页表格
         st.dataframe(
             df_render, 
             width="stretch", 
@@ -468,8 +481,23 @@ def show_finance_page(db, exchange_rate):
             }
         )
 
+        # === 渲染分页按钮 ===
+        if total_pages > 1:
+            col_btn1, col_btn2, col_page, col_btn3, col_btn4 = st.columns([1, 1, 2, 1, 1])
+            with col_btn2:
+                if st.button("⬅️ 上一页", disabled=(current_page == 1), use_container_width=True):
+                    st.session_state.finance_page -= 1
+                    st.rerun()
+            with col_page:
+                st.markdown(f"<div style='text-align: center; padding-top: 5px; color: #555;'>第 <b>{current_page}</b> / {total_pages} 页</div>", unsafe_allow_html=True)
+            with col_btn3:
+                if st.button("下一页 ➡️", disabled=(current_page == total_pages), use_container_width=True):
+                    st.session_state.finance_page += 1
+                    st.rerun()
+
         st.divider()
         # --- 4. 独立渲染的编辑删除模块 ---
-        render_edit_delete_panel(df_display)
+        # 传入当前页截取的 df_render，下拉框只显示当前这 100 条记录
+        render_edit_delete_panel(df_render)
     else:
         st.info("暂无记录")
