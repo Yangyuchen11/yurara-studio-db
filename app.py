@@ -24,6 +24,7 @@ from views.consumable_view import show_other_asset_page
 from views.sales_view import show_sales_page
 from views.sales_order_view import show_sales_order_page
 from streamlit_option_menu import option_menu
+import os
 
 # === 1. 页面配置 (必须放在第一行) ===
 st.set_page_config(page_title="Yurara综合管理系统", layout="wide")
@@ -83,7 +84,13 @@ if "test_mode" not in st.session_state:
 def get_real_engine():
     """获取真实数据库连接 (Supabase)"""
     try:
-        db_url = st.secrets["database"]["DATABASE_URL"]
+        # 1. 优先尝试从环境变量读取 (Zeabur 云端环境)
+        db_url = os.getenv("DATABASE_URL")
+        
+        # 2. 如果环境变量没有，再尝试从本地 secrets.toml 读取 (本地测试环境)
+        if not db_url:
+            db_url = st.secrets["database"]["DATABASE_URL"]
+            
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
         elif db_url.startswith("postgresql://"):
@@ -268,6 +275,7 @@ with st.sidebar:
                         conn.commit()
                         
                 st.success("恢复完成")
+                st.cache_data.clear()
                 st.rerun()
             except Exception as e:
                 st.error(f"导入错误: {e}")
