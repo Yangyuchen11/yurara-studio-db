@@ -25,9 +25,10 @@ def get_cached_finance_data():
     db_cache = SessionLocal()
     try:
         df_display = FinanceService.get_finance_records_with_balance(db_cache)
-        # 用原生的 Emoji 标识替代极度拖慢速度的 Pandas Styler 背景色渲染
+        
+        # 🚀 性能优化 3：使用向量化的 map 替代低效的 apply，速度飙升
         if not df_display.empty:
-            df_display['收支'] = df_display['收支'].apply(lambda x: "🟢 收入" if x == "收入" else "🔴 支出")
+            df_display['收支'] = df_display['收支'].map({"收入": "🟢 收入", "支出": "🔴 支出"}).fillna(df_display['收支'])
             
         cur_cny, cur_jpy = FinanceService.get_current_balances(db_cache)
         return df_display, cur_cny, cur_jpy
@@ -373,12 +374,15 @@ def render_edit_delete_panel(df_display):
     db_frag = SessionLocal()
     try:
         c_edit, c_del = st.columns([1, 1])
-        record_options = df_display.to_dict('records')
+        
+        # 🚀 性能优化 4：在下拉菜单中也只提供最近 300 条的操作选项，防止下拉框假死
+        df_recent_options = df_display.head(300)
+        record_options = df_recent_options.to_dict('records')
 
         with c_edit:
-            with st.popover("✏️ 编辑记录", width="stretch"):
+            with st.popover("✏️ 编辑近期记录", width="stretch"):
                 if record_options:
-                    sel = st.selectbox("选择要修改的记录", record_options, format_func=lambda x: f"{x['日期']} | {x['收支']} {x['金额']} | {x['备注']}")
+                    sel = st.selectbox("选择要修改的记录 (仅限最近300条)", record_options, format_func=lambda x: f"{x['日期']} | {x['收支']} {x['金额']} | {x['备注']}")
                     if sel:
                         with st.form(key=f"edit_{sel['ID']}"):
                             n_date = st.date_input("日期", value=sel['日期'])
@@ -403,13 +407,13 @@ def render_edit_delete_panel(df_display):
                                     st.error(f"修改失败: {e}")
 
         with c_del:
-            with st.popover("🗑️ 删除记录", width="stretch"):
+            with st.popover("🗑️ 删除近期记录", width="stretch"):
                 if record_options:
-                    sel = st.selectbox("选择要删除的记录", record_options, format_func=lambda x: f"{x['日期']} | {x['金额']} | {x['备注']}")
+                    sel = st.selectbox("选择要删除的记录 (仅限最近300条)", record_options, format_func=lambda x: f"{x['日期']} | {x['金额']} | {x['备注']}")
                     if st.button("确认删除", width="stretch", type="primary"):
                         try:
                             msg = FinanceService.delete_record(db_frag, sel['ID'])
-                            if msg is not False: # 容错
+                            if msg is not False:
                                 st.toast(f"已删除，关联数据回滚: {msg}", icon="🗑️")
                                 clear_finance_cache()
                                 st.rerun()
@@ -422,10 +426,10 @@ def render_edit_delete_panel(df_display):
 def show_finance_page(db, exchange_rate):
     st.header("💰 财务流水")
     
-    # --- 独立渲染的表单 ---
+    # --- 1. 独立渲染的表单，隔离打字卡顿 ---
     render_add_transaction_form(exchange_rate)
     
-    # --- 获取缓存的表格数据 ---
+    # --- 2. 获取缓存的表格数据 (秒开) ---
     with st.spinner("加载流水历史中..."):
         df_display, cur_cny, cur_jpy = get_cached_finance_data()
 
@@ -440,8 +444,17 @@ def show_finance_page(db, exchange_rate):
     if not df_display.empty:
         st.subheader("📜 流水明细")
         
+        # 🚀 性能优化 5：只渲染最近的 300 条记录到前端，彻底告别浏览器崩溃卡死！
+        MAX_DISPLAY_ROWS = 300
+        if len(df_display) > MAX_DISPLAY_ROWS:
+            st.caption(f"⚠️ 为保证页面流畅响应，下方表格仅展示最近的 **{MAX_DISPLAY_ROWS}** 条记录（共计 {len(df_display)} 条）。")
+            df_render = df_display.head(MAX_DISPLAY_ROWS)
+        else:
+            df_render = df_display
+
+        # 移除了极其缓慢的 Pandas Styler，使用 Streamlit 原生的 Column Config 加速渲染
         st.dataframe(
-            df_display, 
+            df_render, 
             width="stretch", 
             hide_index=True, 
             height=600, 
