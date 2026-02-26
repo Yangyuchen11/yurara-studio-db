@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import zipfile
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from models import (
@@ -24,7 +25,6 @@ from views.consumable_view import show_other_asset_page
 from views.sales_view import show_sales_page
 from views.sales_order_view import show_sales_order_page
 from streamlit_option_menu import option_menu
-import os
 
 # === 1. 页面配置 (必须放在第一行) ===
 st.set_page_config(page_title="Yurara综合管理系统", layout="wide")
@@ -80,46 +80,60 @@ if not check_login():
 if "test_mode" not in st.session_state:
     st.session_state.test_mode = False
 
+# 🚀 核心优化：合并并缓存 Engine。Streamlit 会自动根据 is_test 参数缓存两个独立的连接池
 @st.cache_resource
-def get_real_engine():
-    """获取真实数据库连接 (Supabase)"""
-    try:
-        # 1. 优先尝试从环境变量读取 (Zeabur 云端环境)
-        db_url = os.getenv("DATABASE_URL")
-        
-        # 2. 如果环境变量没有，再尝试从本地 secrets.toml 读取 (本地测试环境)
-        if not db_url:
-            db_url = st.secrets["database"]["DATABASE_URL"]
+def get_cached_engine(is_test: bool):
+    """根据当前环境获取并缓存数据库 Engine，防止连接池耗尽"""
+    if is_test:
+        # 测试环境 (本地 SQLite)
+        # check_same_thread=False 是 Streamlit 多线程访问 SQLite 所必需的
+        return create_engine("sqlite:///yurara_test_env.db", pool_pre_ping=True, connect_args={"check_same_thread": False})
+    else:
+        # 真实环境 (Supabase / PostgreSQL)
+        try:
+            db_url = os.getenv("DATABASE_URL")
+            if not db_url:
+                db_url = st.secrets["database"]["DATABASE_URL"]
 
-        if db_url.startswith("postgres://"):
-            db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
-        elif db_url.startswith("postgresql://"):
-            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
-        return create_engine(db_url, pool_pre_ping=True)
-    except Exception as e:
-        st.error(f"真实数据库连接初始化失败: {e}")
-        return None
+            if db_url.startswith("postgres://"):
+                db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+            elif db_url.startswith("postgresql://"):
+                db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+            
+            return create_engine(db_url, pool_pre_ping=True)
+        except Exception as e:
+            st.error(f"真实数据库连接初始化失败: {e}")
+            return None
 
-@st.cache_resource
-def get_test_engine():
-    """获取测试数据库连接 (本地 SQLite)"""
-    # check_same_thread=False 是 Streamlit 多线程访问 SQLite 所必需的
-    return create_engine("sqlite:///yurara_test_env.db", pool_pre_ping=True, connect_args={"check_same_thread": False})
-
-# 根据当前是否处于测试模式选择不同的数据库引擎
-engine = get_test_engine() if st.session_state.test_mode else get_real_engine()
+# 获取当前环境对应的 Engine
+engine = get_cached_engine(st.session_state.test_mode)
 
 if not engine:
     st.stop()
 
+# 每次页面重新渲染时，绑定到当前的 engine
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def get_db():
+    """用于主页面全局渲染的 DB Generator"""
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+# 🚀 核心优化：动态会话生成器
+def get_dynamic_session():
+    """
+    供 Fragment 局部刷新使用的动态会话。
+    调用缓存的 Engine 生成 Session，避免重复创建 Engine 导致内存泄漏！
+    """
+    is_test = st.session_state.get("test_mode", False)
+    dyn_engine = get_cached_engine(is_test)
+    return sessionmaker(autocommit=False, autoflush=False, bind=dyn_engine)()
+
+# 🔥 将其挂载到全局 session_state，使得其他 View 文件可以直接调用，彻底杜绝 Python 循环导入(Circular Import)报错
+st.session_state.get_dynamic_session = get_dynamic_session
 
 # === 全局表映射，用于备份和测试环境克隆 ===
 TABLES_MAP = [
@@ -312,7 +326,7 @@ with st.sidebar:
                 
                 st.cache_data.clear()
                 for key in list(st.session_state.keys()):
-                    if key not in ['authenticated', 'current_user_name', 'global_rate_input', 'test_mode']:
+                    if key not in ['authenticated', 'current_user_name', 'global_rate_input', 'test_mode', 'get_dynamic_session']:
                         del st.session_state[key]
                 st.rerun()
             except Exception as e:
@@ -320,7 +334,7 @@ with st.sidebar:
                 st.error(f"清空失败: {e}")
 
     # ==========================================
-    # === 新增：环境切换按钮 (放置在左下角) ===
+    # === 环境切换按钮 (放置在左下角) ===
     # ==========================================
     st.markdown("<br><br>", unsafe_allow_html=True) # 撑开一点间距，使其靠下
     st.divider()
@@ -332,11 +346,19 @@ with st.sidebar:
     )
 
     if test_mode_toggle != st.session_state.test_mode:
+        
+        # 无论是进测试还是回线上，把临时交互状态统统清空，防 UI 错位
+        keys_to_keep = ['authenticated', 'current_user_name', 'global_rate_widget', 'test_mode', 'get_dynamic_session']
+        for key in list(st.session_state.keys()):
+            if key not in keys_to_keep:
+                del st.session_state[key]
+
         if test_mode_toggle:
             # 切换到测试环境：执行数据复制
             with st.spinner("正在从真实环境复制数据到沙盒，请稍候..."):
-                real_engine = get_real_engine()
-                test_engine = get_test_engine()
+                # 采用统一缓存的引擎获取方式
+                real_engine = get_cached_engine(False)
+                test_engine = get_cached_engine(True)
                 
                 # 1. 清空并重建测试环境的表结构
                 Base.metadata.drop_all(bind=test_engine)
@@ -358,10 +380,12 @@ with st.sidebar:
                     real_db.close()
             
             st.session_state.test_mode = True
+            st.cache_data.clear()
             st.rerun()
         else:
             # 返回真实环境
             st.session_state.test_mode = False
+            st.cache_data.clear()
             st.rerun()
 
 # --- 路由分发 ---

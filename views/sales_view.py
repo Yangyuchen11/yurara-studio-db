@@ -4,9 +4,8 @@ from services.sales_service import SalesService
 from database import SessionLocal
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_cached_sales_df():
-    # 为了缓存机制安全工作，这里重新生成一个短链接
-    db_cache = SessionLocal()
+def get_cached_sales_df(test_mode_flag):
+    db_cache = st.session_state.get_dynamic_session()
     try:
         raw_logs = SalesService.get_raw_sales_logs(db_cache)
         df = SalesService.process_sales_data(raw_logs)
@@ -18,8 +17,9 @@ def show_sales_page(db):
     st.header("📈 销售数据透视")
 
     # === 1. 获取并处理数据 (带缓存加速) ===
+    test_mode = st.session_state.get("test_mode", False)
     with st.spinner("正在加载销售大数据..."):
-        df = get_cached_sales_df()
+        df = get_cached_sales_df(test_mode)
     
     if df.empty:
         st.info("暂无销售数据。")

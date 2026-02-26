@@ -9,9 +9,8 @@ from database import SessionLocal
 # ------------------ 🚀 性能优化：独立数据层缓存 ------------------
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_cached_order_stats(product_filter):
-    """缓存订单统计数据，避免每次刷新重算"""
-    db_cache = SessionLocal()
+def get_cached_order_stats(product_filter, test_mode_flag): # 增加参数
+    db_cache = st.session_state.get_dynamic_session() # 动态获取
     try:
         service = SalesOrderService(db_cache)
         return service.get_order_statistics(product_name=product_filter)
@@ -19,13 +18,12 @@ def get_cached_order_stats(product_filter):
         db_cache.close()
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_cached_orders_df(status_filter, product_filter):
-    """直接将数据转换为 DataFrame 并缓存，彻底阻断全选时的数据库查询"""
-    db_cache = SessionLocal()
+def get_cached_orders_df(status_filter, product_filter, test_mode_flag): # 增加参数
+    db_cache = st.session_state.get_dynamic_session() # 动态获取
     try:
         service = SalesOrderService(db_cache)
         orders = service.get_all_orders(status=status_filter, product_name=product_filter, limit=100)
-        
+
         data_list = []
         for o in orders:
             item_count = len(o.items)
@@ -66,6 +64,8 @@ def clear_order_caches():
 
 def show_sales_order_page(db):
     st.header("🛒 销售订单管理")
+
+    test_mode = st.session_state.get("test_mode", False)
     service = SalesOrderService(db)
 
     # ================= 0. 商品选择 =================
@@ -82,7 +82,7 @@ def show_sales_order_page(db):
     st.divider()
 
     # ================= 1. 订单统计概览 (秒开) =================
-    stats = get_cached_order_stats(product_filter)
+    stats = get_cached_order_stats(product_filter, test_mode)
     with st.container(border=True):
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("总订单数", stats["total"])
@@ -199,8 +199,7 @@ def show_sales_order_page(db):
 
         # ⚡ 极速加载：从缓存获取 DataFrame
         with st.spinner("加载数据中..."):
-            # 【修复点1】必须使用 .copy()，以避免直接修改缓存的底层数据
-            df = get_cached_orders_df(status_filter, product_filter).copy()
+            df = get_cached_orders_df(status_filter, product_filter, test_mode).copy()
 
         if df.empty:
             st.info("暂无订单")

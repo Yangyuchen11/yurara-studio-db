@@ -5,7 +5,6 @@ import math  # 新增用于分页计算
 from datetime import date
 from services.finance_service import FinanceService
 from constants import PRODUCT_COST_CATEGORIES
-from database import SessionLocal
 
 # ================= 🚀 性能优化 1：局部刷新装饰器兼容 =================
 def fragment_if_available(func):
@@ -21,9 +20,9 @@ def fragment_if_available(func):
 
 # ================= 🚀 性能优化 2：数据与表格渲染缓存 =================
 @st.cache_data(ttl=300, show_spinner=False)
-def get_cached_finance_data():
-    """缓存流水明细和余额，避免每次刷新重算全表"""
-    db_cache = SessionLocal()
+def get_cached_finance_data(test_mode_flag):
+    """缓存流水明细和余额，避免每次刷新重算全表。传入_test_mode_flag隔离真假环境的缓存"""
+    db_cache = st.session_state.get_dynamic_session()
     try:
         df_display = FinanceService.get_finance_records_with_balance(db_cache)
         
@@ -43,8 +42,8 @@ def clear_finance_cache():
 # ================= 局部组件：新增表单 =================
 @fragment_if_available
 def render_add_transaction_form(exchange_rate):
-    # 局部组件内创建独立的 DB session，防止跨线程报错
-    db_frag = SessionLocal()
+    # 局部组件内使用动态分配的 session
+    db_frag = st.session_state.get_dynamic_session()
     try:
         with st.expander("➕ 新增收支 / 兑换 / 债务记录", expanded=True):
             
@@ -372,7 +371,7 @@ def render_add_transaction_form(exchange_rate):
 # ================= 局部组件：编辑与删除 =================
 @fragment_if_available
 def render_edit_delete_panel(df_render):
-    db_frag = SessionLocal()
+    db_frag = st.session_state.get_dynamic_session()
     try:
         c_edit, c_del = st.columns([1, 1])
         
@@ -430,8 +429,9 @@ def show_finance_page(db, exchange_rate):
     render_add_transaction_form(exchange_rate)
     
     # --- 2. 获取缓存的表格数据 (秒开) ---
+    test_mode = st.session_state.get("test_mode", False)
     with st.spinner("加载流水历史中..."):
-        df_display, cur_cny, cur_jpy = get_cached_finance_data()
+        df_display, cur_cny, cur_jpy = get_cached_finance_data(test_mode)
 
     st.divider()
     m1, m2, m3, m4 = st.columns(4)
