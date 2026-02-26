@@ -90,7 +90,7 @@ def get_real_engine():
         # 2. 如果环境变量没有，再尝试从本地 secrets.toml 读取 (本地测试环境)
         if not db_url:
             db_url = st.secrets["database"]["DATABASE_URL"]
-            
+
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
         elif db_url.startswith("postgresql://"):
@@ -310,6 +310,7 @@ with st.sidebar:
                 db.commit()
                 st.session_state["toast_msg"] = ("数据已清空！表结构已保留。", "🧹")
                 
+                st.cache_data.clear()
                 for key in list(st.session_state.keys()):
                     if key not in ['authenticated', 'current_user_name', 'global_rate_input', 'test_mode']:
                         del st.session_state[key]
