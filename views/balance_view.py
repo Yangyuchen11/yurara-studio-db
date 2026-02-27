@@ -5,42 +5,8 @@ from services.balance_service import BalanceService
 
 def show_balance_page(db, exchange_rate):
     # ================= 1. 顶部标题与统一管理区 =================
-    c_title, c_del = st.columns([5, 1])
-    c_title.header("📊 公司账面概览 (资产负债表)")
-    
-    # --- 调用 Service 获取可删除项 ---
-    deletable_items_objs = BalanceService.get_deletable_items(db)
-    
-    # 转换为下拉框选项格式
-    deletable_options = []
-    type_map = {"asset": "资产", "liability": "负债", "equity": "资本"}
-    
-    for i in deletable_items_objs:
-        deletable_options.append({
-            "id": i.id,
-            "display": f"[{type_map.get(i.category, '未知')}] {i.name} (¥{i.amount:,.2f})"
-        })
-    
-    with c_del:
-        with st.popover("🗑️ 删除项目", width="stretch"):
-            if not deletable_options:
-                st.caption("暂无项目可删除")
-            else:
-                target_dict = st.selectbox("选择要删除的项目", deletable_options, format_func=lambda x: x["display"])
-                st.caption("⚠️ 注意：删除此项将同时删除关联的财务流水记录！")
-                
-                if st.button("🔴 确认删除", type="primary", width="stretch"):
-                    try:
-                        # --- 调用 Service 执行删除 ---
-                        deleted_name = BalanceService.delete_item(db, target_dict["id"])
-                        if deleted_name:
-                            st.toast(f"已删除：{deleted_name}", icon="🗑️")
-                            st.rerun()
-                        else:
-                            st.warning("该项目可能已被删除。")
-                    except Exception as e:
-                        st.error(f"删除失败: {e}")
-
+    st.header("📊 公司账面概览 (资产负债表)")
+    st.caption("💡 提示：如需修改或删除特定的资产/负债项目，请前往【财务流水】界面找到对应的初始记录并进行删除，系统将自动回滚账目。")
     st.divider()
 
     # ================= 2. 获取核心数据 =================

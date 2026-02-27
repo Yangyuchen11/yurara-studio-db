@@ -108,10 +108,15 @@ def render_add_transaction_form(exchange_rate):
                     st.markdown("##### 2. 债务内容")
                     c_t1, c_t2 = st.columns(2)
                     d_name = c_t1.text_input("债务名称", placeholder="如：银行经营贷、欠某加工厂货款 (必填)")
-                    dest = c_t2.selectbox("借入价值去向", ["存入流动资金 (拿到现金)", "新增资产项 (形成实物/账面资产)"])
                     
-                    if dest == "存入流动资金":
-                        rel_content = st.text_input("入账说明", placeholder="如：贷款下发至账户 (必填)")
+                    # 【核心修复 1】精准匹配选项，解决一直走“新增资产”分支的 Bug
+                    dest_options = ["存入流动资金 (拿到现金)", "新增资产项 (形成实物/账面资产)"]
+                    dest = c_t2.selectbox("借入价值去向", dest_options)
+                    is_to_cash = (dest == dest_options[0])
+                    
+                    # 【核心修复 2】如果是现金，隐藏挂账资产名称；如果是资产，则要求必填
+                    if is_to_cash:
+                        rel_content = "" # 不需要填资产名
                     else:
                         rel_content = st.text_input("新增挂账资产名称", placeholder="如：未付款的打印机 (必填)")
 
@@ -127,13 +132,14 @@ def render_add_transaction_form(exchange_rate):
 
                     st.write("")
                     if st.button("💾 确认新增债务", type="primary", width="stretch"):
-                        if not d_name or not rel_content or d_amount <= 0:
-                            st.error("请填写完整债务名称、去向说明并确保金额大于0")
+                        # 【核心修复 3】按需校验：如果是资产，必须有资产名；如果是现金，只校验债务名和金额
+                        if not d_name or d_amount <= 0 or (not is_to_cash and not rel_content):
+                            st.error("请填写完整必填项（债务名称、资产名称）并确保金额大于0")
                         else:
                             try:
                                 FinanceService.create_debt(
                                     db_frag, f_date, curr, d_name, d_amount, d_source, d_remark, 
-                                    is_to_cash=(dest=="存入流动资金"), related_content=rel_content
+                                    is_to_cash=is_to_cash, related_content=rel_content
                                 )
                                 st.toast("债务记录成功", icon="📝")
                                 clear_finance_cache()

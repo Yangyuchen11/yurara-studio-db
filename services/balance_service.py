@@ -7,44 +7,6 @@ class BalanceService:
     """
     负责公司账面/资产负债表的后端计算逻辑
     """
-
-    @staticmethod
-    def get_deletable_items(db):
-        """
-        获取所有可以被手动删除的账目项
-        (排除系统自动生成的在制资产冲销、预入库等)
-        """
-        all_items = db.query(CompanyBalanceItem).all()
-        deletable = []
-        for i in all_items:
-            # 排除自动生成的特殊项
-            if i.name and (i.name.startswith(AssetPrefix.WIP_OFFSET) or
-                           i.name.startswith(AssetPrefix.PRE_STOCK) or
-                           i.name.startswith(AssetPrefix.STOCK)):
-                continue
-            deletable.append(i)
-        return deletable
-
-    @staticmethod
-    def delete_item(db, item_id):
-        """
-        删除指定的资产/负债/资本项，并级联删除关联流水
-        """
-        item_to_del = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == item_id).first()
-        if item_to_del:
-            name_bak = item_to_del.name
-            # 1. 尝试删除关联的财务流水
-            if item_to_del.finance_record_id:
-                fin_rec = db.query(FinanceRecord).filter(FinanceRecord.id == item_to_del.finance_record_id).first()
-                if fin_rec:
-                    db.delete(fin_rec)
-            
-            # 2. 删除项目本身
-            db.delete(item_to_del)
-            db.commit()
-            return name_bak
-        return None
-
     @staticmethod
     def get_financial_summary(db):
         """
