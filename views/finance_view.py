@@ -282,11 +282,12 @@ def render_add_transaction_form(exchange_rate):
                     link_config["product_id"] = pid
                     
                     final_cat = c_c2.selectbox("成本分类", PRODUCT_COST_CATEGORIES)
+                    link_config["cat"] = final_cat
                     
                     budgets = FinanceService.get_budget_items(db_frag, pid, final_cat)
                     b_opts = ["➕ 手动输入新项目"] + [b.item_name for b in budgets]
                     
-                    c_c3, c_c4 = st.columns([1.5, 2])
+                    c_c3, c_c4 = st.columns([1.5, 2], vertical_alignment="bottom")
                     sel_item = c_c3.selectbox("预算项目匹配", b_opts)
                     
                     if sel_item == "➕ 手动输入新项目":

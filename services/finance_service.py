@@ -279,9 +279,11 @@ class FinanceService:
                 unit_price_cny = cost_in_cny / link_config['qty'] if link_config['qty'] > 0 else 0
                 final_remark = f"{base_data['desc']} (原币支付: {base_data['amount']:.0f} JPY)".strip()
 
+            detailed_cat = link_config.get('cat') if link_config.get('cat') else base_data['category']
+
             db.add(CostItem(
                 product_id=link_config['product_id'], item_name=link_config['name'],
-                actual_cost=cost_in_cny, supplier=base_data['shop'], category=base_data['category'],
+                actual_cost=cost_in_cny, supplier=base_data['shop'], category=detailed_cat, # 👈 使用具体分类
                 unit_price=unit_price_cny, quantity=link_config['qty'], 
                 remarks=final_remark, finance_record_id=new_record.id
             ))

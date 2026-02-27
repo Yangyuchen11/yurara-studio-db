@@ -63,6 +63,12 @@ def show_cost_page(db):
                 try:
                     service.add_budget_item(prod.id, b_cat, b_name, b_unit_price, b_qty, b_unit_text, b_remarks)
                     st.toast("预算已添加", icon="✅")
+                    
+                    keys_to_clear = ["budget_name_input", "b_p_in", "b_q_in", "b_u_in", "b_t_in", "b_r_in"]
+                    for k in keys_to_clear:
+                        if k in st.session_state:
+                            del st.session_state[k]
+                            
                     st.rerun()
                 except Exception as e:
                     st.error(f"保存失败: {e}")
@@ -176,6 +182,11 @@ def show_cost_page(db):
                     
                     if any_db_change:
                         st.toast(f"已更新: {cat}", icon="💾")
+                        
+                        # 👇 核心修复：强制清空数据表格的记忆，防止它用旧状态覆盖新数据
+                        if f"editor_{cat}_{prod.id}" in st.session_state:
+                            del st.session_state[f"editor_{cat}_{prod.id}"]
+                            
                         st.rerun()
 
                 # --- 删除功能 ---
@@ -189,6 +200,13 @@ def show_cost_page(db):
                             try:
                                 del_id = delete_options[selected_del_label]
                                 service.delete_cost_item(del_id)
+                                
+                                # 👇 核心修复：清空下拉框和表格的记忆
+                                if f"sel_del_{cat}" in st.session_state:
+                                    del st.session_state[f"sel_del_{cat}"]
+                                if f"editor_{cat}_{prod.id}" in st.session_state:
+                                    del st.session_state[f"editor_{cat}_{prod.id}"]
+                                    
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"删除失败: {e}")
