@@ -22,10 +22,19 @@ class SalesOrderService:
 
         if item:
             item.amount += delta
+            
+            # 👇【修复点 1】防止旧订单结算时，将资产扣成负数
+            if item.amount < 0 and name.startswith(AssetPrefix.PENDING_SETTLE):
+                item.amount = 0
+                
             # 如果金额极小且无关联流水，删除该项 (保持数据库整洁)
             if abs(item.amount) <= 0.01 and not item.finance_record_id:
                 self.db.delete(item)
         else:
+            # 👇【修复点 2】如果该资产本就不存在，且当前操作是扣减（旧订单完成时），则直接忽略
+            if delta < 0 and name.startswith(AssetPrefix.PENDING_SETTLE):
+                return
+                
             self.db.add(CompanyBalanceItem(
                 name=name, amount=delta, category=category, currency=currency
             ))

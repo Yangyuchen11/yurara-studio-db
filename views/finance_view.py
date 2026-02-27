@@ -91,7 +91,7 @@ def render_add_transaction_form(exchange_rate):
                         try:
                             FinanceService.execute_exchange(db_frag, f_date, source_curr, target_curr, amount_out, amount_in, desc)
                             st.toast(f"兑换成功：-{amount_out}{source_curr}, +{amount_in}{target_curr}", icon="💱")
-                            sync_all_caches()()
+                            sync_all_caches()
                             st.rerun()
                         except Exception as e:
                             st.error(f"兑换失败: {e}")
@@ -139,7 +139,7 @@ def render_add_transaction_form(exchange_rate):
                                     is_to_cash=is_to_cash, related_content=rel_content
                                 )
                                 st.toast("债务记录成功", icon="📝")
-                                sync_all_caches()()
+                                sync_all_caches()
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"保存失败: {e}")
@@ -173,7 +173,7 @@ def render_add_transaction_form(exchange_rate):
                                 try:
                                     FinanceService.repay_debt(db_frag, f_date, sel_id, amt, rem)
                                     st.toast("还款成功", icon="💸")
-                                    sync_all_caches()()
+                                    sync_all_caches()
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"失败: {e}")
@@ -193,7 +193,7 @@ def render_add_transaction_form(exchange_rate):
                                 try:
                                     FinanceService.offset_debt(db_frag, f_date, sel_id, asset_map[asset_label], amt, rem)
                                     st.toast("抵消成功", icon="🔄")
-                                    sync_all_caches()()
+                                    sync_all_caches()
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"失败: {e}")
@@ -365,7 +365,7 @@ def render_add_transaction_form(exchange_rate):
                         try:
                             msg = FinanceService.create_general_transaction(db_frag, base_data, link_config, exchange_rate)
                             st.toast(f"记账成功！{msg}", icon="✅")
-                            sync_all_caches()()
+                            sync_all_caches()
                             st.rerun()
                         except Exception as e:
                             st.error(f"写入失败: {e}")
@@ -404,7 +404,7 @@ def render_edit_delete_panel(df_render):
                                 try:
                                     if FinanceService.update_record(db_frag, sel['ID'], updates):
                                         st.toast("已修改", icon="💾")
-                                        sync_all_caches()()
+                                        sync_all_caches()
                                         st.rerun()
                                 except Exception as e:
                                     st.error(f"修改失败: {e}")
@@ -418,7 +418,7 @@ def render_edit_delete_panel(df_render):
                             msg = FinanceService.delete_record(db_frag, sel['ID'])
                             if msg is not False:
                                 st.toast(f"已删除，关联数据回滚: {msg}", icon="🗑️")
-                                sync_all_caches()()
+                                sync_all_caches()
                                 st.rerun()
                         except Exception as e:
                             st.error(f"删除失败: {e}")
