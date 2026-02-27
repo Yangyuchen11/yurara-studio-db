@@ -7,6 +7,7 @@ from models import (
     FixedAsset, ConsumableLog, CompanyBalanceItem
 )
 from constants import AssetPrefix, BalanceCategory, Currency, FinanceCategory
+from constants import FinanceCategory
 
 class FinanceService:
     """
@@ -427,6 +428,9 @@ class FinanceService:
         """删除流水并回滚关联数据（适配极简单线债务架构）"""
         rec = FinanceService.get_record_by_id(db, record_id)
         if not rec: return False
+
+        if rec.category == FinanceCategory.SALES_INCOME:
+            raise ValueError("拒绝操作：销售收入流水受到系统保护，必须从【销售订单管理】模块发起撤销或删除。")
 
         msg_list = []
 
