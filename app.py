@@ -346,7 +346,7 @@ with st.sidebar:
     )
 
     if test_mode_toggle != st.session_state.test_mode:
-        
+
         # 无论是进测试还是回线上，把临时交互状态统统清空，防 UI 错位
         keys_to_keep = ['authenticated', 'current_user_name', 'global_rate_widget', 'test_mode', 'get_dynamic_session']
         for key in list(st.session_state.keys()):
@@ -398,7 +398,7 @@ elif selected == "库存管理":
 elif selected == "销售订单管理":
     show_sales_order_page(db)
 elif selected == "销售额一览":
-    show_sales_page(db)
+    show_sales_page(db, exchange_rate)
 elif selected == "财务流水录入":
     show_finance_page(db, exchange_rate)
 elif selected == "公司账面概览":

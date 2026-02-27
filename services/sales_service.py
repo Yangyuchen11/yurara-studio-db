@@ -102,17 +102,26 @@ class SalesService:
         return pd.DataFrame(raw_data_list)
 
     @staticmethod
-    def get_product_leaderboard(df):
+    def get_product_leaderboard(df, exchange_rate=0.048):
         """
         生成产品销售榜单数据
         """
         if df.empty:
             return pd.DataFrame()
             
-        # 按产品聚合
-        df_prod_summary = df.groupby('product').agg({
-            'amount': lambda x: x[df['currency'] == Currency.CNY].sum(), # 简便起见，榜单仅按CNY排序
-            'qty': 'sum'
-        }).reset_index().rename(columns={'amount': 'CNY总额', 'qty': '净销量'})
+        # 1. 按产品分组，分别计算 CNY 和 JPY 的销售总额
+        # 💡 这里加上了 include_groups=False 消除 FutureWarning
+        df_prod_summary = df.groupby('product').apply(
+            lambda x: pd.Series({
+                'CNY总额': x[x['currency'] == 'CNY']['amount'].sum(),
+                'JPY总额': x[x['currency'] == 'JPY']['amount'].sum()
+            }),
+            include_groups=False  
+        ).reset_index()
         
-        return df_prod_summary.sort_values(by='CNY总额', ascending=False)
+        # 2. 计算综合折合的 CNY 总额
+        df_prod_summary['折合CNY总额'] = df_prod_summary['CNY总额'] + (df_prod_summary['JPY总额'] * exchange_rate)
+        
+        # 3. 按折合总额降序排列，并只保留需要的列
+        df_prod_summary = df_prod_summary.sort_values(by='折合CNY总额', ascending=False)
+        return df_prod_summary[['product', '折合CNY总额', 'CNY总额', 'JPY总额']]
