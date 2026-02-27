@@ -41,6 +41,38 @@ class SalesOrderService:
             return total_cost / denom
         return 0.0
 
+    def _distribute_pending_asset(self, order, amount_delta):
+        """
+        按订单内商品的金额比例，将待结算金额分配到各个商品的待结算账户中
+        amount_delta: 正数代表增加待结算，负数代表减少待结算
+        """
+        # 1. 兼容旧订单：如果存在旧的按订单号生成的待结算资产，优先处理旧资产，防止死账
+        legacy_asset_name = f"{AssetPrefix.PENDING_SETTLE}-{order.order_no}"
+        legacy_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == legacy_asset_name).first()
+        if legacy_item:
+            self._update_asset_by_name(legacy_asset_name, amount_delta, category="asset", currency=order.currency)
+            return
+
+        # 2. 如果没有旧资产，按商品比例将金额分配到对应的【待结算-商品名】中
+        total_initial = sum(item.subtotal for item in order.items)
+        
+        if total_initial > 0:
+            # 累加各个商品的子计，因为同一个订单内可能有多个同商品的明细行
+            product_subtotals = {}
+            for item in order.items:
+                product_subtotals[item.product_name] = product_subtotals.get(item.product_name, 0.0) + item.subtotal
+            
+            # 按比例增减金额
+            for p_name, subtotal in product_subtotals.items():
+                item_delta = amount_delta * (subtotal / total_initial)
+                pending_asset_name = f"{AssetPrefix.PENDING_SETTLE}-{p_name}"
+                self._update_asset_by_name(pending_asset_name, item_delta, category="asset", currency=order.currency)
+        else:
+            # 兜底逻辑
+            if order.items:
+                pending_asset_name = f"{AssetPrefix.PENDING_SETTLE}-{order.items[0].product_name}"
+                self._update_asset_by_name(pending_asset_name, amount_delta, category="asset", currency=order.currency)
+
     # ================= 1. 查询方法 =================
 
     def get_all_orders(self, status=None, product_name=None, limit=100):
@@ -235,8 +267,7 @@ class SalesOrderService:
                 self._update_asset_by_name(asset_name, asset_delta, category="asset", currency="CNY")
 
         # 2. 【新增】增加待结算资产
-        pending_asset_name = f"{AssetPrefix.PENDING_SETTLE}-{order.order_no}"
-        self._update_asset_by_name(pending_asset_name, order.total_amount, category="asset", currency=order.currency)
+        self._distribute_pending_asset(order, order.total_amount)
 
         # 3. 更新订单状态
         order.status = OrderStatus.SHIPPED
@@ -264,10 +295,7 @@ class SalesOrderService:
         actual_income = order.total_amount
 
         # 2. 【新增】扣除对应的待结算资产 (兼容旧订单：只有存在时才扣除)
-        pending_asset_name = f"{AssetPrefix.PENDING_SETTLE}-{order.order_no}"
-        pending_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == pending_asset_name).first()
-        if pending_item:
-            self._update_asset_by_name(pending_asset_name, -actual_income, category="asset", currency=order.currency)
+        self._distribute_pending_asset(order, -actual_income)
 
         # 3. 增加流动资金
         asset_name = f"{AssetPrefix.CASH}({order.currency})"
@@ -393,11 +421,8 @@ class SalesOrderService:
             if order.total_amount < 0:
                 order.total_amount = 0
             
-            # 【新增】因为未完成，这笔退款应从该订单现存的“待结算资产”中扣除 (兼容旧订单)
-            pending_asset_name = f"{AssetPrefix.PENDING_SETTLE}-{order.order_no}"
-            pending_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == pending_asset_name).first()
-            if pending_item:
-                self._update_asset_by_name(pending_asset_name, -refund_amount, category="asset", currency=order.currency)
+            # 从对应的待结算资产中扣除退款
+            self._distribute_pending_asset(order, -refund_amount)
 
         # 5. 更新订单状态为"售后中"
         order.status = OrderStatus.AFTER_SALES
@@ -461,9 +486,8 @@ class SalesOrderService:
                 if order.total_amount < 0:
                     order.total_amount = 0
                 
-                # 【新增】调整待结算资产
-                pending_asset_name = f"{AssetPrefix.PENDING_SETTLE}-{order.order_no}"
-                self._update_asset_by_name(pending_asset_name, -amount_delta, category="asset", currency=order.currency)
+                # 调整对应的待结算资产
+                self._distribute_pending_asset(order, -amount_delta)
 
         if refund_reason is not None:
             refund.refund_reason = refund_reason
@@ -528,9 +552,8 @@ class SalesOrderService:
             # 订单未完成：返还订单金额
             order.total_amount += refund_amount
             
-            # 【新增】因为撤销了未完成时的退款，待结算资产也应加回来
-            pending_asset_name = f"{AssetPrefix.PENDING_SETTLE}-{order.order_no}"
-            self._update_asset_by_name(pending_asset_name, refund_amount, category="asset", currency=order.currency)
+            # 因为撤销了未完成时的退款，待结算资产也应加回来
+            self._distribute_pending_asset(order, refund_amount)
 
         # 4. 删除售后记录
         self.db.delete(refund)
@@ -602,17 +625,189 @@ class SalesOrderService:
                 self.db.delete(finance)
                 
         elif order.status in [OrderStatus.SHIPPED, OrderStatus.AFTER_SALES]:
-            # 【新增】已发货但未完成，回滚发货时挂在账上的待结算资产 (兼容旧订单)
-            pending_asset_name = f"{AssetPrefix.PENDING_SETTLE}-{order.order_no}"
-            pending_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == pending_asset_name).first()
-            if pending_item:
-                self._update_asset_by_name(pending_asset_name, -order.total_amount, category="asset", currency=order.currency)
+            # 已发货但未完成，回滚发货时挂在账上的待结算资产
+            self._distribute_pending_asset(order, -order.total_amount)
                 
         # 4. 级联删除订单
         self.db.delete(order)
 
         self.db.commit()
         return f"订单 {order.order_no} 已删除，所有数据已回滚"
+
+    # ================= 6. 批量导入功能 =================
+    def validate_and_parse_import_data(self, df):
+        """
+        校验并解析上传的 Excel 订单数据 (新版：包含库存校验和多订单需求累计)
+        """
+        required_cols = ['订单号', '商品名', '商品型号', '数量', '销售平台', '订单总额', '币种']
+        missing_cols = [c for c in required_cols if c not in df.columns]
+        if missing_cols:
+            return None, f"缺少必要列: {', '.join(missing_cols)}"
+
+        # 确保订单号解析为纯字符串，并去除两端空格
+        df['订单号'] = df['订单号'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+
+        # 1. 检查 Excel 内部是否有重复订单号
+        if df['订单号'].duplicated().any():
+            duplicate_orders = df[df['订单号'].duplicated()]['订单号'].unique().tolist()
+            return None, f"Excel 表格中存在重复的订单号，请将同一个订单合并为一行！重复项: {', '.join(duplicate_orders)}"
+
+        # 2. 获取数据库中所有有效的商品和款式
+        valid_products = {}
+        for p in self.db.query(Product).all():
+            valid_products[p.name] = [c.color_name for c in p.colors]
+
+        errors = []
+        parsed_orders = []
+        
+        # 👇 新增：用于记录当前表格中每个款式累计已经被前面订单“预定”了多少件，防止超卖
+        consumed_stock_in_excel = {}
+
+        # 3. 逐行解析订单
+        for index, row in df.iterrows():
+            order_no = row['订单号']
+            
+            # 校验订单号是否已存在于数据库
+            existing = self.db.query(SalesOrder).filter(SalesOrder.order_no == order_no).first()
+            if existing:
+                errors.append(f"第 {index+2} 行 - 订单号已存在: {order_no}")
+                continue
+
+            platform = str(row['销售平台']).strip()
+            currency = str(row['币种']).strip()
+            p_name = str(row['商品名']).strip()
+            
+            try:
+                gross_price = float(row['订单总额'])
+            except ValueError:
+                errors.append(f"订单号 {order_no}: 总金额无效")
+                continue
+
+            # 解析款式和数量
+            var_str = str(row['商品型号']).replace('；', ';')
+            qty_str = str(row['数量']).replace('；', ';')
+            
+            variants = [v.strip() for v in var_str.split(';') if v.strip()]
+            qtys_str = [q.strip() for q in qty_str.split(';') if q.strip()]
+
+            # 校验分号分隔的数量是否一致
+            if len(variants) != len(qtys_str):
+                errors.append(f"订单号 {order_no}: 商品型号数量 ({len(variants)}) 与 数量个数 ({len(qtys_str)}) 不一致！")
+                continue
+            
+            if len(variants) == 0:
+                errors.append(f"订单号 {order_no}: 未读取到商品型号")
+                continue
+
+            items_data = []
+            total_qty = 0
+            has_item_error = False
+            
+            # 遍历该行分隔出来的每一对 (型号, 数量)
+            for v_name, q_str in zip(variants, qtys_str):
+                try:
+                    qty = int(q_str)
+                    if qty <= 0:
+                        errors.append(f"订单号 {order_no}: 数量必须大于0 ({q_str})")
+                        has_item_error = True
+                        break
+                except ValueError:
+                    errors.append(f"订单号 {order_no}: 数量格式无效 ({q_str})")
+                    has_item_error = True
+                    break
+                    
+                # 校验商品和款式是否存在于数据库
+                if p_name not in valid_products:
+                    errors.append(f"订单号 {order_no}: 数据库中不存在商品 '{p_name}'")
+                    has_item_error = True
+                    break
+                elif v_name not in valid_products[p_name]:
+                    errors.append(f"订单号 {order_no}: 商品 '{p_name}' 不存在型号 '{v_name}'")
+                    has_item_error = True
+                    break
+                else:
+                    # 👇 新增核心逻辑：校验实际库存是否满足需求
+                    stock_key = f"{p_name}_{v_name}"
+                    current_consumed = consumed_stock_in_excel.get(stock_key, 0)
+                    
+                    # 实时查询当前数据库中的现货总库存
+                    current_stock = self.db.query(func.sum(InventoryLog.change_amount)).filter(
+                        InventoryLog.product_name == p_name,
+                        InventoryLog.variant == v_name,
+                        InventoryLog.reason.in_(["入库", "出库", "退货入库", "发货撤销"])
+                    ).scalar() or 0
+                    
+                    # 校验：数据库现有库存 < (表格前面订单用掉的 + 本次需要的)
+                    if current_stock < current_consumed + qty:
+                        errors.append(f"订单号 {order_no}: '{p_name}-{v_name}' 库存不足 (当前可用库存:{current_stock}, 表格内累计需要:{current_consumed + qty})")
+                        has_item_error = True
+                        break
+                    
+                    # 库存足够，记录累加消耗，留给表格中后面的订单校验使用
+                    consumed_stock_in_excel[stock_key] = current_consumed + qty
+                    
+                    items_data.append({
+                        "product_name": p_name,
+                        "variant": v_name,
+                        "quantity": qty
+                    })
+                    total_qty += qty
+                    
+            if has_item_error:
+                continue
+
+            # 4. 自动计算手续费
+            fee = 0.0
+            if platform == "微店":
+                fee = gross_price * 0.006
+            elif platform == "Booth":
+                base_fixed_fee = 22 if currency == "JPY" else 1.0
+                fee = gross_price * 0.056 + base_fixed_fee
+                
+            net_price = gross_price - fee
+            
+            if net_price <= 0:
+                errors.append(f"订单号 {order_no}: 扣除手续费后的净金额({net_price:.2f}) 小于等于 0")
+                continue
+                
+            # 计算分摊到每件商品的净单价
+            final_unit_price = net_price / total_qty
+            for item in items_data:
+                item["unit_price"] = final_unit_price
+                item["subtotal"] = item["quantity"] * final_unit_price
+                
+            # 组装校验后的完整订单数据
+            parsed_orders.append({
+                "order_no": order_no,
+                "platform": platform,
+                "currency": currency,
+                "gross_price": gross_price,
+                "fee": fee,
+                "net_price": net_price,
+                "total_qty": total_qty,
+                "items": items_data
+            })
+
+        return parsed_orders, errors
+
+    def batch_create_orders(self, parsed_orders):
+        """
+        执行批量创建订单
+        """
+        created_count = 0
+        for order_data in parsed_orders:
+            # 复用已有的 create_order 逻辑，记账逻辑会自动在内部处理
+            order, err = self.create_order(
+                items_data=order_data["items"],
+                platform=order_data["platform"],
+                currency=order_data["currency"],
+                notes="Excel批量导入",
+                order_no=order_data["order_no"]
+            )
+            if not err:
+                created_count += 1
+        return created_count
+    
 
     def commit(self):
         """提交事务"""

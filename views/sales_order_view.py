@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 from services.sales_order_service import SalesOrderService
+from views.sales_view import get_cached_sales_df
 from models import Product
 from constants import OrderStatus, PLATFORM_CODES
 from database import SessionLocal
@@ -59,6 +60,7 @@ def clear_order_caches():
     """当发生增删改操作时，清空相关缓存"""
     get_cached_order_stats.clear()
     get_cached_orders_df.clear()
+    get_cached_sales_df.clear()
 
 # ------------------ 主页面逻辑 ------------------
 
@@ -179,6 +181,85 @@ def show_sales_order_page(db):
                                 clear_order_caches() # <--- 数据库发生变化，清空缓存
                                 st.rerun()
 
+    # ================= 2.5 批量导入订单 =================
+    with st.expander("📥 批量导入订单 (Excel)", expanded=False):
+        st.markdown("""
+        **表格格式要求**：请上传包含以下 7 列的 Excel 文件（列名必须完全一致）：
+        `订单号` | `商品名` | `商品型号` | `数量` | `销售平台` | `订单总额` | `币种`
+        
+        💡 **多款式说明**：**一个订单只能占一行，严禁出现重复订单号**。如果同一个订单内有多个不同颜色/型号，请在`商品型号`和`数量`列用**英文分号 (;)** 隔开。
+        例如：型号填 `粉色;蓝色`，数量填 `1;2`，代表买了一件粉色和两件蓝色。
+        """)
+        
+        # 初始化一个动态的版本号 key
+        if "uploader_key" not in st.session_state:
+            st.session_state.uploader_key = 0
+            
+        # 把版本号拼接到 key 里面
+        uploaded_file = st.file_uploader(
+            "上传 Excel 文件", 
+            type=["xlsx", "xls"], 
+            key=f"order_excel_uploader_{st.session_state.uploader_key}"
+        )
+        
+        if uploaded_file is not None:
+            try:
+                # 读取 Excel
+                df_import = pd.read_excel(uploaded_file)
+                
+                # 调用 Service 进行解析和校验
+                parsed_orders, errors = service.validate_and_parse_import_data(df_import)
+                
+                if errors:
+                    st.error("❌ 数据校验失败，请修复 Excel 中的以下问题后重新上传：")
+                    for err in errors:
+                        st.write(f"- {err}")
+                elif parsed_orders:
+                    st.success(f"✅ 数据校验通过！共识别出 {len(parsed_orders)} 个有效订单。预览如下：")
+                    
+                    # 准备预览数据
+                    preview_data = []
+                    for po in parsed_orders:
+                        # 拼接合并后的明细字符串
+                        items_str = ", ".join([f"{i['product_name']}-{i['variant']} ×{i['quantity']}" for i in po["items"]])
+                        preview_data.append({
+                            "订单号": po["order_no"],
+                            "平台": po["platform"],
+                            "币种": po["currency"],
+                            "总数量": po["total_qty"],
+                            "原总价": po["gross_price"],
+                            "预估手续费": po["fee"],
+                            "实际净入账": po["net_price"],
+                            "商品明细": items_str
+                        })
+                        
+                    # 渲染预览表格
+                    st.dataframe(
+                        pd.DataFrame(preview_data), 
+                        width="stretch",
+                        column_config={
+                            "原总价": st.column_config.NumberColumn(format="%.2f"),
+                            "预估手续费": st.column_config.NumberColumn(format="%.2f"),
+                            "实际净入账": st.column_config.NumberColumn(format="%.2f")
+                        }
+                    )
+                    
+                    # 确认导入按钮
+                    if st.button("🚀 确认无误，开始导入订单", type="primary"):
+                        with st.spinner("正在逐个生成订单并入账..."):
+                            count = service.batch_create_orders(parsed_orders)
+                            st.toast(f"导入完成！成功生成 {count} 个订单。", icon="✅")
+                            clear_order_caches() # 清除缓存，刷新列表
+                            
+                            # 让上传组件的版本号 +1，强制它变成一个全新的空组件
+                            st.session_state.uploader_key += 1
+                                
+                            st.rerun()
+                            
+            except Exception as e:
+                st.error(f"读取或处理 Excel 文件失败: {e}")
+                st.caption("提示：请确保安装了 openpyxl 库。")
+
     st.divider()
 
     # ================= 3. 订单列表 =================
@@ -261,36 +342,63 @@ def show_sales_order_page(db):
 
         # ================= 3.4 全局操作栏 =================
         st.divider()
+        
+        # 👇 核心修复：使用带有 status_key_suffix 的独立 key，防止被其他 Tab 提前删掉
+        err_key = f"order_op_errors_{status_key_suffix}"
+        if err_key in st.session_state:
+            for err in st.session_state[err_key]:
+                st.error(err, icon="🚨")
+            # 展示完就删掉缓存，这样它会一直挂在屏幕上，直到下一次交互才会消失
+            del st.session_state[err_key]
+
         action_col1, action_col2, action_col3, action_col4, action_col5 = st.columns(5)
         
+        # 📦 发货按钮
         if action_col1.button(f"📦 发货 ({selected_count})", key=f"btn_ship_{status_key_suffix}", type="primary", width="stretch", disabled=not all_pending, help="仅当选中的所有订单均为【待发货】时可用"):
             success_count = 0
+            err_list = [] 
             for o_id in selected_ids:
                 try:
                     service.ship_order(o_id)
                     success_count += 1
                 except Exception as e:
-                    st.error(f"订单 {o_id} 发货失败: {e}")
+                    err_list.append(f"订单 {o_id} 发货失败: {e}")
+                    
             if success_count > 0:
                 st.toast(f"✅ 成功发货 {success_count} 个订单", icon="📦")
                 if editor_key in st.session_state: del st.session_state[editor_key]
                 st.session_state[select_all_key] = False
                 clear_order_caches() 
+                
+            if err_list:
+                # 把报错存入属于当前 Tab 的专属变量中
+                st.session_state[err_key] = err_list
+                
+            if success_count > 0 or err_list:
                 st.rerun()
 
+        # ✅ 完成按钮
         if action_col2.button(f"✅ 完成 ({selected_count})", key=f"btn_comp_{status_key_suffix}", type="primary", width="stretch", disabled=not all_shipped, help="仅当选中的所有订单均为【已发货】时可用"):
             success_count = 0
+            err_list = [] 
             for o_id in selected_ids:
                 try:
                     service.complete_order(o_id)
                     success_count += 1
                 except Exception as e:
-                    st.error(f"订单 {o_id} 完成失败: {e}")
+                    err_list.append(f"订单 {o_id} 完成失败: {e}")
+                    
             if success_count > 0:
                 st.toast(f"✅ 成功完成 {success_count} 个订单", icon="💰")
                 if editor_key in st.session_state: del st.session_state[editor_key]
                 st.session_state[select_all_key] = False
                 clear_order_caches()
+                
+            if err_list:
+                # 把报错存入属于当前 Tab 的专属变量中
+                st.session_state[err_key] = err_list
+
+            if success_count > 0 or err_list:
                 st.rerun()
 
         if action_col3.button("🔧 售后处理", key=f"btn_after_{status_key_suffix}", width="stretch", disabled=not can_refund, help="仅限对单个【已发货/完成/售后】订单操作"):
