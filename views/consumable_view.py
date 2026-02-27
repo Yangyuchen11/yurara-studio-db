@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 from services.consumable_service import ConsumableService
+from cache_manager import sync_all_caches
 from constants import PRODUCT_COST_CATEGORIES
 
 # 兼容性处理：适配不同版本的 Streamlit
@@ -133,7 +134,8 @@ def render_operation_panel(db, exchange_rate, service):
                 
                 msg_icon = "💰" if is_sale_mode else ("📉" if qty_delta < 0 else "📈")
                 st.toast(f"更新成功：{name} {delta}{link_msg}", icon=msg_icon)
-                st.rerun() # 强制全局刷新，更新下方表格
+                sync_all_caches()
+                st.rerun() 
                 
             except ValueError as e:
                 st.error(str(e))

@@ -2,10 +2,9 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 from services.sales_order_service import SalesOrderService
-from views.sales_view import get_cached_sales_df
+from cache_manager import sync_all_caches
 from models import Product
 from constants import OrderStatus, PLATFORM_CODES
-from database import SessionLocal
 
 # ------------------ 🚀 性能优化：独立数据层缓存 ------------------
 
@@ -55,12 +54,6 @@ def get_cached_orders_df(status_filter, product_filter, test_mode_flag): # 增�
         return pd.DataFrame(data_list)
     finally:
         db_cache.close()
-
-def clear_order_caches():
-    """当发生增删改操作时，清空相关缓存"""
-    get_cached_order_stats.clear()
-    get_cached_orders_df.clear()
-    get_cached_sales_df.clear()
 
 # ------------------ 主页面逻辑 ------------------
 
@@ -178,7 +171,7 @@ def show_sales_order_page(db):
                                 st.error(f"创建失败: {error}")
                             else:
                                 st.success(f"✅ 订单 {order.order_no} 创建成功！(记账金额: {net_price:.2f} {currency})")
-                                clear_order_caches() # <--- 数据库发生变化，清空缓存
+                                sync_all_caches() # <--- 数据库发生变化，清空缓存
                                 st.rerun()
 
     # ================= 2.5 批量导入订单 =================
@@ -249,7 +242,7 @@ def show_sales_order_page(db):
                         with st.spinner("正在逐个生成订单并入账..."):
                             count = service.batch_create_orders(parsed_orders)
                             st.toast(f"导入完成！成功生成 {count} 个订单。", icon="✅")
-                            clear_order_caches() # 清除缓存，刷新列表
+                            sync_all_caches() # 清除缓存，刷新列表
                             
                             # 让上传组件的版本号 +1，强制它变成一个全新的空组件
                             st.session_state.uploader_key += 1
@@ -368,7 +361,7 @@ def show_sales_order_page(db):
                 st.toast(f"✅ 成功发货 {success_count} 个订单", icon="📦")
                 if editor_key in st.session_state: del st.session_state[editor_key]
                 st.session_state[select_all_key] = False
-                clear_order_caches() 
+                sync_all_caches() 
                 
             if err_list:
                 # 把报错存入属于当前 Tab 的专属变量中
@@ -392,7 +385,7 @@ def show_sales_order_page(db):
                 st.toast(f"✅ 成功完成 {success_count} 个订单", icon="💰")
                 if editor_key in st.session_state: del st.session_state[editor_key]
                 st.session_state[select_all_key] = False
-                clear_order_caches()
+                sync_all_caches()
                 
             if err_list:
                 # 把报错存入属于当前 Tab 的专属变量中
@@ -430,7 +423,7 @@ def show_sales_order_page(db):
                             st.session_state.pop(f"show_delete_confirm_{target_order_id}", None)
                             if editor_key in st.session_state: del st.session_state[editor_key]
                             st.session_state[select_all_key] = False
-                            clear_order_caches()
+                            sync_all_caches()
                             st.rerun()
                         except Exception as e:
                             st.error(f"删除失败: {e}")
@@ -487,7 +480,7 @@ def show_sales_order_page(db):
                                         try:
                                             msg = service.delete_refund(r.id)
                                             st.toast(msg, icon="✅")
-                                            clear_order_caches()
+                                            sync_all_caches()
                                             st.rerun()
                                         except Exception as e:
                                             st.error(str(e))
@@ -508,7 +501,7 @@ def show_sales_order_page(db):
                                                 msg = service.update_refund(refund_id=r.id, refund_amount=new_amount, refund_reason=new_reason)
                                                 st.success(msg)
                                                 del st.session_state[f"is_editing_refund_{r.id}"]
-                                                clear_order_caches()
+                                                sync_all_caches()
                                                 st.rerun()
                                             except Exception as e:
                                                 st.error(str(e))
@@ -560,7 +553,7 @@ def show_sales_order_page(db):
                                 )
                                 st.success(msg)
                                 st.session_state.pop(f"show_refund_form_{target_order_id}", None)
-                                clear_order_caches()
+                                sync_all_caches()
                                 st.rerun()
                             except Exception as e:
                                 st.error(str(e))

@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from services.cost_service import CostService
 from constants import PRODUCT_COST_CATEGORIES
+from cache_manager import sync_all_caches
 
 def show_cost_page(db):
     st.header("🧵 商品成本核算")
@@ -348,6 +349,7 @@ def show_cost_page(db):
             try:
                 added_val, _ = service.perform_wip_fix(prod.id)
                 st.success(f"修正完成！追加成本 {added_val:,.2f} 已结转。")
+                sync_all_caches()
                 st.rerun()
             except Exception as e:
                 st.error(f"修正失败: {e}")
@@ -369,6 +371,7 @@ def show_cost_page(db):
                     try:
                         service.perform_inventory_revaluation(prod.id)
                         st.success("重估完成！账面资产已与最新单价对齐。")
+                        sync_all_caches()
                         st.rerun()
                     except Exception as e:
                         st.error(f"重估失败: {e}")

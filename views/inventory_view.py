@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 from services.inventory_service import InventoryService
+from cache_manager import sync_all_caches
 from constants import PRODUCT_COST_CATEGORIES, StockLogReason
 
 def show_inventory_page(db):
@@ -171,6 +172,7 @@ def show_inventory_page(db):
                     try:
                         result_msg = service.confirm_shipping_receipt(selected_pre_id)
                         st.toast(f"收款完成！{result_msg}", icon="💰")
+                        sync_all_caches()
                         st.rerun()
                     except Exception as e:
                         st.error(f"操作失败: {e}")
