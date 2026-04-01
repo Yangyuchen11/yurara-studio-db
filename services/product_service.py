@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session, joinedload
-from models import Product, ProductColor, ProductPrice
+from models import Product, ProductColor, ProductPrice, ProductPart
 from constants import PLATFORM_CURRENCY_MAP, PLATFORM_CODES
 
 class ProductService:
@@ -9,30 +9,32 @@ class ProductService:
     def get_all_products(self):
         """
         获取所有产品，按ID倒序排列
-        【修改】级联加载路径：Product -> ProductColor -> ProductPrice
+        级联加载路径：Product -> ProductColor -> ProductPrice / ProductPart
         """
         return self.db.query(Product)\
-            .options(joinedload(Product.colors).joinedload(ProductColor.prices))\
+            .options(
+                joinedload(Product.colors).joinedload(ProductColor.prices),
+                joinedload(Product.colors).joinedload(ProductColor.parts)
+            )\
             .order_by(Product.id.desc()).all()
 
     def get_product_by_id(self, product_id):
         """根据ID获取单个产品"""
         return self.db.query(Product)\
-            .options(joinedload(Product.colors).joinedload(ProductColor.prices))\
+            .options(
+                joinedload(Product.colors).joinedload(ProductColor.prices),
+                joinedload(Product.colors).joinedload(ProductColor.parts)
+            )\
             .filter(Product.id == product_id).first()
 
     def get_product_colors(self, product_id):
         """获取指定产品的所有颜色规格"""
-        # 如果需要同时获取价格，建议也可以加上 joinedload
         return self.db.query(ProductColor)\
-            .options(joinedload(ProductColor.prices))\
+            .options(joinedload(ProductColor.prices), joinedload(ProductColor.parts))\
             .filter(ProductColor.product_id == product_id).all()
 
     def _update_color_prices(self, color_id, prices_dict):
-        """
-        【修改】内部辅助函数：更新特定颜色规格的价格
-        prices_dict: {'weidian': 100, 'booth': 200, ...}
-        """
+        """内部辅助函数：更新特定颜色规格的价格"""
         # 1. 删除该颜色旧价格
         self.db.query(ProductPrice).filter(ProductPrice.color_id == color_id).delete()
 
@@ -42,19 +44,15 @@ class ProductService:
                 currency = PLATFORM_CURRENCY_MAP.get(pf_key)
                 if currency:
                     new_price = ProductPrice(
-                        color_id=color_id, # 关联到颜色
+                        color_id=color_id,
                         platform=pf_key,
                         currency=currency,
                         price=float(price_val)
                     )
                     self.db.add(new_price)
 
-    def create_product(self, name, platform, colors_with_prices):
-        """
-        【修改】创建新产品及其规格
-        :param colors_with_prices: 列表，每个元素结构如:
-         {'name': '蓝色', 'qty': 100, 'prices': {'weidian': 100, ...}}
-        """
+    def create_product(self, name, platform, colors_with_prices, parts_df=None):
+        """创建新产品及其规格和部件"""
         # 1. 计算总数量
         total_q = sum([item['qty'] for item in colors_with_prices])
 
@@ -81,15 +79,25 @@ class ProductService:
             # 保存该颜色的价格
             if 'prices' in item:
                 self._update_color_prices(new_color.id, item['prices'])
+
+            # 保存该颜色的部件
+            if parts_df is not None and not parts_df.empty:
+                color_parts = parts_df[parts_df["颜色名称"] == item['name']]
+                for _, prow in color_parts.iterrows():
+                    p_name = str(prow.get("部件名称", "")).strip()
+                    p_qty = int(prow.get("数量", 1))
+                    if p_name and p_qty > 0:
+                        self.db.add(ProductPart(
+                            color_id=new_color.id, 
+                            part_name=p_name, 
+                            quantity=p_qty
+                        ))
         
         self.db.commit()
         return new_prod
 
-    def update_product(self, product_id, name, platform, color_matrix_data):
-        """
-        【修改】更新产品信息
-        :param color_matrix_data: DataFrame，包含 '颜色名称', '库存/预计数量' 以及各平台价格列
-        """
+    def update_product(self, product_id, name, platform, color_matrix_data, parts_df=None):
+        """更新产品信息"""
         target_prod = self.get_product_by_id(product_id)
         if not target_prod:
             raise ValueError("产品不存在")
@@ -99,9 +107,7 @@ class ProductService:
         target_prod.target_platform = platform
         
         # 2. 更新颜色规格
-        # 策略：删除旧的颜色 (级联删除价格) -> 重新创建
-        # 注意：这会重置该产品的颜色 ID，如果有其他表(如库存日志)强关联了颜色ID可能会有问题。
-        # 但目前的 InventoryLog 存的是 variant (字符串名称)，所以只要名字对得上就没问题。
+        # 策略：删除旧的颜色 (级联删除价格和部件) -> 重新创建
         self.db.query(ProductColor).filter(ProductColor.product_id == target_prod.id).delete()
         
         new_total_qty = 0
@@ -126,8 +132,21 @@ class ProductService:
                         row_prices[pf_key] = row[pf_key]
                 
                 self._update_color_prices(new_color.id, row_prices)
+
+                # 4. 提取并更新部件
+                if parts_df is not None and not parts_df.empty:
+                    color_parts = parts_df[parts_df["颜色名称"] == str(c_name)]
+                    for _, prow in color_parts.iterrows():
+                        p_name = str(prow.get("部件名称", "")).strip()
+                        p_qty = int(prow.get("数量", 1))
+                        if p_name and p_qty > 0:
+                            self.db.add(ProductPart(
+                                color_id=new_color.id, 
+                                part_name=p_name, 
+                                quantity=p_qty
+                            ))
         
-        # 4. 更新主表的总数量
+        # 更新主表的总数量
         target_prod.total_quantity = new_total_qty
 
         self.db.commit()

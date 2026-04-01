@@ -9,17 +9,10 @@ class Product(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     total_quantity = Column(Integer, default=0)
-
     # 可销售数量 (用于成本核算的分母，可变动)
     marketable_quantity = Column(Integer, default=0)
     # 销售相关
     target_platform = Column(String)
-    
-    # 【优化1】移除硬编码的价格字段 (price_weidian, price_booth 等)
-    # 它们现在通过 prices 关系表来管理
-    
-    # 关联
-    # 【优化2】在 Python 层面配置级联删除 (cascade="all, delete-orphan")
     costs = relationship("CostItem", back_populates="product", cascade="all, delete-orphan")
     colors = relationship("ProductColor", back_populates="product", cascade="all, delete-orphan")
 
@@ -30,10 +23,9 @@ class ProductColor(Base):
     color_name = Column(String)
     quantity = Column(Integer)
     produced_quantity = Column(Integer, default=0)
-    
     product = relationship("Product", back_populates="colors")
-    # 【新增】颜色关联价格
     prices = relationship("ProductPrice", back_populates="color", cascade="all, delete-orphan")
+    parts = relationship("ProductPart", back_populates="color", cascade="all, delete-orphan")
 
 class ProductPrice(Base):
     __tablename__ = "product_prices"
@@ -42,14 +34,19 @@ class ProductPrice(Base):
     platform = Column(String) 
     currency = Column(String) 
     price = Column(Float, default=0.0)
-    
-    # 【修改】反向关联指向 color
     color = relationship("ProductColor", back_populates="prices")
+
+class ProductPart(Base):
+    __tablename__ = "product_parts"
+    id = Column(Integer, primary_key=True, index=True)
+    color_id = Column(Integer, ForeignKey("product_colors.id", ondelete="CASCADE")) 
+    part_name = Column(String) 
+    quantity = Column(Integer, default=1)
+    color = relationship("ProductColor", back_populates="parts")
 
 class CostItem(Base):
     __tablename__ = "cost_items"
     id = Column(Integer, primary_key=True, index=True)
-    # 【优化3】数据库级联删除
     product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"))
     item_name = Column(String)
     actual_cost = Column(Float)   # 实付总价
