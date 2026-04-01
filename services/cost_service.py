@@ -170,7 +170,8 @@ class CostService:
                     name=inventory_asset_name,
                     amount=added_cost_value,
                     category=BalanceCategory.ASSET,
-                    currency=Currency.CNY
+                    currency=Currency.CNY,
+                    asset_type="资产"
                 )
                 self.db.add(new_inv)
             
@@ -188,7 +189,7 @@ class CostService:
         target_offset = -current_total_cost
         if not offset_item:
             self.db.add(CompanyBalanceItem(
-                name=offset_name, amount=target_offset, category="asset", currency="CNY" 
+                name=offset_name, amount=target_offset, category="asset", currency="CNY" ,asset_type="资产"
             ))
         else:
             offset_item.amount = target_offset
@@ -260,7 +261,7 @@ class CostService:
                 inv_item.amount += diff
             else:
                 self.db.add(CompanyBalanceItem(
-                    name=inventory_asset_name, amount=diff, category=BalanceCategory.ASSET, currency=Currency.CNY
+                    name=inventory_asset_name, amount=diff, category=BalanceCategory.ASSET, currency=Currency.CNY,asset_type="资产"
                 ))
             
             # 记录虚拟流水

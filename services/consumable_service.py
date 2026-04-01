@@ -90,7 +90,8 @@ class ConsumableService:
                         category=BalanceCategory.ASSET,
                         name=f"{AssetPrefix.CASH}({sale_info['currency']})",
                         amount=0.0,
-                        currency=sale_info['currency']
+                        currency=sale_info['currency'],
+                        asset_type="现金"
                     )
                     self.db.add(target_cash)
                 target_cash.amount += sale_info['amount']

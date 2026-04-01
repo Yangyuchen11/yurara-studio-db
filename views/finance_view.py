@@ -46,7 +46,7 @@ def render_add_transaction_form(exchange_rate):
             
             c_top1, c_top2 = st.columns(2)
             f_date = c_top1.date_input("日期", date.today())
-            rec_type = c_top2.selectbox("业务大类", ["支出", "收入", "货币兑换", "债务"])
+            rec_type = c_top2.selectbox("业务大类", ["支出", "收入", "货币兑换", "债务", "资金移动"])
             
             st.divider()
 
@@ -199,7 +199,7 @@ def render_add_transaction_form(exchange_rate):
                                     st.error(f"失败: {e}")
 
             # >>>>> 场景 C: 普通收入 / 支出 <<<<<
-            else:
+            elif rec_type == "收入" or rec_type == "支出" :
                 # --- 1. 业务分类 ---
                 st.markdown("##### 1. 业务分类")
                 c_cat1, _ = st.columns(2)
@@ -261,7 +261,9 @@ def render_add_transaction_form(exchange_rate):
                 elif cat == "新资产增加":
                     link_config["link_type"] = "manual_asset"
                     link_config["is_new"] = True
-                    link_config["name"] = st.text_input("新资产名称", placeholder="如：持有的商标权 (必填)")
+                    c_na1, c_na2 = st.columns(2)
+                    link_config["name"] = c_na1.text_input("新资产名称", placeholder="如：支付宝备用金 (必填)")
+                    link_config["asset_type"] = c_na2.selectbox("资产属性", ["现金", "资产"], help="只有标为'现金'的资产才能进行资金移动")
 
                 elif cat == "现有资产减少":
                     link_config["link_type"] = "manual_asset"
@@ -369,6 +371,71 @@ def render_add_transaction_form(exchange_rate):
                             st.rerun()
                         except Exception as e:
                             st.error(f"写入失败: {e}")
+            # >>>>> 场景 D: 资金移动 <<<<<
+            elif rec_type == "资金移动":
+                st.markdown("##### 1. 业务分类")
+                st.info("🔄 资金移动 (将同币种资金从一项资产转移到另一项，内部划转不影响总净资产)")
+                
+                # 获取所有的资产项目 (CNY 和 JPY)
+                all_assets = FinanceService.get_transferable_assets(db_frag)
+                
+                if len(all_assets) < 2:
+                    st.warning("⚠️ 当前资产项目不足 2 个，无法进行移动操作。")
+                else:
+                    st.markdown("##### 2. 资金移动方向")
+                    
+                    def format_asset(a):
+                        # 在选项里带上币种标签，方便肉眼区分
+                        return f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})"
+                        
+                    # -- 构建转出账户下拉框 --
+                    from_options = {format_asset(a): a for a in all_assets}
+                    from_label = st.selectbox("转出账户 (移动前项目)", list(from_options.keys()), key="fund_from")
+                    from_asset = from_options[from_label]
+                    
+                    # -- 动态构建转入账户下拉框 --
+                    # 规则：币种必须与转出账户相同，且排除自己
+                    to_assets = [a for a in all_assets if a.currency == from_asset.currency and a.id != from_asset.id]
+                    
+                    if not to_assets:
+                        st.warning(f"⚠️ 找不到其他 {from_asset.currency} 资产，无法完成该币种的移动。")
+                    else:
+                        to_options = {format_asset(a): a for a in to_assets}
+                        to_label = st.selectbox("转入账户 (移动后项目)", list(to_options.keys()), key="fund_to")
+                        to_asset = to_options[to_label]
+                        
+                        st.markdown("##### 3. 移动金额与余额预览")
+                        amount = st.number_input(
+                            f"移动金额 ({from_asset.currency})", 
+                            min_value=0.0, 
+                            max_value=float(from_asset.amount), # 最大限制不能超过转出账户余额
+                            step=100.0 if from_asset.currency == "CNY" else 1000.0, 
+                            format="%.2f"
+                        )
+                        
+                        # 动态渲染移动后的金额预览
+                        if amount > 0:
+                            c_prev1, c_prev2 = st.columns(2)
+                            c_prev1.success(f"📉 **{from_asset.name}** 移动后预览: {(from_asset.amount - amount):,.2f} {from_asset.currency}")
+                            c_prev2.success(f"📈 **{to_asset.name}** 移动后预览: {(to_asset.amount + amount):,.2f} {to_asset.currency}")
+                            
+                        st.markdown("##### 4. 附加信息")
+                        desc = st.text_input("备注说明", placeholder="如：将流动资金投入到某项目储备金中")
+                        
+                        st.write("")
+                        if st.button("💾 确认移动", type="primary", use_container_width=True):
+                            if amount <= 0:
+                                st.error("移动金额必须大于 0！")
+                            else:
+                                try:
+                                    FinanceService.execute_fund_transfer(
+                                        db_frag, f_date, from_asset.id, to_asset.id, amount, desc
+                                    )
+                                    st.toast(f"资金移动成功：{amount} {from_asset.currency}", icon="🔄")
+                                    sync_all_caches()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"移动失败: {e}")
     finally:
         db_frag.close()
 

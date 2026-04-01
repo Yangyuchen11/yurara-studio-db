@@ -99,6 +99,7 @@ class CompanyBalanceItem(Base):
     name = Column(String)     # 项目名：如“现金(CNY账户)”
     amount = Column(Float)    # 金额
     currency = Column(String, default="CNY") # 币种：CNY 或 JPY
+    asset_type = Column(String, default="资产")
     # 【数据库级联删除
     finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
 
@@ -153,21 +154,6 @@ class ConsumableLog(Base):
     value_cny = Column(Float)        # 变动价值 (折合CNY)
     date = Column(Date, default=datetime.now)
     note = Column(String)            # 备注
-
-# --- I. 预出库管理表 ---
-class PreShippingItem(Base):
-    __tablename__ = "pre_shipping_items"
-    id = Column(Integer, primary_key=True, index=True)
-    product_name = Column(String)
-    variant = Column(String)
-    quantity = Column(Integer)
-    # 预售信息
-    pre_sale_amount = Column(Float) # 填写的预售额
-    currency = Column(String)       # 币种
-    # 关联的债务ID (用于出库时核销)
-    related_debt_id = Column(Integer, nullable=True)
-    created_date = Column(Date, default=datetime.now)
-    note = Column(String, default="")
 
 # --- J. 系统全局设置 ---
 class SystemSetting(Base):

@@ -17,6 +17,14 @@ class FinanceService:
     # ================= 辅助查询方法 =================
 
     @staticmethod
+    def get_transferable_assets(db):
+        """获取所有可移动的资产项目 (CNY 和 JPY)"""
+        return db.query(CompanyBalanceItem).filter(
+            CompanyBalanceItem.category == BalanceCategory.ASSET,
+            CompanyBalanceItem.asset_type == "现金" # ✨ 只查现金
+        ).order_by(CompanyBalanceItem.currency, CompanyBalanceItem.id.asc()).all()
+
+    @staticmethod
     def get_cash_asset(db, currency):
         """获取指定币种的流动资金账户对象"""
         return db.query(CompanyBalanceItem).filter(
@@ -85,6 +93,50 @@ class FinanceService:
         cny = sum(r.amount for r in records if r.currency == "CNY")
         jpy = sum(r.amount for r in records if r.currency == "JPY")
         return cny, jpy
+
+    @staticmethod
+    def execute_fund_transfer(db, date_val, from_asset_id, to_asset_id, amount, desc):
+        """执行同币种的资金移动"""
+        from_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == from_asset_id).first()
+        to_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == to_asset_id).first()
+        
+        if not from_asset or not to_asset:
+            raise ValueError("资产不存在")
+        
+        if from_asset.currency != to_asset.currency:
+            raise ValueError("币种不同，无法直接移动资金")
+            
+        from_is_cash = from_asset.name.startswith(AssetPrefix.CASH)
+        to_is_cash = to_asset.name.startswith(AssetPrefix.CASH)
+        
+        # 1. 产生一条汇总流水。涉及现金进出影响流动资金报表
+        record_amount = 0
+        if from_is_cash and not to_is_cash:
+            record_amount = -amount
+        elif not from_is_cash and to_is_cash:
+            record_amount = amount
+            
+        desc_str = f"资金移动: [{from_asset.name}] -> [{to_asset.name}] | 金额: {amount} | 备注: {desc}"
+        
+        rec = FinanceRecord(
+            date=date_val, 
+            amount=record_amount, 
+            currency=from_asset.currency,  # ✨ 动态使用该资产的币种
+            category="资金移动", 
+            description=desc_str
+        )
+        db.add(rec)
+        
+        # 2. 更新两端的资产余额
+        from_asset.amount -= amount
+        to_asset.amount += amount
+        
+        # 清理扣空的手动资产
+        if from_asset.amount <= 0.01 and not from_is_cash:
+            db.delete(from_asset)
+            
+        db.commit()
+
 
     # ================= 业务写入方法 =================
 
@@ -241,8 +293,8 @@ class FinanceService:
         target_cash = FinanceService.get_cash_asset(db, base_data['currency'])
         if not target_cash:
             target_cash = CompanyBalanceItem(
-                category=BalanceCategory.ASSET, name=f"{AssetPrefix.CASH}({base_data['currency']})",
-                amount=0.0, currency=base_data['currency']
+                category=BalanceCategory.ASSET, name=f"{AssetPrefix.CASH}({base_data['currency']})", 
+                amount=0.0, currency=base_data['currency'], asset_type="现金"
             )
             db.add(target_cash)
         target_cash.amount += signed_amount
@@ -258,7 +310,8 @@ class FinanceService:
                 new_bi = CompanyBalanceItem(
                     name=link_config['name'], amount=balance_delta, 
                     category=BalanceCategory.EQUITY if l_type == 'equity' else BalanceCategory.ASSET,
-                    currency=base_data['currency'], finance_record_id=new_record.id
+                    currency=base_data['currency'], finance_record_id=new_record.id,
+                    asset_type=link_config.get('asset_type', '资产') # 接收前端传来的属性
                 )
                 db.add(new_bi)
                 link_msg += f" + 新{l_type} ({balance_delta:+.2f})"
@@ -494,6 +547,34 @@ class FinanceService:
                 msg_list.append("抵消操作已撤销，资产与负债已双向复原")
             except Exception:
                 msg_list.append("未能自动复原资产/负债，请手动核对")
+
+        # === 场景 4：删除的是【资金移动】 ===
+        elif rec.category == "资金移动":
+            try:
+                # 解析格式: 资金移动: [来源] -> [目标] | 金额: 500.0 | 备注: xxx
+                part1 = rec.description.split("资金移动: [")[1]
+                from_name = part1.split("] -> [")[0]
+                to_name = part1.split("] -> [")[1].split("] |")[0]
+                amount_part = float(rec.description.split("金额: ")[1].split(" |")[0].strip())
+                curr = rec.currency  # ✨ 获取该条流水的币种
+
+                # 复活来源资产
+                from_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == from_name).first()
+                if from_asset: 
+                    from_asset.amount += amount_part
+                else: 
+                    db.add(CompanyBalanceItem(name=from_name, amount=amount_part, category=BalanceCategory.ASSET, currency=curr, asset_type="现金"))
+                
+                # 减扣/删除：目标资产
+                to_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == to_name).first()
+                if to_asset: 
+                    to_asset.amount -= amount_part
+                    if to_asset.amount <= 0.01 and not to_name.startswith(AssetPrefix.CASH):
+                        db.delete(to_asset)
+                
+                msg_list.append("资金移动操作已撤销，双方资产余额已复原")
+            except Exception:
+                msg_list.append("未能自动复原移动资产，请手动核对")
 
         # ================= 普通流水的回滚逻辑 =================
         else:

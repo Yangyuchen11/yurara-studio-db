@@ -29,7 +29,7 @@ def show_inventory_page(db):
             if selected_product_id:
                 colors = service.get_product_colors(selected_product_id)
                 # 【修改】接收新增的 wait_prod_map
-                real_stock_map, pre_in_map, pre_out_map, wait_prod_map = service.get_stock_overview(p_name)
+                real_stock_map, pre_in_map, wait_prod_map = service.get_stock_overview(p_name)
 
                 if colors:
                     # 调整列宽
@@ -38,9 +38,9 @@ def show_inventory_page(db):
                     h1.markdown("**款式**")
                     h2.markdown("**计划**")
                     h3.markdown("**已产**")
-                    h4.markdown("**库存**") 
-                    h5.markdown("**预入**")
-                    h6.markdown("**待发**") 
+                    h4.markdown("**待产**")  
+                    h5.markdown("**库存**") 
+                    h6.markdown("**预入**")
                     h7.markdown("**状态**")
                     h8.markdown("**操作**")
                     
@@ -50,7 +50,6 @@ def show_inventory_page(db):
                         real_qty = real_stock_map.get(c.color_name, 0)
                         pre_in_qty = pre_in_map.get(c.color_name, 0)
                         wait_qty = wait_prod_map.get(c.color_name, 0) # 获取待产数量
-                        pre_out_qty = pre_out_map.get(c.color_name, 0)
                         produced_qty = c.produced_quantity if c.produced_quantity is not None else 0
                         status = "🔴 缺货" if real_qty <= 0 else "🟢 有货"
 
@@ -58,10 +57,14 @@ def show_inventory_page(db):
                         r1.write(f"🎨 {c.color_name}")
                         r2.write(f"**{c.quantity}**")
                         r3.write(f"{produced_qty}")
-                        r4.write(f"{int(real_qty)}")
-                        r5.write(f"{int(pre_in_qty)}") # 这里只显示已生产完成等待入库的数量
-                        r6.write(f"{int(pre_out_qty)}")
+                        r4.write(f"{int(wait_qty)}")   # ✨ 显示待产数量
+                        r5.write(f"{int(real_qty)}")
+                        r6.write(f"{int(pre_in_qty)}") # 这里只显示已生产完成等待入库的数量
                         r7.write(status)
+                        
+                        # r8 是预留给你后面写操作按钮的 (例如：盘点/修改按钮)
+                        # with r8:
+                        #     ... 你的按钮逻辑 ...
 
                         with r8:
                             c_btn1, c_btn2 = st.columns([1, 1])
@@ -98,111 +101,6 @@ def show_inventory_page(db):
                         st.markdown("<hr style='margin: 5px 0; opacity:0.1;'>", unsafe_allow_html=True)
                 else:
                     st.info("该产品暂无颜色/款式信息")
-
-    st.divider()
-
-    # ================= 2. 出库/发货管理 =================
-    st.subheader("🚚 出库/发货管理 (待结算)")
-    st.caption("此处显示已从库存扣除、但资金尚未结算到账的订单。")
-    
-    pre_items = service.get_pre_shipping_items(p_name)
-    
-    if pre_items:
-        pre_data_list = []
-        for p in pre_items:
-            pre_data_list.append({
-                "ID": p.id,
-                "日期": p.created_date,
-                "产品": p.product_name,
-                "款式": p.variant,
-                "数量": p.quantity,
-                "预售/销售额": p.pre_sale_amount, 
-                "币种": p.currency,
-                "备注": p.note
-            })
-        
-        df_pre = pd.DataFrame(pre_data_list)
-        
-        # 显示编辑器
-        st.data_editor(
-            df_pre, 
-            key="pre_shipping_editor",
-            width="stretch", 
-            hide_index=True,
-            disabled=["ID", "日期", "产品", "款式"],
-            column_config={
-                "ID": None,
-                "数量": st.column_config.NumberColumn(min_value=1, step=1, disabled=True),
-                "预售/销售额": st.column_config.NumberColumn(format="%.1f"),
-                "币种": st.column_config.SelectboxColumn(options=["CNY", "JPY"])
-            }
-        )
-        
-        # 处理修改
-        if st.session_state.get("pre_shipping_editor") and st.session_state["pre_shipping_editor"].get("edited_rows"):
-            changes = {}
-            for idx_str, diff in st.session_state["pre_shipping_editor"]["edited_rows"].items():
-                item_id = int(df_pre.iloc[int(idx_str)]["ID"])
-                changes[item_id] = diff
-            
-            if service.update_pre_shipping_info(changes):
-                st.toast("发货单信息已更新", icon="💾")
-                st.rerun()
-        
-        c_p1, c_p2 = st.columns([3.5, 1], vertical_alignment="bottom")
-        
-        with c_p1:
-            pre_item_labels = {
-                p.id: f"{p.created_date} | {p.product_name}-{p.variant} (Qty:{p.quantity}) | 📝{p.note or ''}"
-                for p in pre_items
-            }
-            selected_pre_id = st.selectbox(
-                "选择要确认收款的订单", 
-                options=list(pre_item_labels.keys()), 
-                format_func=lambda x: pre_item_labels.get(x, "未知订单"),
-                key="sel_pre_ship_order"
-            )
-            
-        with c_p2:
-            # 增加 disabled 状态：如果没有待结算订单，按钮不可点
-            if st.button("✅ 确认收款 (转收入)", type="primary", width="stretch", disabled=not pre_items):
-                if not selected_pre_id:
-                     st.error("请先选择一个订单！")
-                else:
-                    try:
-                        result_msg = service.confirm_shipping_receipt(selected_pre_id)
-                        st.toast(f"收款完成！{result_msg}", icon="💰")
-                        sync_all_caches()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"操作失败: {e}")
-    else:
-        st.info("当前没有待结算的发货单。")
-
-    # --- 撤销/删除预出库逻辑 ---
-    st.write("") 
-    with st.popover("🗑️ 撤销发货 (库存回滚)", width="stretch"):
-        st.error("⚠️ 注意：此操作将删除发货单，并**自动把库存加回去**。")
-        
-        del_pre_options = {
-            f"{p.created_date} | {p.product_name}-{p.variant} (Qty:{p.quantity}) | 📝{p.note or ''}": p.id 
-            for p in pre_items
-        }
-        
-        selected_del_pre_label = st.selectbox(
-            "选择要撤销的发货记录", 
-            options=list(del_pre_options.keys()), 
-            key="del_pre_select_box"
-        )
-        
-        if st.button("🔴 确认撤销并回滚", type="primary", width="stretch"):
-            try:
-                target_pre_id = del_pre_options[selected_del_pre_label]
-                platform_str = service.undo_shipping(target_pre_id, selected_product_id)
-                st.success(f"发货单已撤销，库存已回滚 (平台: {platform_str})。")
-                st.rerun()
-            except Exception as e:
-                st.error(f"撤销失败: {e}")
 
     st.divider()
 

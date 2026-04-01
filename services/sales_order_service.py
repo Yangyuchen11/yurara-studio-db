@@ -35,8 +35,9 @@ class SalesOrderService:
             if delta < 0 and name.startswith(AssetPrefix.PENDING_SETTLE):
                 return
                 
+            a_type = "现金" if name.startswith(AssetPrefix.CASH) else "资产"
             self.db.add(CompanyBalanceItem(
-                name=name, amount=delta, category=category, currency=currency
+                name=name, amount=delta, category=category, currency=currency, asset_type=a_type
             ))
 
     def _get_unit_cost(self, product_id):

@@ -10,7 +10,7 @@ from models import (
     FinanceRecord, CostItem,
     FixedAsset, FixedAssetLog,
     ConsumableItem, ConsumableLog, 
-    CompanyBalanceItem, PreShippingItem, 
+    CompanyBalanceItem,
     SystemSetting, ProductPrice,
     SalesOrder, SalesOrderItem, OrderRefund 
 )
@@ -148,7 +148,6 @@ TABLES_MAP = [
     ("consumables.csv", "consumable_items", ConsumableItem),
     ("consumable_logs.csv", "consumable_logs", ConsumableLog),
     ("company_balance.csv", "company_balance_items", CompanyBalanceItem),
-    ("pre_shipping_items.csv", "pre_shipping_items", PreShippingItem),
     ("sales_orders.csv", "sales_orders", SalesOrder),
     ("sales_order_items.csv", "sales_order_items", SalesOrderItem),
     ("order_refunds.csv", "order_refunds", OrderRefund),
@@ -308,7 +307,6 @@ with st.sidebar:
                 db.query(CostItem).delete()
                 db.query(FixedAsset).delete()
                 db.query(ConsumableItem).delete()
-                db.query(PreShippingItem).delete() 
                 db.query(SalesOrderItem).delete() 
                 db.query(OrderRefund).delete() 
 
