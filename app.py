@@ -221,8 +221,8 @@ with st.sidebar:
             "商品管理",
             "商品成本核算",
             "销售订单管理",
-            "库存管理",
             "销售额一览",
+            "仓库库存管理",
             "固定资产管理",
             "其他资产管理"
         ],
@@ -232,8 +232,8 @@ with st.sidebar:
             "bag-heart",
             "calculator",
             "cart-check",
-            "arrow-left-right",
             "graph-up-arrow",
+            "arrow-left-right",
             "camera-reels",
             "box-seam"
         ],
@@ -424,7 +424,7 @@ if selected == "商品管理":
     show_product_page(db)
 elif selected == "商品成本核算":
     show_cost_page(db)
-elif selected == "库存管理":
+elif selected == "仓库库存管理":
     show_inventory_page(db)
 elif selected == "销售订单管理":
     show_sales_order_page(db)
