@@ -1,70 +1,101 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from datetime import date
-import math
-from models import Product, InventoryLog, ProductColor, CompanyBalanceItem, CostItem, FinanceRecord
+from models import Product, InventoryLog, ProductColor, CompanyBalanceItem, CostItem, FinanceRecord, Warehouse
 from constants import PRODUCT_COST_CATEGORIES, AssetPrefix, BalanceCategory, Currency, StockLogReason, FinanceCategory
 
 class InventoryService:
     def __init__(self, db: Session):
         self.db = db
-        # 定义成本分类常量
         self.COST_CATEGORIES = PRODUCT_COST_CATEGORIES
 
-    # ================= 辅助方法 (内部使用) =================
-    def _get_unit_cost(self, product_id):
-        """获取产品单位成本"""
-        total_actual_cost = self.db.query(func.sum(CostItem.actual_cost))\
-            .filter(CostItem.product_id == product_id).scalar() or 0.0
-        product = self.db.query(Product).filter(Product.id == product_id).first()
-        denom = product.marketable_quantity if (product and product.marketable_quantity is not None) else (product.total_quantity if product else 0)
+    # ================= 1. 核心底座：大货资产与单价动态同步 =================
+    def sync_product_metrics(self, product_id):
+        """核心计算引擎：根据最新状态动态推导单价、大货资产以及在制资产(WIP)抵扣"""
+        prod = self.db.query(Product).filter(Product.id == product_id).first()
+        if not prod: return
         
-        if denom > 0:
-            return total_actual_cost / denom
-        return 0.0
-
-    def _update_asset_by_name(self, name, delta, category="asset", currency="CNY", finance_id=None):
-        """按名称更新资产项"""
-        item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == name).with_for_update().first()
-        if item: 
-            item.amount += delta
-            # 容错：只有当金额极小且无关联流水时才物理删除，防止误删
-            if abs(item.amount) <= 0.01 and not item.finance_record_id: 
+        # 1. 计算在成本中消耗的数量 (仅限成套消耗)
+        consumed_qty = 0
+        logs = self.db.query(InventoryLog).filter(
+            InventoryLog.product_name == prod.name,
+            InventoryLog.reason == StockLogReason.OUT_STOCK,
+            InventoryLog.part_name == None
+        ).all()
+        for l in logs:
+            if l.note and "消耗" in l.note:
+                consumed_qty += abs(l.change_amount)
+                
+        # 2. 动态计算预计可销售数量
+        stats = self.get_stock_overview_by_parts(prod.id, prod.name)
+        if prod.is_production_completed:
+            base_qty = sum(s.get("produced", 0) for s in stats.values())
+        else:
+            base_qty = prod.total_quantity
+            
+        prod.marketable_quantity = max(0, base_qty - consumed_qty)
+        
+        # 3. 重新计算单价
+        total_cost = self.db.query(func.sum(CostItem.actual_cost)).filter(CostItem.product_id == prod.id).scalar() or 0.0
+        unit_cost = total_cost / prod.marketable_quantity if prod.marketable_quantity > 0 else 0.0
+        
+        # 4. 实时更新大货资产 (实库存 * 最新单价)
+        actual_stock = sum(s.get("actual", 0) for s in stats.values())
+        asset_name = f"{AssetPrefix.STOCK}{prod.name}"
+        asset_val = actual_stock * unit_cost
+        
+        item = self.db.query(CompanyBalanceItem).filter(
+            CompanyBalanceItem.name == asset_name, 
+            CompanyBalanceItem.category == BalanceCategory.ASSET
+        ).first()
+        
+        if asset_val > 0.01:
+            if item:
+                item.amount = asset_val
+            else:
+                self.db.add(CompanyBalanceItem(
+                    name=asset_name, amount=asset_val, category=BalanceCategory.ASSET, 
+                    currency=Currency.CNY, asset_type="资产"
+                ))
+        else:
+            if item and not item.finance_record_id:
                 self.db.delete(item)
-        else: 
-            a_type = "现金" if name.startswith(AssetPrefix.CASH) else "资产"
-            self.db.add(CompanyBalanceItem(
-                name=name, amount=delta, category=category, currency=currency, 
-                finance_record_id=finance_id, asset_type=a_type
-            ))
+                
+        # 5. ✨ 实时动态核算在制资产冲销 (WIP_OFFSET)
+        if prod.is_production_completed:
+            # 如果已经生产完成，100% 抵扣成本（清零在制资产）
+            wip_offset_val = -total_cost
+        else:
+            # 尚未生产完成时，根据已验收完成入库的数量（按比例）抵扣在制资产
+            produced_qty = sum(s.get("produced", 0) for s in stats.values())
+            wip_offset_val = -(produced_qty * unit_cost)
+            
+        offset_name = f"{AssetPrefix.WIP_OFFSET}{prod.name}"
+        offset_item = self.db.query(CompanyBalanceItem).filter(
+            CompanyBalanceItem.name == offset_name,
+            CompanyBalanceItem.category == BalanceCategory.ASSET
+        ).first()
+        
+        if abs(wip_offset_val) > 0.01:
+            if offset_item:
+                offset_item.amount = wip_offset_val
+            else:
+                self.db.add(CompanyBalanceItem(
+                    name=offset_name, amount=wip_offset_val, category=BalanceCategory.ASSET, 
+                    currency=Currency.CNY, asset_type="资产"
+                ))
+        else:
+            if offset_item and not offset_item.finance_record_id:
+                self.db.delete(offset_item)
+                
+        self.db.flush()
 
-    # ================= 1. 数据获取 =================
+    # ================= 2. 基础获取 =================
     def get_all_products(self):
         return self.db.query(Product).all()
 
     def get_product_colors(self, product_id):
         return self.db.query(ProductColor).filter(ProductColor.product_id == product_id).order_by(ProductColor.id.asc()).all()
-
-    def get_stock_overview(self, product_name):
-        """
-        获取库存概览数据
-        返回: real_stock_map, pre_in_map, wait_prod_map (移除 pre_out)
-        """
-        all_logs = self.db.query(InventoryLog).filter(InventoryLog.product_name == product_name).all()
-        
-        real_stock_map = {}
-        pre_in_map = {}
-        wait_prod_map = {} 
-
-        for log in all_logs:
-            if log.reason in [StockLogReason.IN_STOCK, StockLogReason.OUT_STOCK, StockLogReason.RETURN_IN, StockLogReason.UNDO_SHIP]:
-                real_stock_map[log.variant] = real_stock_map.get(log.variant, 0) + log.change_amount
-            elif log.reason in [StockLogReason.PRE_IN, StockLogReason.PRE_IN_REDUCE, StockLogReason.EXTRA_PROD]:
-                pre_in_map[log.variant] = pre_in_map.get(log.variant, 0) + log.change_amount
-            elif log.reason in [StockLogReason.WAIT_PROD, StockLogReason.EXTRA_PROD_WAIT]:
-                wait_prod_map[log.variant] = wait_prod_map.get(log.variant, 0) + log.change_amount
-        
-        return real_stock_map, pre_in_map, wait_prod_map
 
     def get_recent_logs(self, product_name=None, limit=100):
         query = self.db.query(InventoryLog)
@@ -72,275 +103,215 @@ class InventoryService:
             query = query.filter(InventoryLog.product_name == product_name)
         return query.order_by(InventoryLog.id.desc()).limit(limit).all()
 
-    # ================= 2. 生产/入库操作 =================
-    def action_production_complete(self, product_id, product_name, variant, date_obj):
-        """
-        生产完成：将 WAIT 状态的日志转正，并增加预入库资产
-        """
-        # 1. 查找所有该款式的“待产”日志
-        pending_logs = self.db.query(InventoryLog).filter(
-            InventoryLog.product_name == product_name,
-            InventoryLog.variant == variant,
-            or_(InventoryLog.reason == StockLogReason.WAIT_PROD, InventoryLog.reason == StockLogReason.EXTRA_PROD_WAIT)
-        ).all()
-
-        total_qty = 0
-        if not pending_logs:
-            raise ValueError("当前没有待确认生产的记录")
-
-        for log in pending_logs:
-            total_qty += log.change_amount
-            # 状态流转
-            if log.reason == StockLogReason.WAIT_PROD:
-                log.reason = StockLogReason.PRE_IN
-                log.note = (log.note or "") + " [已生产]"
-            
-            # 【关键修改】如果是额外生产，在转正时要扣除 "已产数量"，实现界面清零
-            elif log.reason == StockLogReason.EXTRA_PROD_WAIT:
-                log.reason = StockLogReason.EXTRA_PROD
-                log.note = (log.note or "") + " [已生产]"
-                
-                # 扣除 product_color 表中的已产计数 (因为它已经流转到预入库了)
-                c_rec = self.db.query(ProductColor).filter(
-                    ProductColor.product_id == product_id, 
-                    ProductColor.color_name == variant
-                ).first()
-                if c_rec and c_rec.produced_quantity is not None:
-                    c_rec.produced_quantity -= log.change_amount # 扣减
-
-        # 2. 只有在这里才增加预入库资产
-        if total_qty > 0:
-            unit_cost = self._get_unit_cost(product_id)
-            val = total_qty * unit_cost
-            self._update_asset_by_name(f"{AssetPrefix.PRE_STOCK}{product_name}", val)
-            self._update_asset_by_name(f"{AssetPrefix.WIP_OFFSET}{product_name}", -val)
+    # ================= 3. 仓库管理 =================
+    def get_all_warehouses(self):
+        return self.db.query(Warehouse).all()
         
+    def add_warehouse(self, name, remarks):
+        if self.db.query(Warehouse).filter(Warehouse.name == name).first():
+            raise ValueError("仓库名称已存在")
+        self.db.add(Warehouse(name=name, remarks=remarks))
         self.db.commit()
-
-    def action_finish_stock_in(self, product_id, product_name, variant_color_obj, pre_in_qty, date_obj):
-        """入库完成/结单：预入库转实物"""
-        unit_cost = self._get_unit_cost(product_id)
-        variant_name = variant_color_obj.color_name
         
-        # 1. 资产转移：预入库 -> 大货资产
-        if pre_in_qty > 0:
-            val = pre_in_qty * unit_cost
-            self._update_asset_by_name(f"{AssetPrefix.PRE_STOCK}{product_name}", -val)
-            self._update_asset_by_name(f"{AssetPrefix.STOCK}{product_name}", val)
+    def delete_warehouse(self, warehouse_id):
+        details = self.get_warehouse_inventory_details()
+        w_data = details.get(warehouse_id)
+        if w_data:
+            for p, v_dict in w_data["stock"].items():
+                for v, pt_dict in v_dict.items():
+                    for pt, qty in pt_dict.items():
+                        if qty > 0:
+                            raise ValueError(f"仓库中仍有存货 ({p}-{v}-{pt}: {qty})，无法删除")
+        wh = self.db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+        if wh:
+            self.db.delete(wh)
+            self.db.commit()
+
+    def get_warehouse_inventory_details(self):
+        warehouses = self.db.query(Warehouse).all()
+        logs = self.db.query(InventoryLog).all()
+        
+        wh_dict = {w.id: {"name": w.name, "stock": {}} for w in warehouses}
+        wh_dict[None] = {"name": "未分配仓库", "stock": {}} 
+
+        products = self.db.query(Product).all()
+        req_map = {} 
+        for prod in products:
+            req_map[prod.name] = {}
+            for c in prod.colors:
+                req_map[prod.name][c.color_name] = {p.part_name: p.quantity for p in c.parts} if c.parts else {"整套": 1}
+
+        for l in logs:
+            w_id = l.warehouse_id
+            if w_id not in wh_dict: continue
+
+            if l.reason not in [StockLogReason.INSPECT_COMPLETED, StockLogReason.OTHER_IN, StockLogReason.OUT_STOCK, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.TRANSFER]:
+                continue
+
+            delta = l.change_amount
+            p_name = l.product_name
+            v_name = l.variant
             
-            # 记录入库日志
-            self.db.add(InventoryLog(
-                product_name=product_name, variant=variant_name,
-                change_amount=pre_in_qty, reason=StockLogReason.IN_STOCK, note="预入库转实物", date=date_obj
-            ))
-            # 注意：已产数量在录入/生产阶段已经加过了，这里不需要再加
-        
-        # 2. 更新旧日志状态 (标记为完成，防止重复统计)
-        # 【修改】加入 EXTRA_PROD 到被结单的列表中
-        pending_logs = self.db.query(InventoryLog).filter(
-            InventoryLog.product_name == product_name,
-            InventoryLog.variant == variant_name,
-            InventoryLog.reason.in_([StockLogReason.PRE_IN, StockLogReason.PRE_IN_REDUCE, StockLogReason.EXTRA_PROD])
-        ).all()
-        
-        for pl in pending_logs: 
-            # 保留原始类型标记在备注里，方便追溯
-            original_type = "额外" if pl.reason == StockLogReason.EXTRA_PROD else "预入"
-            pl.reason = StockLogReason.PRE_IN_COMPLETE
-            pl.note = (pl.note or "") + f" [已入库:{original_type}]"
-        
-        # # 3. 清零计划数量 (如果是计划内的) -> 该功能废止，UI界面保留计划生产数据
-        # if variant_color_obj.quantity > 0:
-        #     variant_color_obj.quantity = 0 
-        
-        # 4. 清理尾差 (保持原有逻辑)
-        # ... (保留原有清理尾差逻辑，注意查询条件也要包含 EXTRA_PROD)
-        other_pending_count = self.db.query(func.count(InventoryLog.id)).filter(
-            InventoryLog.product_name == product_name,
-            InventoryLog.reason.in_([StockLogReason.PRE_IN, StockLogReason.PRE_IN_REDUCE, StockLogReason.EXTRA_PROD]),
-            InventoryLog.variant != variant_name
-        ).scalar()
-        
-        if other_pending_count == 0:
-            # ... (保留原有资产清理代码)
-            wip_asset_name = f"{AssetPrefix.PRE_STOCK}{product_name}"
-            wip_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == wip_asset_name).first()
-            if wip_item:
-                residual_val = wip_item.amount
-                if abs(residual_val) > 0.01:
-                    self.db.add(FinanceRecord(
-                        date=date_obj, amount=0, currency=Currency.CNY,
-                        category=FinanceCategory.ASSET_ADJUST,
-                        description=f"【调账】{product_name} 结单修正：{residual_val:,.2f}"
-                    ))
-                    self.db.delete(wip_item)
-            offset_asset_name = f"{AssetPrefix.WIP_OFFSET}{product_name}"
-            offset_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == offset_asset_name).first()
-            if offset_item: self.db.delete(offset_item)
-        
-        self.db.commit()
-        return 0.0 # 简化返回值
+            if p_name not in wh_dict[w_id]["stock"]: wh_dict[w_id]["stock"][p_name] = {}
+            if v_name not in wh_dict[w_id]["stock"][p_name]: wh_dict[w_id]["stock"][p_name][v_name] = {}
 
-    # ================= 4. 库存变动提交核心逻辑 =================
+            if l.part_name:
+                parts_delta = [(l.part_name, delta)]
+            else:
+                parts_req = req_map.get(p_name, {}).get(v_name, {"整套": 1})
+                parts_delta = [(pt, delta * req) for pt, req in parts_req.items()]
+
+            for pt, d in parts_delta:
+                wh_dict[w_id]["stock"][p_name][v_name][pt] = wh_dict[w_id]["stock"][p_name][v_name].get(pt, 0) + d
+
+        return wh_dict
+
+    # ================= 4. 部件维度的整体库存计算 =================
+    def get_stock_overview_by_parts(self, product_id, product_name):
+        product = self.db.query(Product).filter(Product.id == product_id).first()
+        logs = self.db.query(InventoryLog).filter(InventoryLog.product_name == product_name).all()
+
+        stats = {}
+        for c in product.colors:
+            v_name = c.color_name
+            parts_req = {p.part_name: p.quantity for p in c.parts}
+            if not parts_req:
+                parts_req = {"整套": 1}
+
+            part_actual = {p: 0 for p in parts_req}
+            part_inspecting = {p: 0 for p in parts_req}
+            part_produced = {p: 0 for p in parts_req}
+
+            v_logs = [l for l in logs if l.variant == v_name]
+            for l in v_logs:
+                delta = l.change_amount
+                l_parts = []
+                if l.part_name and l.part_name in parts_req:
+                    l_parts = [(l.part_name, delta)]
+                elif not l.part_name: 
+                    l_parts = [(p, delta * req) for p, req in parts_req.items()]
+
+                for p, d in l_parts:
+                    if l.reason == StockLogReason.IN_INSPECT:
+                        part_inspecting[p] += d
+                    elif l.reason == StockLogReason.INSPECT_COMPLETED:
+                        part_inspecting[p] -= d
+                        part_actual[p] += d
+                        part_produced[p] += d 
+                    elif l.reason == StockLogReason.OUT_STOCK:
+                        part_actual[p] += d   
+                    elif l.reason in [StockLogReason.OTHER_IN, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.TRANSFER]:
+                        part_actual[p] += d
+                        if l.reason == StockLogReason.IN_STOCK:
+                            part_produced[p] += d
+
+            def calc_sets(pool):
+                if not parts_req: return 0
+                return min(max(0, pool[p]) // req for p, req in parts_req.items()) if pool else 0
+
+            actual_sets = calc_sets(part_actual)
+            inspecting_sets = calc_sets(part_inspecting)
+            produced_sets = calc_sets(part_produced)
+
+            excess = {}
+            for p, req in parts_req.items():
+                exc = part_actual[p] - (actual_sets * req)
+                if exc > 0:
+                    excess[p] = exc
+
+            stats[v_name] = {
+                "planned": c.quantity,
+                "produced": produced_sets,
+                "inspecting": inspecting_sets,
+                "actual": actual_sets,
+                "excess": excess
+            }
+        return stats
+
+    # ================= 5. 库存变动提交 =================
     def add_inventory_movement(self, product_id, product_name, variant, quantity, 
-                               move_type, date_obj, remark, 
-                               out_type=None, sale_curr=None, sale_platform=None, sale_price=0.0,
-                               cons_cat=None, cons_content=None,
-                               refund_curr=None, refund_amount=0.0, refund_platform=None):
+                               move_type, date_obj, remark, warehouse_id=None, to_warehouse_id=None, 
+                               is_set=True, part_name=None,
+                               out_type=None, cons_cat=None, cons_content=None):
         
         target_prod_obj = self.db.query(Product).filter(Product.id == product_id).first()
-        
-        # --- A. 计划入库减少 (特殊校验) ---
-        if move_type == StockLogReason.PRE_IN_REDUCE:
-            current_pre_in_qty = 0
-            check_logs = self.db.query(InventoryLog).filter(
-                InventoryLog.product_name == product_name,
-                InventoryLog.variant == variant,
-                or_(InventoryLog.reason == StockLogReason.PRE_IN, InventoryLog.reason == StockLogReason.PRE_IN_REDUCE)
-            ).all()
-            for l in check_logs: current_pre_in_qty += l.change_amount
+        actual_change_amt = -quantity if move_type == StockLogReason.OUT_STOCK else quantity
+
+        if move_type == StockLogReason.TRANSFER:
+            if warehouse_id == to_warehouse_id:
+                raise ValueError("移出仓库和移入仓库不能相同！")
             
-            if current_pre_in_qty <= 0:
-                raise ValueError(f"款式【{variant}】当前没有挂起的预入库数量。")
-            elif quantity > current_pre_in_qty:
-                raise ValueError(f"减少数量 ({quantity}) 不能超过当前预入库总数 ({current_pre_in_qty})。")
-
-        # --- B. 出库逻辑 ---
-        if move_type == StockLogReason.OUT_STOCK:
-            unit_cost = self._get_unit_cost(product_id)
-            cost_val = quantity * unit_cost
-            
-            # 消耗 (扣减可售数量)
-            if out_type == "消耗":
-                if target_prod_obj:
-                    if target_prod_obj.marketable_quantity is None: target_prod_obj.marketable_quantity = target_prod_obj.total_quantity
-                    target_prod_obj.marketable_quantity -= quantity
-                    
-                    combined_remark = f"款式:{variant} 数量:{quantity}"
-                    if remark: combined_remark += f" | {remark}"
-
-                    # 添加0金额成本记录
-                    new_cost = CostItem(
-                        product_id=product_id,
-                        item_name=cons_content, actual_cost=0, supplier="", category=cons_cat,      
-                        unit_price=0, quantity=0, unit="", remarks=combined_remark 
-                    )
-                    self.db.add(new_cost)
-
-                log_note = f"消耗: {cons_content} | {remark}"
-                self.db.add(InventoryLog(
-                    product_name=product_name, variant=variant, change_amount=-quantity,
-                    reason=StockLogReason.OUT_STOCK, note=log_note, is_other_out=True, date=date_obj
-                ))
-                self._update_asset_by_name(f"{AssetPrefix.STOCK}{product_name}", -cost_val)
-                return f"可销售数量已减少 {quantity}，记录已添加至【{cons_cat}】"
-
-            # 分支 : 其他出库
-            else: 
-                log_note = f"其他: {remark}"
-                self.db.add(InventoryLog(
-                    product_name=product_name, variant=variant, change_amount=-quantity, 
-                    reason="出库", note=log_note, is_other_out=True, date=date_obj
-                ))
-                self._update_asset_by_name(f"{AssetPrefix.STOCK}{product_name}", -cost_val)
-                return "其他出库成功"
-
-        # --- C. 退货入库 ---
-        elif move_type == StockLogReason.RETURN_IN:
-            # 记录退货日志 (负销售额)
-            self.db.add(InventoryLog(
-                product_name=product_name, variant=variant, change_amount=quantity,
-                reason=StockLogReason.RETURN_IN, note=f"平台: {refund_platform} | {remark}",
-                date=date_obj, is_sold=True, sale_amount=-refund_amount,
-                currency=refund_curr, platform=refund_platform
-            ))
-            # 记录退款流水
-            fin_rec = FinanceRecord(
-                date=date_obj, amount=-refund_amount, currency=refund_curr,
-                category=FinanceCategory.SALES_REFUND, description=f"{product_name}-{variant} 退货 (x{quantity}) | {remark}"
-            )
-            self.db.add(fin_rec)
-            # 扣减现金
-            self._update_asset_by_name(f"{AssetPrefix.CASH}({refund_curr})", -refund_amount, category=BalanceCategory.ASSET, currency=refund_curr)
-            
-            # 增加库存资产
-            unit_cost = self._get_unit_cost(product_id)
-            asset_val = quantity * unit_cost
-            self._update_asset_by_name(f"{AssetPrefix.STOCK}{product_name}", asset_val)
-            return "退货入库完成"
-
-        # --- D. 计划入库减少 ---
-        elif move_type == StockLogReason.PRE_IN_REDUCE:
-            if target_prod_obj:
-                if target_prod_obj.marketable_quantity is None: target_prod_obj.marketable_quantity = target_prod_obj.total_quantity
-                target_prod_obj.marketable_quantity -= quantity
-
             self.db.add(InventoryLog(
                 product_name=product_name, variant=variant, change_amount=-quantity,
-                reason=StockLogReason.PRE_IN_REDUCE, note=f"修正预入库: {remark}", date=date_obj
+                reason=StockLogReason.TRANSFER, note=f"移出至某仓 | {remark}", date=date_obj,
+                warehouse_id=warehouse_id, part_name=None if is_set else part_name
             ))
-            unit_cost = self._get_unit_cost(product_id)
-            val = quantity * unit_cost
-            self._update_asset_by_name(f"{AssetPrefix.PRE_STOCK}{product_name}", -val)
-            # 加回冲销，保持平衡
-            self._update_asset_by_name(f"{AssetPrefix.WIP_OFFSET}{product_name}", val)
-            return f"预入库数量已减少: {quantity}"
-
-        # --- E. 其他入库 (入库, 预入库, 额外生产入库) ---
-        else: 
-            # 【修改】逻辑分支：根据类型决定初始状态
-            final_reason = move_type
-            
-            # 1. 预入库 -> 变成 "排单待产"
-            if move_type == StockLogReason.PRE_IN:
-                final_reason = StockLogReason.WAIT_PROD
-                # 预入库不增加 Produced Quantity (假设包含在计划里)，也不增加资产
-            
-            # 2. 额外生产 -> 变成 "额外生产待产"
-            elif move_type == StockLogReason.EXTRA_PROD:
-                final_reason = StockLogReason.EXTRA_PROD_WAIT
-                # 额外生产：立即增加 "已产数量" 和 "可售数量" (用户需求)
-                if product_id:
-                    c_rec = self.db.query(ProductColor).filter(
-                        ProductColor.product_id==product_id, ProductColor.color_name==variant
-                    ).first()
-                    if c_rec: 
-                        if c_rec.produced_quantity is None: c_rec.produced_quantity = 0
-                        c_rec.produced_quantity += quantity
-                    
-                    if target_prod_obj:
-                        if target_prod_obj.marketable_quantity is None: target_prod_obj.marketable_quantity = target_prod_obj.total_quantity
-                        target_prod_obj.marketable_quantity += quantity
-                # 注意：此时不增加资产，等点击“生产完成”再增加
-            
-            # 3. 直接入库 (现货) -> 保持不变
-            elif move_type == StockLogReason.IN_STOCK:
-                unit_cost = self._get_unit_cost(product_id)
-                val_change = quantity * unit_cost
-                self._update_asset_by_name(f"{AssetPrefix.STOCK}{product_name}", val_change)
-
-            # 记录日志
             self.db.add(InventoryLog(
-                product_name=product_name, variant=variant, change_amount=quantity, 
-                reason=final_reason, note=remark, date=date_obj
+                product_name=product_name, variant=variant, change_amount=quantity,
+                reason=StockLogReason.TRANSFER, note=f"从某仓移入 | {remark}", date=date_obj,
+                warehouse_id=to_warehouse_id, part_name=None if is_set else part_name
             ))
+            msg = "库存移动成功（生成一进一出两笔记录）"
+
+        elif move_type == StockLogReason.OUT_STOCK:
+            if out_type == "消耗" and target_prod_obj and is_set:
+                new_cost = CostItem(
+                    product_id=product_id, item_name=cons_content, actual_cost=0, supplier="", category=cons_cat,      
+                    unit_price=0, quantity=0, unit="", remarks=f"款式:{variant} 数量:{quantity} | {remark}"
+                )
+                self.db.add(new_cost)
+
+            log_note = f"消耗: {cons_content} | {remark}" if out_type == "消耗" else f"出库: {remark}"
             
-            return f"{move_type} 已录入 (需后续操作确认)"
+            self.db.add(InventoryLog(
+                product_name=product_name, variant=variant, change_amount=actual_change_amt,
+                reason=StockLogReason.OUT_STOCK, note=log_note, is_other_out=True, date=date_obj,
+                warehouse_id=warehouse_id, part_name=None if is_set else part_name
+            ))
+            msg = "出库成功"
+
+        elif move_type == StockLogReason.IN_INSPECT:
+            self.db.add(InventoryLog(
+                product_name=product_name, variant=variant, change_amount=quantity,
+                reason=StockLogReason.IN_INSPECT, note=remark, date=date_obj,
+                warehouse_id=warehouse_id, part_name=None if is_set else part_name
+            ))
+            msg = "入库验收已录入"
+
+        elif move_type == StockLogReason.INSPECT_COMPLETED:
+            self.db.add(InventoryLog(
+                product_name=product_name, variant=variant, change_amount=quantity,
+                reason=StockLogReason.INSPECT_COMPLETED, note=remark, date=date_obj,
+                warehouse_id=warehouse_id, part_name=None if is_set else part_name
+            ))
+            msg = "验收完成入库已录入"
+            
+        elif move_type == StockLogReason.OTHER_IN:
+            self.db.add(InventoryLog(
+                product_name=product_name, variant=variant, change_amount=quantity,
+                reason=StockLogReason.OTHER_IN, note=remark, date=date_obj,
+                warehouse_id=warehouse_id, part_name=None if is_set else part_name
+            ))
+            msg = "其他入库已录入"
+        else:
+            msg = "未知操作类型"
+
+        self.db.flush()
+        # ✨ 底层拦截一切物理操作，进行统一重算
+        self.sync_product_metrics(product_id)
+        return msg
 
     def commit(self):
-        """提交事务"""
         self.db.commit()
 
-    # ================= 5. 日志修改与删除 =================
+    # ================= 6. 日志修改与删除 =================
     def update_logs_batch(self, changes):
-        """批量更新日志 (日期/备注)"""
         has_change = False
         for log_id, diff in changes.items():
             target_log = self.db.query(InventoryLog).filter(InventoryLog.id == log_id).first()
             if target_log:
                 if "日期" in diff:
                     new_d = diff["日期"]
-                    # 兼容不同格式
                     if hasattr(new_d, 'date'): new_d = new_d.date()
                     target_log.date = new_d
                     has_change = True
@@ -352,129 +323,64 @@ class InventoryService:
         return has_change
 
     def delete_log_cascade(self, log_id):
-        """删除日志并级联回滚所有关联数据"""
         log_to_del = self.db.query(InventoryLog).filter(InventoryLog.id == log_id).first()
-        if not log_to_del:
-            raise ValueError("记录不存在")
+        if not log_to_del: raise ValueError("记录不存在")
 
         msg_list = []
         target_prod = self.db.query(Product).filter(Product.name == log_to_del.product_name).first()
-        
-        # =========================================================
-        # 1. 回滚可销售数量 (Marketable Quantity)
-        # =========================================================
-        if target_prod:
-            # 基础触发类型
-            reasons_affecting_marketable = [
-                StockLogReason.PRE_IN_REDUCE, 
-                StockLogReason.EXTRA_PROD, 
-                StockLogReason.EXTRA_PROD_WAIT
-            ]
-            
-            # 【新增判断】如果是"预入库完成"且备注里包含"[已入库:额外]"，说明它源头是额外生产，也需要回滚
-            is_completed_extra = (
-                log_to_del.reason == StockLogReason.PRE_IN_COMPLETE and 
-                "[已入库:额外]" in (log_to_del.note or "")
-            )
-            
-            is_consumable_out = (log_to_del.reason == StockLogReason.OUT_STOCK and "消耗" in (log_to_del.note or ""))
-            
-            # 执行回滚
-            if log_to_del.reason in reasons_affecting_marketable or is_completed_extra or is_consumable_out:
-                if target_prod.marketable_quantity is None: 
-                    target_prod.marketable_quantity = target_prod.total_quantity
-                
-                old_mq = target_prod.marketable_quantity
-                target_prod.marketable_quantity -= log_to_del.change_amount
-                msg_list.append(f"可售数量 {old_mq} -> {target_prod.marketable_quantity}")
+        is_set = (log_to_del.part_name is None)
 
-        # =========================================================
-        # 2. 回滚已产数量 (Produced Quantity)
-        # =========================================================
-        # 只有还在“待产”状态 (EXTRA_PROD_WAIT) 的才需要回滚已产数量。
-        # 如果是 EXTRA_PROD (已生产) 或 PRE_IN_COMPLETE (已入库)，已产数量早已在流转时扣除，无需操作。
-        if log_to_del.reason == StockLogReason.EXTRA_PROD_WAIT and target_prod:
-            target_color = self.db.query(ProductColor).filter(
-                ProductColor.product_id == target_prod.id,
-                ProductColor.color_name == log_to_del.variant
-            ).first()
-            if target_color and target_color.produced_quantity is not None:
-                old_pq = target_color.produced_quantity
-                target_color.produced_quantity -= log_to_del.change_amount
-                msg_list.append(f"已产数量 {old_pq} -> {target_color.produced_quantity}")
-
-        # 计算资产变动成本
-        unit_cost = self._get_unit_cost(target_prod.id) if target_prod else 0
-        asset_delta = log_to_del.change_amount * unit_cost
-        
-        # =========================================================
-        # 3. 根据类型回滚资产和关联单据
-        # =========================================================
-        
-        # --- A. 现货类 (入库/退货) ---
-        if log_to_del.reason in [StockLogReason.IN_STOCK, StockLogReason.RETURN_IN]:
-            self._update_asset_by_name(f"{AssetPrefix.STOCK}{log_to_del.product_name}", -asset_delta)
-            msg_list.append("大货资产已回滚")
-        
-        # --- B. 预入库类 (已确认生产的，包括已完成的) ---
-        elif log_to_del.reason in [StockLogReason.PRE_IN, StockLogReason.EXTRA_PROD, StockLogReason.PRE_IN_COMPLETE]:
-            # 注意：如果是 PRE_IN_COMPLETE，其实资产已经转入大货了(通过另一条 IN_STOCK 日志)。
-            # 但 PRE_IN_COMPLETE 这条日志本身代表了"预入库资产的增加"历史。
-            # 如果删除这条历史，理论上应该回滚预入库资产。
-            # *但在实际业务中，删除了 PRE_IN_COMPLETE 通常意味着你要否定这次生产*。
-            # 只要 IN_STOCK 日志还在，资产其实是平衡的（大货有，预入库无）。
-            # 这里我们为了逻辑闭环，依然执行回滚，用户通常应该配套删除对应的 IN_STOCK 日志。
-            self._update_asset_by_name(f"{AssetPrefix.PRE_STOCK}{log_to_del.product_name}", -asset_delta)
-            self._update_asset_by_name(f"{AssetPrefix.WIP_OFFSET}{log_to_del.product_name}", asset_delta)
-            msg_list.append("预入库/冲销资产已回滚")
-        
-        # --- C. 待产类 (WAIT_PROD, EXTRA_PROD_WAIT) ---
-        elif log_to_del.reason in [StockLogReason.WAIT_PROD, StockLogReason.EXTRA_PROD_WAIT]:
-             msg_list.append("排单记录已删除 (未产生资产变动)")
-
-        # --- D. 计划减少 ---
-        elif log_to_del.reason == StockLogReason.PRE_IN_REDUCE:
-            self._update_asset_by_name(f"{AssetPrefix.PRE_STOCK}{log_to_del.product_name}", -asset_delta)
-            self._update_asset_by_name(f"{AssetPrefix.WIP_OFFSET}{log_to_del.product_name}", asset_delta)
-            msg_list.append("预入库/冲销资产已回滚")
-
-        # --- E. 出库类 ---
-        elif log_to_del.reason == StockLogReason.OUT_STOCK:
-            self._update_asset_by_name(f"{AssetPrefix.STOCK}{log_to_del.product_name}", -asset_delta)
-            msg_list.append("大货资产已回滚")
-            
-            if log_to_del.is_sold:
-                # 场景 1: 已入账的 (有 FinanceRecord)
-                target_fin = self.db.query(FinanceRecord).filter(
-                    FinanceRecord.date == log_to_del.date,
-                    FinanceRecord.amount == log_to_del.sale_amount,
-                    FinanceRecord.category == FinanceCategory.SALES_INCOME,
-                    FinanceRecord.description.like(f"%{log_to_del.product_name}%")
+        is_consumable_out = (log_to_del.reason == StockLogReason.OUT_STOCK and "消耗" in (log_to_del.note or ""))
+        if is_consumable_out and target_prod and is_set:
+            try:
+                content_part = log_to_del.note.split("|")[0].replace("消耗:", "").strip()
+                target_cost = self.db.query(CostItem).filter(
+                    CostItem.product_id == target_prod.id,
+                    CostItem.actual_cost == 0,
+                    CostItem.item_name.like(f"%{content_part}%")
                 ).first()
-                
-                if target_fin:
-                    cash_name = f"{AssetPrefix.CASH}({log_to_del.currency})"
-                    cash_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == cash_name).first()
-                    if cash_item:
-                        cash_item.amount -= target_fin.amount
-                    self.db.delete(target_fin)
-                    msg_list.append("关联销售流水已删除")
+                if target_cost: 
+                    self.db.delete(target_cost)
+                    msg_list.append("关联消耗成本记录已删除")
+            except: pass
 
-            # 处理消耗关联
-            if "消耗:" in (log_to_del.note or ""):
-                try:
-                    content_part = log_to_del.note.split("|")[0].replace("消耗:", "").replace("内部消耗:", "").strip()
-                    target_cost = self.db.query(CostItem).filter(
-                        CostItem.product_id == target_prod.id,
-                        CostItem.actual_cost == 0,
-                        CostItem.item_name.like(f"%{content_part}%")
-                    ).first()
-                    if target_cost:
-                        self.db.delete(target_cost)
-                        msg_list.append("关联成本记录已删除")
-                except:
-                    pass
+        if log_to_del.reason == StockLogReason.OUT_STOCK and log_to_del.is_sold:
+            target_fin = self.db.query(FinanceRecord).filter(
+                FinanceRecord.date == log_to_del.date,
+                FinanceRecord.amount == log_to_del.sale_amount,
+                FinanceRecord.category == FinanceCategory.SALES_INCOME,
+                FinanceRecord.description.like(f"%{log_to_del.product_name}%")
+            ).first()
+            if target_fin:
+                cash_name = f"{AssetPrefix.CASH}({log_to_del.currency})"
+                cash_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == cash_name).first()
+                if cash_item: cash_item.amount -= target_fin.amount
+                self.db.delete(target_fin)
+                msg_list.append("销售流水已回滚")
+                    
+        elif log_to_del.reason == StockLogReason.TRANSFER:
+            msg_list.append("单条移动记录已删除（移入/移出为两条记录）")
 
         self.db.delete(log_to_del)
+        self.db.flush()
+
+        if target_prod:
+            self.sync_product_metrics(target_prod.id)
+            msg_list.append("大货资产及在制资产重算完成")
+
         self.db.commit()
-        return " | ".join(msg_list)
+        return " | ".join(msg_list) if msg_list else "日志已删除"
+
+    # ================= 7. 在制资产检测 =================
+    def get_wip_balance(self, product_id):
+        from services.cost_service import CostService
+        cost_service = CostService(self.db)
+        current_offset = cost_service.get_wip_offset(product_id)
+        all_items = self.db.query(CostItem).filter(CostItem.product_id == product_id).all()
+        current_total_cost = sum([i.actual_cost for i in all_items])
+        return current_total_cost + current_offset
+
+    def clear_wip_for_product(self, product_id):
+        from services.cost_service import CostService
+        cost_service = CostService(self.db)
+        cost_service.perform_wip_fix(product_id)

@@ -13,8 +13,9 @@ from models import (
     FixedAsset, FixedAssetLog,
     ConsumableItem, ConsumableLog, 
     CompanyBalanceItem,
-    SystemSetting, ProductPrice,
-    SalesOrder, SalesOrderItem, OrderRefund 
+    SystemSetting, ProductPrice, ProductPart,
+    SalesOrder, SalesOrderItem, OrderRefund,
+    Warehouse # ✨ 新增导入 Warehouse
 )
 from database import Base
 from views.product_view import show_product_page
@@ -139,8 +140,10 @@ st.session_state.get_dynamic_session = get_dynamic_session
 
 # === 全局表映射，用于备份和测试环境克隆 ===
 TABLES_MAP = [
+    ("warehouses.csv", "warehouses", Warehouse), 
     ("products.csv", "products", Product),
     ("product_colors.csv", "product_colors", ProductColor),
+    ("product_parts.csv", "product_parts", ProductPart), 
     ("product_prices.csv", "product_prices", ProductPrice),
     ("finance_records.csv", "finance_records", FinanceRecord),
     ("cost_items.csv", "cost_items", CostItem),
@@ -153,6 +156,7 @@ TABLES_MAP = [
     ("sales_orders.csv", "sales_orders", SalesOrder),
     ("sales_order_items.csv", "sales_order_items", SalesOrderItem),
     ("order_refunds.csv", "order_refunds", OrderRefund),
+    # ("system_settings.csv", "system_settings", SystemSetting), #暂未修改该bug
 ]
 
 # 初始化表结构 (会自动建在当前绑定的引擎上)
@@ -324,8 +328,11 @@ with st.sidebar:
         
         if st.button("💣 确认清空", type="primary", disabled=(confirm_input != "DELETE"), width="stretch"):
             try:
-                # 按照依赖关系顺序删除
+                # 按照依赖关系顺序删除 (子表先删，主表后删)
+                db.query(ProductPart).delete()   # ✨ 清空部件
+                db.query(ProductPrice).delete()  # ✨ 清空价格
                 db.query(ProductColor).delete()
+                
                 db.query(CostItem).delete()
                 db.query(FixedAsset).delete()
                 db.query(ConsumableItem).delete()
@@ -340,6 +347,10 @@ with st.sidebar:
                 db.query(Product).delete()
                 db.query(FinanceRecord).delete()
                 db.query(SalesOrder).delete() 
+                db.query(Warehouse).delete() 
+                
+                # 系统设置也可以选择性清空，如果不清空汇率会保留。如果想彻底重置加上下面这句：
+                db.query(SystemSetting).delete()
                 
                 db.commit()
                 st.session_state["toast_msg"] = ("数据已清空！表结构已保留。", "🧹")

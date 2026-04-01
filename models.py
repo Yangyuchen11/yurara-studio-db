@@ -11,7 +11,7 @@ class Product(Base):
     total_quantity = Column(Integer, default=0)
     # 可销售数量 (用于成本核算的分母，可变动)
     marketable_quantity = Column(Integer, default=0)
-    # 销售相关
+    is_production_completed = Column(Boolean, default=False)
     target_platform = Column(String)
     costs = relationship("CostItem", back_populates="product", cascade="all, delete-orphan")
     colors = relationship("ProductColor", back_populates="product", cascade="all, delete-orphan")
@@ -78,6 +78,9 @@ class InventoryLog(Base):
     currency = Column(String, nullable=True) # 币种
     platform = Column(String, nullable=True) # 销售平台
     is_other_out = Column(Boolean, default=False) # 是否为其他出库
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True)
+    part_name = Column(String, nullable=True) # 如果为空，代表是"整套操作"
+    warehouse = relationship("Warehouse")
 
 # --- C. 财务记录 ---
 class FinanceRecord(Base):
@@ -171,7 +174,7 @@ class SalesOrder(Base):
     currency = Column(String, default="CNY") # 币种
     platform = Column(String) # 销售平台
 
-    # 时间节点
+    target_account_name = Column(String, nullable=True)
     created_date = Column(Date, default=datetime.now) # 创建日期
     shipped_date = Column(Date, nullable=True) # 发货日期
     completed_date = Column(Date, nullable=True) # 完成日期
@@ -213,3 +216,10 @@ class OrderRefund(Base):
 
     # 关联
     order = relationship("SalesOrder", back_populates="refunds")
+
+# --- 仓库管理 ---
+class Warehouse(Base):
+    __tablename__ = "warehouses"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    remarks = Column(String, nullable=True)

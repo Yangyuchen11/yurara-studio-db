@@ -9,11 +9,9 @@ def show_cost_page(db):
     
     service = CostService(db)
     
-    # === 0. 全局设置 ===
     exchange_rate_input = st.session_state.get("global_rate_input", 4.8)
     exchange_rate = exchange_rate_input / 100.0
 
-    # 1. 选择商品
     products = service.get_all_products()
     if not products:
         st.warning("请先在“产品管理”中添加产品！")
@@ -23,12 +21,10 @@ def show_cost_page(db):
     selected_prod_name = st.selectbox("请选择要核算的商品", product_names)
     prod = service.get_product_by_name(selected_prod_name)
     
-    # 可销售数量 (产品级)
     make_qty = prod.marketable_quantity if prod.marketable_quantity is not None else prod.total_quantity
     
     st.divider()
 
-    # ================= 1. 添加预算功能 (数据录入区) =================
     with st.expander("➕ 添加预算项目 (Budget)", expanded=False):
         st.caption("在此处录入的条目仅作为预算参考，实付金额默认为0。")
         
@@ -74,13 +70,10 @@ def show_cost_page(db):
                 except Exception as e:
                     st.error(f"保存失败: {e}")
 
-    # 获取当前商品的所有成本项
     all_items = service.get_cost_items(prod.id)
     
-    # 布局：左侧表格，右侧总览
     c1, c2 = st.columns([3.5, 1.2]) 
     
-    # ================= 左侧：支出明细表 (可编辑) =================
     with c1:
         st.subheader("📋 支出明细表")
         has_data = False
@@ -92,7 +85,6 @@ def show_cost_page(db):
                 has_data = True
                 st.markdown(f"#### 🔹 {cat}")
                 
-                # --- 准备表格数据 ---
                 data_list = []
                 delete_options = {}
                 
@@ -126,7 +118,6 @@ def show_cost_page(db):
                 
                 df = pd.DataFrame(data_list)
                 
-                # --- 渲染表格 ---
                 if cat in service.DETAILED_CATS:
                     col_order = ["支出内容", "单位", "预算数量", "预算单价", "预算总价", "实际数量", "实付单价", "实付总价", "供应商", "相关链接", "备注"]
                     col_cfg = {
@@ -160,7 +151,6 @@ def show_cost_page(db):
                     width="stretch", hide_index=True, column_config=col_cfg
                 )
 
-                # --- 处理编辑保存 ---
                 if st.session_state.get(f"editor_{cat}_{prod.id}") and st.session_state[f"editor_{cat}_{prod.id}"].get("edited_rows"):
                     changes = st.session_state[f"editor_{cat}_{prod.id}"]["edited_rows"]
                     any_db_change = False
@@ -187,14 +177,10 @@ def show_cost_page(db):
                     
                     if any_db_change:
                         st.toast(f"已更新: {cat}", icon="💾")
-                        
-                        # 👇 核心修复：强制清空数据表格的记忆，防止它用旧状态覆盖新数据
                         if f"editor_{cat}_{prod.id}" in st.session_state:
                             del st.session_state[f"editor_{cat}_{prod.id}"]
-                            
                         st.rerun()
 
-                # --- 删除功能 ---
                 c_del_sel, c_del_btn = st.columns([3, 1])
                 selected_del_label = c_del_sel.selectbox("选择要删除的项目", options=list(delete_options.keys()), key=f"sel_del_{cat}", label_visibility="collapsed", index=None, placeholder="选择要删除的项目...")
                 
@@ -206,7 +192,6 @@ def show_cost_page(db):
                                 del_id = delete_options[selected_del_label]
                                 service.delete_cost_item(del_id)
                                 
-                                # 👇 核心修复：清空下拉框和表格的记忆
                                 if f"sel_del_{cat}" in st.session_state:
                                     del st.session_state[f"sel_del_{cat}"]
                                 if f"editor_{cat}_{prod.id}" in st.session_state:
@@ -216,7 +201,6 @@ def show_cost_page(db):
                             except Exception as e:
                                 st.error(f"删除失败: {e}")
 
-                # 计算小计并显示
                 cat_total_real = sum([i.actual_cost for i in cat_items])
                 budget_map = {i.item_name: i.unit_price * i.quantity for i in cat_items if i.supplier == "预算设定"}
                 cat_total_budget = sum(budget_map.values())
@@ -237,12 +221,10 @@ def show_cost_page(db):
         if not has_data:
             st.info("该商品暂无支出或预算记录。")
 
-    # ================= 右侧：总核算结果 =================
     with c2:
         with st.container(border=True):
             st.subheader("📊 核算面板")
             
-            # --- 计算总成本 (产品级) ---
             total_real_cost = sum([i.actual_cost for i in all_items])
             budget_map = {i.item_name: i.unit_price * i.quantity for i in all_items if i.supplier == "预算设定"}
             total_budget_cost = sum(budget_map.values())
@@ -254,20 +236,15 @@ def show_cost_page(db):
             st.caption(f"📝 预算总成本: ¥ {total_budget_cost:,.2f}")
             st.divider()
             
-            # 预计可销售数量 (产品级)
             st.metric("🔢 预计可销售数量", f"{int(make_qty)} 件", help="此数值通过库存变动自动更新。")
             st.divider()
             
-            # --- 价格获取辅助函数：从颜色款式对象获取价格 ---
             def get_color_price(color_obj, platform_key):
-                if not color_obj or not color_obj.prices:
-                    return 0.0
+                if not color_obj or not color_obj.prices: return 0.0
                 for p in color_obj.prices:
-                    if p.platform == platform_key:
-                        return p.price
+                    if p.platform == platform_key: return p.price
                 return 0.0
 
-            # --- 计算单件综合成本 (产品级) ---
             if make_qty > 0:
                 unit_real_cost = total_real_cost / make_qty
                 unit_budget_cost = total_budget_cost / make_qty
@@ -276,44 +253,31 @@ def show_cost_page(db):
                 st.caption(f"📝 预算单套成本: ¥ {unit_budget_cost:,.2f}")
                 st.divider()
 
-                # --- 分颜色款式显示毛利参考 ---
                 st.markdown("**📈 各款式毛利参考 (基于实付)**")
                 
-                # 定义平台映射
                 platforms_config = [
-                    ("weidian", "微店 (CNY)", False),
-                    ("offline_cn", "中国线下 (CNY)", False),
-                    ("other", "其他 (CNY)", False),
-                    ("booth", "Booth (JPY)", True),
-                    ("instagram", "Instagram (JPY)", True),
-                    ("offline_jp", "日本线下 (JPY)", True),
+                    ("weidian", "微店 (CNY)", False), ("offline_cn", "中国线下 (CNY)", False),
+                    ("other", "其他 (CNY)", False), ("booth", "Booth (JPY)", True),
+                    ("instagram", "Instagram (JPY)", True), ("offline_jp", "日本线下 (JPY)", True),
                     ("other_jpy", "其他 (JPY)", True),
                 ]
 
-                # 遍历产品的每一个款式
                 for color in prod.colors:
                     with st.expander(f"🎨 款式：{color.color_name}", expanded=False):
                         has_price_for_this_color = False
                         
                         for pf_key, label, is_jpy in platforms_config:
-                            # 获取该款式在特定平台的价格
                             price_val = get_color_price(color, pf_key)
                             
                             if price_val > 0:
                                 has_price_for_this_color = True
-                                
-                                # 平台手续费计算 (针对微店和Booth)
                                 fee_val = 0.0
-                                if pf_key == "weidian":
-                                    fee_val = price_val * 0.006 # 微店0.6%
-                                elif pf_key == "booth":
-                                    fee_val = price_val * 0.056 + 22 # Booth 5.6% + 22JPY
+                                if pf_key == "weidian": fee_val = price_val * 0.006 
+                                elif pf_key == "booth": fee_val = price_val * 0.056 + 22 
                                     
-                                # 换算为 CNY (含手续费折算)
                                 price_cny = price_val * exchange_rate if is_jpy else price_val
                                 fee_cny = fee_val * exchange_rate if is_jpy else fee_val
                                 
-                                # 毛利 = 平台折算价 - 预估手续费 - 产品单套综合成本
                                 margin = price_cny - fee_cny - unit_real_cost
                                 margin_rate = (margin / price_cny * 100) if price_cny > 0 else 0
                                 
@@ -321,15 +285,11 @@ def show_cost_page(db):
                                 if is_jpy: st.caption(f"定价: {price_val:,.0f} JPY")
                                 
                                 st.metric(
-                                    label="单件毛利 (已扣手续费)", 
-                                    value=f"¥ {margin:,.2f}", 
-                                    delta=f"{margin_rate:.1f}%",
-                                    delta_color="normal" if margin > 0 else "inverse"
+                                    label="单件毛利 (已扣手续费)", value=f"¥ {margin:,.2f}", 
+                                    delta=f"{margin_rate:.1f}%", delta_color="normal" if margin > 0 else "inverse"
                                 )
-                                # 新增：上方小字显示预估手续费
                                 st.caption(f"预估单件手续费: ¥ {fee_cny:,.2f}")
                                 
-                                # 这里的总预期毛利可以根据该款式的计划数量来算
                                 total_profit = margin * color.quantity
                                 st.caption(f"该款式预期总毛利: ¥ {total_profit:,.2f}")
                                 st.divider()
@@ -339,45 +299,33 @@ def show_cost_page(db):
             else:
                 st.error("⚠️ 预计数量为 0，无法计算毛利。")
 
-    # ================= 5. 强制结单/修正功能 =================
-    with st.expander("🛠️ 生产结单 / 账目修正 (高级)", expanded=False):
-        st.warning("⚠️ **功能说明**：如果该商品已经生产完成，但在【公司资产一览】中仍显示有“在制资产”余额，请点击下方按钮。")
+    # ================= 5. 生产结单功能 =================
+    with st.expander("🛠️ 生产完成 / 清零在制资产", expanded=False):
+        st.warning("⚠️ **功能说明**：如果该商品已经生产完成，请点击下方按钮。此操作会将【在制资产】清零，并根据已生产数量重新核算单价及大货资产。")
         
         current_offset = service.get_wip_offset(prod.id)
         remaining_wip = total_real_cost + current_offset
         
-        c_fix1, c_fix2 = st.columns([2, 1])
-        c_fix1.metric("当前残留 WIP (应为0)", f"¥ {remaining_wip:,.2f}")
+        # ✨ UI 修改：垂直对齐优化
+        c_fix1, c_fix2 = st.columns([2, 1], vertical_alignment="bottom")
+        c_fix1.metric("当前在制资产 (WIP)", f"¥ {remaining_wip:,.2f}")
         
-        if c_fix2.button("🚀 强制修正 + 同步大货资产", type="primary"):
-            try:
-                added_val, _ = service.perform_wip_fix(prod.id)
-                st.success(f"修正完成！追加成本 {added_val:,.2f} 已结转。")
-                sync_all_caches()
-                st.rerun()
-            except Exception as e:
-                st.error(f"修正失败: {e}")
-
-        st.markdown("---")
-        st.subheader("⚖️ 库存价值重估 (Revaluation)")
-        st.caption("当单价因追加成本或调整可售数量发生剧烈变化时，使用此功能将账面资产价值同步为 [剩余数量 × 当前单价]。")
-
-        reval_data = service.calculate_revaluation_data(prod.id)
-        if reval_data:
-            c_rv1, c_rv2, c_rv3 = st.columns(3)
-            c_rv1.metric("当前实际库存", f"{reval_data['current_stock_qty']} 件")
-            c_rv2.metric("当前账面价值", f"¥ {reval_data['current_inv_val']:,.2f}")
-            c_rv3.metric("目标重估价值", f"¥ {reval_data['target_inv_val']:,.2f}", help=f"计算公式: {reval_data['current_stock_qty']} * {reval_data['unit_cost']:.2f}")
-
-            if abs(reval_data['diff']) > 1.0:
-                st.info(f"💡 检测到价值偏差: ¥ {reval_data['diff']:+,.2f}")
-                if st.button("🔄 执行资产重估 / 补差", type="secondary"):
-                    try:
-                        service.perform_inventory_revaluation(prod.id)
-                        st.success("重估完成！账面资产已与最新单价对齐。")
-                        sync_all_caches()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"重估失败: {e}")
-            else:
-                st.success("✅ 账面价值与理论价值一致，无需重估。")
+        if not prod.is_production_completed or abs(remaining_wip) > 0.01:
+            if c_fix2.button("🚀 生产完成 (清零在制)", type="primary", use_container_width=True):
+                try:
+                    service.perform_wip_fix(prod.id)
+                    st.success("操作成功！在制资产已清零，可销售数量与大货资产已重新核算。")
+                    sync_all_caches()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"修正失败: {e}")
+        else:
+            # ✨ 修正：增加 margin-bottom: 16px 使其与文字框下沿齐平
+            c_fix2.markdown(
+                "<div style='display: flex; align-items: center; justify-content: center; "
+                "background-color: rgba(76, 175, 80, 0.1); border: 1px solid #4caf50; "
+                "border-radius: 6px; color: #4caf50; font-size: 15px; font-weight: bold; "
+                "height: 38px; margin-bottom: 16px;'>"
+                "✅ 已完成生产结单</div>", 
+                unsafe_allow_html=True
+            )

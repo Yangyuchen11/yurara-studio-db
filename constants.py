@@ -44,6 +44,14 @@ class FinanceCategory:
 
 class StockLogReason:
     """库存变动原因 (对应 InventoryLog.reason)"""
+    # ====== 新版变动类型 ======
+    OUT_STOCK = "出库"
+    IN_INSPECT = "入库验收"
+    INSPECT_COMPLETED = "验收完成入库"
+    OTHER_IN = "其他入库"
+    TRANSFER = "库存移动"
+    
+    # ====== 兼容历史数据及系统联动类型 ======
     IN_STOCK = "入库"
     OUT_STOCK = "出库"
 
