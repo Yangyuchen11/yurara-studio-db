@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import io
 import zipfile
@@ -182,6 +183,19 @@ def set_system_setting(db, key, new_value):
 db = next(get_db())
 
 with st.sidebar:
+    # 隐藏的保活脚本 (Heartbeat)，防止长时间无操作掉线
+    components.html(
+        """
+        <script>
+        // 每 10 分钟 (600000毫秒) 偷偷向服务器发一次请求，防止代理服务器因超时切断连接
+        setInterval(() => {
+            fetch('/healthz').catch(() => {});
+        }, 600000);
+        </script>
+        """,
+        height=0,
+        width=0
+    )
     current_user = st.session_state.get("current_user_name", "Unknown")
     
     # 顶部状态栏：醒目的测试环境提示
