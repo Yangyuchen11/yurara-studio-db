@@ -3,6 +3,7 @@ import pandas as pd
 import io
 import zipfile
 import os
+from datetime import datetime
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from models import (
@@ -258,7 +259,14 @@ with st.sidebar:
                         zf.writestr(file_name, csv_bytes)
                     except Exception as e:
                         pass
-            st.download_button("⬇️ 下载全量备份 (ZIP)", data=zip_buffer.getvalue(), file_name="yurara_backup.zip", mime="application/zip")
+            current_time = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+            backup_filename = f"yurara-db-backup_{current_time}.zip"
+            st.download_button(
+                "⬇️ 下载全量备份 (ZIP)", 
+                data=zip_buffer.getvalue(), 
+                file_name=backup_filename,
+                mime="application/zip"
+            )
         except Exception as e:
             st.error(f"导出错误: {e}")
 
