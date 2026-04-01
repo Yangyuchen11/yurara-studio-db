@@ -44,6 +44,7 @@ def show_asset_page(db, exchange_rate):
                 "剩余价值 (CNY)": show_cny,
                 "剩余价值 (JPY)": show_jpy,
                 "店名": a.shop_name,
+                "相关链接": getattr(a, 'url', '') or "",
                 "备注": a.remarks
             })
             
@@ -64,9 +65,10 @@ def show_asset_page(db, exchange_rate):
                 "剩余价值 (CNY)": st.column_config.NumberColumn(format="¥ %.2f", help="按汇率折算"),
                 "剩余价值 (JPY)": st.column_config.NumberColumn(format="¥ %.0f", help="日元资产原值"),
                 "店名": st.column_config.TextColumn("店名/来源", required=True),
+                "相关链接": st.column_config.LinkColumn("相关链接", display_text="🔗 URL"),
                 "备注": st.column_config.TextColumn("备注"),
             },
-            column_order=["项目", "币种", "单价 (原币)", "初始数量", "剩余数量", "总价 (原币)", "剩余价值 (CNY)", "剩余价值 (JPY)", "店名", "备注"]
+            column_order=["项目", "币种", "单价 (原币)", "初始数量", "剩余数量", "总价 (原币)", "剩余价值 (CNY)", "剩余价值 (JPY)", "店名", "相关链接", "备注"]
         )
 
         # === 5. 处理表格修改 (调用 Service) ===
@@ -81,6 +83,7 @@ def show_asset_page(db, exchange_rate):
                 # 准备更新数据映射 (UI列名 -> 数据库字段名)
                 updates = {}
                 if "店名" in diff: updates["shop_name"] = diff["店名"]
+                if "相关链接" in diff: updates["url"] = diff["相关链接"]
                 if "备注" in diff: updates["remarks"] = diff["备注"]
                 
                 if updates:

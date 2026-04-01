@@ -42,6 +42,9 @@ def render_add_transaction_form(exchange_rate):
     # 局部组件内使用动态分配的 session
     db_frag = st.session_state.get_dynamic_session()
     try:
+        # 获取所有的现金账户资源
+        all_cash_assets = [a for a in FinanceService.get_transferable_assets(db_frag) if getattr(a, 'asset_type', '') == "现金"]
+        
         with st.expander("➕ 新增收支 / 兑换 / 债务记录", expanded=True):
             
             c_top1, c_top2 = st.columns(2)
@@ -53,7 +56,7 @@ def render_add_transaction_form(exchange_rate):
             # 初始化通用变量 (Base Data)
             base_data = {
                 "date": f_date, "type": rec_type, "currency": "CNY", 
-                "amount": 0.0, "category": "", "shop": "", "desc": ""
+                "amount": 0.0, "category": "", "shop": "", "desc": "", "url": ""
             }
             
             # 联动配置 (Link Config)
@@ -67,11 +70,29 @@ def render_add_transaction_form(exchange_rate):
                 st.markdown("##### 1. 业务分类")
                 st.info("💱 货币资金互转 (不影响净资产，只改变账户余额分布)")
                 
-                st.markdown("##### 2. 兑换方向")
+                st.markdown("##### 2. 兑换账户与方向")
                 c_ex_dir1, c_ex_dir2 = st.columns(2)
-                source_curr = c_ex_dir1.selectbox("源币种 (扣款账户)", ["CNY", "JPY"])
+                
+                source_curr = c_ex_dir1.selectbox("源币种 (扣款侧)", ["CNY", "JPY"])
+                valid_src = [a for a in all_cash_assets if a.currency == source_curr]
+                src_opts = {f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})": a.id for a in valid_src}
+                if not src_opts:
+                    st.warning(f"缺少 {source_curr} 现金账户，将自动创建默认账户。")
+                    source_acc_id = None
+                else:
+                    src_acc_label = c_ex_dir1.selectbox("扣款账户", list(src_opts.keys()))
+                    source_acc_id = src_opts.get(src_acc_label)
+
                 target_curr = "JPY" if source_curr == "CNY" else "CNY"
-                c_ex_dir2.info(f"➡️ 目标币种 (入账账户): **{target_curr}**")
+                c_ex_dir2.info(f"➡️ 目标币种 (入账侧): **{target_curr}**")
+                valid_tgt = [a for a in all_cash_assets if a.currency == target_curr]
+                tgt_opts = {f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})": a.id for a in valid_tgt}
+                if not tgt_opts:
+                    st.warning(f"缺少 {target_curr} 现金账户，将自动创建默认账户。")
+                    target_acc_id = None
+                else:
+                    tgt_acc_label = c_ex_dir2.selectbox("入账账户", list(tgt_opts.keys()))
+                    target_acc_id = tgt_opts.get(tgt_acc_label)
                 
                 st.markdown("##### 3. 交易金额")
                 c_ex1, c_ex2 = st.columns(2)
@@ -89,7 +110,7 @@ def render_add_transaction_form(exchange_rate):
                         st.warning("金额必须大于0")
                     else:
                         try:
-                            FinanceService.execute_exchange(db_frag, f_date, source_curr, target_curr, amount_out, amount_in, desc)
+                            FinanceService.execute_exchange(db_frag, f_date, source_curr, target_curr, amount_out, amount_in, desc, source_acc_id, target_acc_id)
                             st.toast(f"兑换成功：-{amount_out}{source_curr}, +{amount_in}{target_curr}", icon="💱")
                             sync_all_caches()
                             st.rerun()
@@ -106,21 +127,29 @@ def render_add_transaction_form(exchange_rate):
                     c_t1, c_t2 = st.columns(2)
                     d_name = c_t1.text_input("债务名称", placeholder="如：银行经营贷、欠某加工厂货款 (必填)")
                     
-                    # 【核心修复 1】精准匹配选项，解决一直走“新增资产”分支的 Bug
                     dest_options = ["存入流动资金 (拿到现金)", "新增资产项 (形成实物/账面资产)"]
                     dest = c_t2.selectbox("借入价值去向", dest_options)
                     is_to_cash = (dest == dest_options[0])
                     
-                    # 【核心修复 2】如果是现金，隐藏挂账资产名称；如果是资产，则要求必填
                     if is_to_cash:
                         rel_content = "" # 不需要填资产名
                     else:
                         rel_content = st.text_input("新增挂账资产名称", placeholder="如：未付款的打印机 (必填)")
 
-                    st.markdown("##### 3. 交易金额与币种")
-                    c_d1, c_curr, c_d2 = st.columns([1.5, 1, 1.5])
+                    st.markdown("##### 3. 交易金额、币种与账户")
+                    c_d1, c_curr = st.columns([1.5, 1])
                     d_amount = c_d1.number_input("金额", min_value=0.0, step=100.0)
                     curr = c_curr.selectbox("币种", ["CNY", "JPY"])
+
+                    target_acc_id = None
+                    if is_to_cash:
+                        valid_tgt = [a for a in all_cash_assets if a.currency == curr]
+                        tgt_opts = {f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})": a.id for a in valid_tgt}
+                        if tgt_opts:
+                            acc_sel = st.selectbox("收款现金账户", list(tgt_opts.keys()))
+                            target_acc_id = tgt_opts.get(acc_sel)
+                        else:
+                            st.warning(f"该币种 ({curr}) 暂无现金账户，系统将自动创建默认账户。")
 
                     st.markdown("##### 4. 附加信息")
                     c_add1, c_add2 = st.columns(2)
@@ -129,14 +158,13 @@ def render_add_transaction_form(exchange_rate):
 
                     st.write("")
                     if st.button("💾 确认新增债务", type="primary", width="stretch"):
-                        # 【核心修复 3】按需校验：如果是资产，必须有资产名；如果是现金，只校验债务名和金额
                         if not d_name or d_amount <= 0 or (not is_to_cash and not rel_content):
                             st.error("请填写完整必填项（债务名称、资产名称）并确保金额大于0")
                         else:
                             try:
                                 FinanceService.create_debt(
                                     db_frag, f_date, curr, d_name, d_amount, d_source, d_remark, 
-                                    is_to_cash=is_to_cash, related_content=rel_content
+                                    is_to_cash=is_to_cash, related_content=rel_content, target_acc_id=target_acc_id
                                 )
                                 st.toast("债务记录成功", icon="📝")
                                 sync_all_caches()
@@ -161,9 +189,18 @@ def render_add_transaction_form(exchange_rate):
                         repay_type = st.radio("偿还方式", ["💸 资金还款 (扣除账户现金)", "🔄 资产抵消 (划扣其他资产抵债)"], horizontal=True)
                         
                         if "资金" in repay_type:
-                            c_r1, c_curr, c_r2 = st.columns([1.5, 1, 1.5])
+                            c_r1, c_curr = st.columns([1.5, 1])
                             amt = c_r1.number_input("偿还金额", min_value=0.0, step=100.0, max_value=max_repay, value=max_repay)
                             c_curr.info(f"结算币种: **{curr}**")
+                            
+                            source_acc_id = None
+                            valid_src = [a for a in all_cash_assets if a.currency == curr]
+                            src_opts = {f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})": a.id for a in valid_src}
+                            if src_opts:
+                                acc_sel = st.selectbox("扣款现金账户", list(src_opts.keys()))
+                                source_acc_id = src_opts.get(acc_sel)
+                            else:
+                                st.warning(f"该币种 ({curr}) 暂无现金账户，系统将自动扣减默认账户。")
                             
                             st.markdown("##### 4. 附加信息")
                             rem = st.text_input("备注说明", placeholder="选填")
@@ -171,7 +208,7 @@ def render_add_transaction_form(exchange_rate):
                             st.write("")
                             if st.button("💾 确认资金还款", type="primary", width="stretch"):
                                 try:
-                                    FinanceService.repay_debt(db_frag, f_date, sel_id, amt, rem)
+                                    FinanceService.repay_debt(db_frag, f_date, sel_id, amt, rem, source_acc_id)
                                     st.toast("还款成功", icon="💸")
                                     sync_all_caches()
                                     st.rerun()
@@ -330,8 +367,8 @@ def render_add_transaction_form(exchange_rate):
                 else:
                     link_config["name"] = st.text_input("收支明细描述", placeholder="如：顺丰快递费、工作餐补 (必填)")
 
-                # --- 3. 交易金额与数量 ---
-                st.markdown("##### 3. 交易金额与数量")
+                # --- 3. 交易金额、数量与账户 ---
+                st.markdown("##### 3. 交易金额、数量与账户")
                 
                 if needs_qty:
                     c_amt1, c_curr, c_qty = st.columns([1.5, 1, 1.5])
@@ -346,12 +383,23 @@ def render_add_transaction_form(exchange_rate):
                     base_data["amount"] = c_amt1.number_input(amt_label, min_value=0.0, step=10.0, format="%.2f")
                     base_data["currency"] = c_curr.selectbox("币种", ["CNY", "JPY"])
 
+                valid_accs = [a for a in all_cash_assets if a.currency == base_data["currency"]]
+                acc_opts = {f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})": a.id for a in valid_accs}
+                
+                if not acc_opts:
+                    st.warning(f"该币种 ({base_data['currency']}) 暂无现金账户，系统将自动创建默认账户。")
+                    base_data["account_id"] = None
+                else:
+                    sel_acc = st.selectbox("入账账户" if rec_type == "收入" else "操作账户", list(acc_opts.keys()))
+                    base_data["account_id"] = acc_opts.get(sel_acc)
+
                 # --- 4. 附加信息 ---
                 st.markdown("##### 4. 附加信息")
                 c_add1, c_add2 = st.columns(2)
                 shop_label = "付款人/资金来源" if rec_type == "收入" else "收款方/店铺名称"
                 base_data["shop"] = c_add1.text_input(shop_label, placeholder="选填")
                 base_data["desc"] = c_add2.text_input("其他备注", placeholder="选填，将展示在流水详情中")
+                base_data["url"] = st.text_input("购入页面网址", placeholder="选填，如：淘宝商品链接")
                 
                 # 防空容错处理
                 if not link_config.get("name") and cat in ["销售收入", "退款", "其他现金收入", "其他"]:
@@ -371,34 +419,30 @@ def render_add_transaction_form(exchange_rate):
                             st.rerun()
                         except Exception as e:
                             st.error(f"写入失败: {e}")
+            
             # >>>>> 场景 D: 资金移动 <<<<<
             elif rec_type == "资金移动":
                 st.markdown("##### 1. 业务分类")
                 st.info("🔄 资金移动 (将同币种资金从一项资产转移到另一项，内部划转不影响总净资产)")
                 
-                # 获取所有的资产项目 (CNY 和 JPY)
-                all_assets = FinanceService.get_transferable_assets(db_frag)
-                
-                if len(all_assets) < 2:
-                    st.warning("⚠️ 当前资产项目不足 2 个，无法进行移动操作。")
+                if len(all_cash_assets) < 2:
+                    st.warning("⚠️ 当前现金账户不足 2 个，无法进行移动操作。")
                 else:
                     st.markdown("##### 2. 资金移动方向")
                     
                     def format_asset(a):
-                        # 在选项里带上币种标签，方便肉眼区分
                         return f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})"
                         
                     # -- 构建转出账户下拉框 --
-                    from_options = {format_asset(a): a for a in all_assets}
+                    from_options = {format_asset(a): a for a in all_cash_assets}
                     from_label = st.selectbox("转出账户 (移动前项目)", list(from_options.keys()), key="fund_from")
                     from_asset = from_options[from_label]
                     
                     # -- 动态构建转入账户下拉框 --
-                    # 规则：币种必须与转出账户相同，且排除自己
-                    to_assets = [a for a in all_assets if a.currency == from_asset.currency and a.id != from_asset.id]
+                    to_assets = [a for a in all_cash_assets if a.currency == from_asset.currency and a.id != from_asset.id]
                     
                     if not to_assets:
-                        st.warning(f"⚠️ 找不到其他 {from_asset.currency} 资产，无法完成该币种的移动。")
+                        st.warning(f"⚠️ 找不到其他 {from_asset.currency} 账户，无法完成该币种的移动。")
                     else:
                         to_options = {format_asset(a): a for a in to_assets}
                         to_label = st.selectbox("转入账户 (移动后项目)", list(to_options.keys()), key="fund_to")
@@ -408,12 +452,11 @@ def render_add_transaction_form(exchange_rate):
                         amount = st.number_input(
                             f"移动金额 ({from_asset.currency})", 
                             min_value=0.0, 
-                            max_value=float(from_asset.amount), # 最大限制不能超过转出账户余额
+                            max_value=float(from_asset.amount),
                             step=100.0 if from_asset.currency == "CNY" else 1000.0, 
                             format="%.2f"
                         )
                         
-                        # 动态渲染移动后的金额预览
                         if amount > 0:
                             c_prev1, c_prev2 = st.columns(2)
                             c_prev1.success(f"📉 **{from_asset.name}** 移动后预览: {(from_asset.amount - amount):,.2f} {from_asset.currency}")
@@ -462,11 +505,13 @@ def render_edit_delete_panel(df_render):
                             n_amt = st.number_input("金额", value=float(sel['金额']), min_value=0.0)
                             n_cat = st.text_input("分类", value=sel['分类'])
                             n_desc = st.text_input("备注", value=sel['备注'])
+                            n_url = st.text_input("购入页面网址", value=sel.get('网址', ''))
                             
                             if st.form_submit_button("保存修改", type="primary"):
                                 updates = {
                                     "date": n_date, "type": n_type, "currency": n_curr,
-                                    "amount_abs": n_amt, "category": n_cat, "desc": n_desc
+                                    "amount_abs": n_amt, "category": n_cat, "desc": n_desc,
+                                    "url": n_url
                                 }
                                 try:
                                     if FinanceService.update_record(db_frag, sel['ID'], updates):
@@ -554,6 +599,7 @@ def show_finance_page(db, exchange_rate):
                 "日期": st.column_config.DateColumn(format="YYYY-MM-DD"),
                 "收支": st.column_config.TextColumn("收支类型"),
                 "金额": st.column_config.NumberColumn(format="¥ %.2f"),
+                "网址": st.column_config.LinkColumn("相关链接", display_text="🔗 URL"),
                 "当前CNY余额": st.column_config.NumberColumn(format="¥ %.2f"),
                 "当前JPY余额": st.column_config.NumberColumn(format="¥ %.0f")
             }

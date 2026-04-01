@@ -72,6 +72,9 @@ class CostService:
         if "remarks" in updates and updates["remarks"] != (target_item.remarks or ""):
             target_item.remarks = updates["remarks"]
             has_change = True
+        if "url" in updates and updates["url"] != (target_item.url or ""):
+            target_item.url = updates["url"]
+            has_change = True
             
         # 预算/数值逻辑
         if updates.get("is_budget", False):

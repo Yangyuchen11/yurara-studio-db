@@ -153,6 +153,7 @@ class ConsumableService:
                 if "店铺" in diff: item.shop_name = diff["店铺"]; has_change = True
                 if "备注" in diff: item.remarks = diff["备注"]; has_change = True
                 if "剩余数量" in diff: item.remaining_qty = float(diff["剩余数量"]); has_change = True
+                if "相关链接" in diff: item.url = diff["相关链接"]; has_change = True
         
         if has_change:
             self.db.commit()

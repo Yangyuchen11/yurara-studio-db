@@ -194,6 +194,7 @@ def show_other_asset_page(db, exchange_rate):
                 "剩余价值 (CNY)": row_cny_display,
                 "剩余价值 (JPY)": row_jpy_display,
                 "店铺": i.shop_name,
+                "相关链接": getattr(i, 'url', '') or "",
                 "备注": i.remarks if i.remarks else ""
             })
             
@@ -219,7 +220,8 @@ def show_other_asset_page(db, exchange_rate):
                     "单价 (原币)": st.column_config.NumberColumn(format="%.2f", required=True),
                     "剩余价值 (CNY)": st.column_config.NumberColumn(format="¥ %.2f"),
                     "剩余价值 (JPY)": st.column_config.NumberColumn(format="¥ %.0f"),
-                    "剩余数量": st.column_config.NumberColumn(format="%.2f")
+                    "剩余数量": st.column_config.NumberColumn(format="%.2f"),
+                    "相关链接": st.column_config.LinkColumn("相关链接", display_text="🔗 URL")
                 }
             )
             

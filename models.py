@@ -60,6 +60,7 @@ class CostItem(Base):
     remarks = Column(String, default="")    # 备注
     unit = Column(String, default="") # 单位 (如: 米/个)
     order_no = Column(String, nullable=True) # 【新增】订单号 (用于售后成本)
+    url = Column(String, nullable=True)
 
     # 关联流水 (删除流水时自动清理关联的成本项)
     finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
@@ -90,6 +91,7 @@ class FinanceRecord(Base):
     currency = Column(String, default="CNY") 
     category = Column(String) 
     description = Column(String)
+    url = Column(String, nullable=True)
 
 # --- D. 公司账面/资产负债 ---
 class CompanyBalanceItem(Base):
@@ -115,7 +117,7 @@ class FixedAsset(Base):
     remarks = Column(String)        # 备注
     purchase_date = Column(Date, default=datetime.now)
     currency = Column(String, default="CNY") # 默认为人民币资产
-
+    url = Column(String, nullable=True)
     # 【优化3】数据库级联删除
     finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
 
@@ -132,7 +134,7 @@ class ConsumableItem(Base):
     remarks = Column(String)        # 备注
     purchase_date = Column(Date, default=datetime.now)
     currency = Column(String, default="CNY")
-
+    url = Column(String, nullable=True)
     # 【优化3】数据库级联删除
     finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
 

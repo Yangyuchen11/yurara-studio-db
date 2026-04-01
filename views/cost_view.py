@@ -118,6 +118,7 @@ def show_cost_page(db):
                         "实付单价": actual_unit_price or 0,
                         "实付总价": actual_total or 0,
                         "供应商": i.supplier or "",
+                        "相关链接": getattr(i, 'url', '') or "",
                         "备注": i.remarks or "",
                         "_is_budget": is_budget_item
                     })
@@ -127,7 +128,7 @@ def show_cost_page(db):
                 
                 # --- 渲染表格 ---
                 if cat in service.DETAILED_CATS:
-                    col_order = ["支出内容", "单位", "预算数量", "预算单价", "预算总价", "实际数量", "实付单价", "实付总价", "供应商", "备注"]
+                    col_order = ["支出内容", "单位", "预算数量", "预算单价", "预算总价", "实际数量", "实付单价", "实付总价", "供应商", "相关链接", "备注"]
                     col_cfg = {
                         "_id": None, "_is_budget": None,
                         "支出内容": st.column_config.TextColumn(disabled=True),
@@ -139,16 +140,18 @@ def show_cost_page(db):
                         "实付单价": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
                         "实付总价": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
                         "供应商": st.column_config.TextColumn(),
+                        "相关链接": st.column_config.LinkColumn("相关链接", display_text="🔗 URL"),
                         "备注": st.column_config.TextColumn(),
                     }
                 else:
-                    col_order = ["支出内容", "预算总价", "实付总价", "供应商", "备注"] 
+                    col_order = ["支出内容", "预算总价", "实付总价", "供应商", "相关链接", "备注"]
                     col_cfg = {
                         "_id": None, "_is_budget": None,
                         "支出内容": st.column_config.TextColumn(disabled=True),
                         "预算总价": st.column_config.NumberColumn(min_value=0.0, step=10.0, format="¥ %.2f"),
                         "实付总价": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
                         "供应商": st.column_config.TextColumn(),
+                        "相关链接": st.column_config.LinkColumn("相关链接", display_text="🔗 URL"),
                         "备注": st.column_config.TextColumn(),
                     }
 
@@ -170,6 +173,7 @@ def show_cost_page(db):
                         updates = {}
                         if "单位" in diff: updates["unit"] = diff["单位"]
                         if "供应商" in diff: updates["supplier"] = diff["供应商"]
+                        if "相关链接" in diff: updates["url"] = diff["相关链接"]
                         if "备注" in diff: updates["remarks"] = diff["备注"]
                         
                         updates["is_budget"] = is_budget
