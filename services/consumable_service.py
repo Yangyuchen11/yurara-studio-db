@@ -69,37 +69,30 @@ class ConsumableService:
         # === 分支 A: 销售模式 ===
         if mode == "sale" and sale_info:
             if sale_info['amount'] > 0:
-                # 记录流水
                 note_detail = f"来源: {sale_info['source']}" if sale_info['source'] else ""
                 if sale_info['remark']: note_detail += f" | {sale_info['remark']}"
                 
+                # ✨ 获取前端指定的账户
+                target_cash = None
+                if sale_info.get('account_id'):
+                    target_cash = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == sale_info['account_id']).first()
+                
+                if not target_cash:
+                    target_cash = self._get_cash_asset(sale_info['currency'])
+
+                target_cash.amount += sale_info['amount']
+                
+                # ✨ 生成流水并强绑定账户
                 fin_rec = FinanceRecord(
                     date=date_obj,
                     amount=sale_info['amount'],
-                    currency=sale_info['currency'],
+                    currency=target_cash.currency, # 强制使用该账户的币种
                     category=FinanceCategory.SALES_INCOME,
-                    description=f"{sale_info['content']} [{note_detail}]"
+                    description=f"{sale_info['content']} [{note_detail}]",
+                    account_id=target_cash.id
                 )
                 self.db.add(fin_rec)
                 self.db.flush()
-
-                # 增加流动资金
-                target_cash = self._get_cash_asset(sale_info['currency'])
-                if not target_cash:
-                    target_cash = CompanyBalanceItem(
-                        category=BalanceCategory.ASSET,
-                        name=f"{AssetPrefix.CASH}({sale_info['currency']})",
-                        amount=0.0,
-                        currency=sale_info['currency'],
-                        asset_type="现金"
-                    )
-                    self.db.add(target_cash)
-                target_cash.amount += sale_info['amount']
-
-                link_msg = f" | 💰 已入账 {sale_info['amount']}{sale_info['currency']} 至流动资金"
-                log_note = f"对外销售: {sale_info['content']} | 金额:{sale_info['amount']}{sale_info['currency']}"
-            else:
-                log_note = f"对外销售 (无金额): {sale_info['content']}"
 
         # === 分支 B: 内部消耗 ===
         elif mode == "cost" and cost_info:

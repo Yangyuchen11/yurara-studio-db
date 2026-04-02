@@ -44,10 +44,10 @@ class InventoryService:
         asset_name = f"{AssetPrefix.STOCK}{prod.name}"
         asset_val = actual_stock * unit_cost
         
-        # ✨ 修复：获取所有可能的记录，准备自动清理重复的老数据
+        # 获取所有可能的记录，准备自动清理重复的老数据
         items = self.db.query(CompanyBalanceItem).filter(
             or_(
-                CompanyBalanceItem.product_id == prod.id,
+                (CompanyBalanceItem.product_id == prod.id) & CompanyBalanceItem.name.like(f"{AssetPrefix.STOCK}%"),
                 CompanyBalanceItem.name == asset_name
             ),
             CompanyBalanceItem.category == BalanceCategory.ASSET
@@ -84,7 +84,7 @@ class InventoryService:
         
         offset_items = self.db.query(CompanyBalanceItem).filter(
             or_(
-                CompanyBalanceItem.product_id == prod.id,
+                (CompanyBalanceItem.product_id == prod.id) & CompanyBalanceItem.name.like(f"{AssetPrefix.WIP_OFFSET}%"),
                 CompanyBalanceItem.name == offset_name
             ),
             CompanyBalanceItem.category == BalanceCategory.ASSET

@@ -437,18 +437,16 @@ class FinanceService:
         
         # 2. 计算新数据并入账新账户
         new_signed_amount = updates['amount_abs'] if updates['type'] == "收入" else -updates['amount_abs']
-        new_currency = updates['currency']
-
-        new_cash_asset = FinanceService.get_cash_asset(db, new_currency)
+        
+        # ✨ 直接使用前端传来的用户指定账户
+        new_acc_id = updates.get('account_id')
+        new_cash_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == new_acc_id).first()
+        
         if new_cash_asset:
+            new_currency = new_cash_asset.currency # 以真实账户的币种为准
             new_cash_asset.amount += new_signed_amount
         else:
-            new_cash_asset = CompanyBalanceItem(
-                category="asset", name=f"流动资金({new_currency})", 
-                amount=new_signed_amount, currency=new_currency
-            )
-            db.add(new_cash_asset)
-            db.flush()
+            raise ValueError("未找到指定的账户！")
             
         # 3. 更新流水自身 (同步外键)
         rec.date = updates['date']
@@ -457,7 +455,7 @@ class FinanceService:
         rec.category = updates['category']
         rec.description = updates['desc']
         rec.url = updates.get('url', '')
-        rec.account_id = new_cash_asset.id # ✨ 绑定新账户ID
+        rec.account_id = new_cash_asset.id # ✨ 强绑定用户指定的账户ID
         
         # 4. 级联更新关联表
         # ✨ 对于关联在已有预算项上的实付更新

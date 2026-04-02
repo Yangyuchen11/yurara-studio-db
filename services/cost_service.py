@@ -2,6 +2,7 @@
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, or_
 from datetime import date
+from services.inventory_service import InventoryService
 from models import Product, CostItem, FinanceRecord, CompanyBalanceItem, InventoryLog, ProductColor
 from constants import PRODUCT_COST_CATEGORIES, AssetPrefix, BalanceCategory, Currency
 
@@ -28,10 +29,10 @@ class CostService:
         prod = self.db.query(Product).filter(Product.id == product_id).first()
         if not prod: return 0.0
         
-        # ✨ 优先使用 product_id 获取，向后兼容老数据的 name 获取
+        # ✨ 修复3：优先使用 product_id 获取，但必须加上前缀限制防止误抓取！
         offset_item = self.db.query(CompanyBalanceItem).filter(
             or_(
-                CompanyBalanceItem.product_id == product_id,
+                (CompanyBalanceItem.product_id == product_id) & CompanyBalanceItem.name.like(f"{AssetPrefix.WIP_OFFSET}%"),
                 CompanyBalanceItem.name == f"{AssetPrefix.WIP_OFFSET}{prod.name}"
             ),
             CompanyBalanceItem.category == BalanceCategory.ASSET
@@ -144,9 +145,7 @@ class CostService:
         if not prod: raise ValueError("产品不存在")
 
         prod.is_production_completed = True
-        self.db.commit()
         
-        from services.inventory_service import InventoryService
         InventoryService(self.db).sync_product_metrics(prod.id)
-        
+        self.db.commit()
         return 0, 0

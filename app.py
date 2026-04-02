@@ -27,6 +27,7 @@ from views.asset_view import show_asset_page
 from views.consumable_view import show_other_asset_page
 from views.sales_view import show_sales_page
 from views.sales_order_view import show_sales_order_page
+from views.report_view import show_report_page
 from streamlit_option_menu import option_menu
 
 # === 1. 页面配置 (必须放在第一行) ===
@@ -218,6 +219,7 @@ with st.sidebar:
         options=[
             "财务流水录入",
             "公司账面概览",
+            "财务报表与分析",
             "商品管理",
             "商品成本核算",
             "销售订单管理",
@@ -229,6 +231,7 @@ with st.sidebar:
         icons=[
             "currency-yen",
             "clipboard-data",
+            "pie-chart",
             "bag-heart",
             "calculator",
             "cart-check",
@@ -438,3 +441,5 @@ elif selected == "固定资产管理":
     show_asset_page(db, exchange_rate)
 elif selected == "其他资产管理":
     show_other_asset_page(db, exchange_rate)
+elif selected == "财务报表与分析":
+    show_report_page(db, exchange_rate)

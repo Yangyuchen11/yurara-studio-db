@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
+from models import CompanyBalanceItem
 from services.consumable_service import ConsumableService
 from cache_manager import sync_all_caches
 from constants import PRODUCT_COST_CATEGORIES
@@ -52,14 +53,27 @@ def render_operation_panel(db, exchange_rate, service):
         
         if "对外销售" in out_mode:
             is_sale_mode = True
-            st.caption("📝 请填写财务信息 (将自动生成【销售收入】流水并存入流动资金)")
+            st.caption("📝 请填写财务信息 (将自动生成【销售收入】流水并存入指定资金账户)")
             
-            r1_c1, r1_c2, r1_c3, r1_c4 = st.columns([2, 1.5, 1, 1])
+            # ✨ 新增：获取所有现金账户供下拉选择
+            cash_items = db.query(CompanyBalanceItem).filter(
+                CompanyBalanceItem.category == "asset",
+                CompanyBalanceItem.asset_type == "现金"
+            ).all()
+            acc_opts = {f"[{a.currency}] {a.name}": a.id for a in cash_items}
+            
+            # ✨ 修改排版：加入收款账户下拉框
+            r1_c1, r1_c2, r1_c3 = st.columns([1.5, 1, 1])
             default_content = f"售出 {selected_name}" if selected_name else ""
             sale_content = r1_c1.text_input("收入内容", value=default_content, placeholder="如：闲鱼出物")
             sale_source = r1_c2.text_input("收入来源", placeholder="如：闲鱼/线下")
             sale_amount = r1_c3.number_input("销售总额", min_value=0.0, step=10.0, format="%.2f")
-            sale_currency = r1_c4.selectbox("币种", ["CNY", "JPY"])
+            
+            r2_c1, r2_c2 = st.columns([1, 2])
+            sale_currency = r2_c1.selectbox("币种", ["CNY", "JPY"])
+            sale_acc_label = r2_c2.selectbox("收款账户 (必选)", list(acc_opts.keys()))
+            sale_account_id = acc_opts.get(sale_acc_label) if sale_acc_label else None
+            
             sale_remark = st.text_input("备注", placeholder="选填，将记录在流水备注中")
             
         else:
@@ -110,7 +124,8 @@ def render_operation_panel(db, exchange_rate, service):
                             "source": sale_source,
                             "amount": sale_amount,
                             "currency": sale_currency,
-                            "remark": sale_remark
+                            "remark": sale_remark,
+                            "account_id": sale_account_id
                         }
                     elif is_link_product and target_product_id:
                         mode = "cost"
