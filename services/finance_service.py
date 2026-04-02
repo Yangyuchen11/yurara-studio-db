@@ -334,28 +334,35 @@ class FinanceService:
 
             detailed_cat = link_config.get('cat') if link_config.get('cat') else base_data['category']
 
-            # ✨ 核心修改：判断是否传来了预算 ID
             target_cost_id = link_config.get('target_cost_id')
             if target_cost_id:
                 target_cost = db.query(CostItem).filter(CostItem.id == target_cost_id).first()
                 if target_cost:
-                    # 1. 累加实付金额
                     target_cost.actual_cost += cost_in_cny
-                    # 2. 附加备注信息
                     if final_remark:
                         target_cost.remarks = f"{target_cost.remarks} | {final_remark}" if target_cost.remarks else final_remark
-                    # 3. 将这条流水的强外键指向这个预算项，以便未来精准回滚
                     new_record.related_item_id = target_cost.id
                     link_msg += f" + 累加实付至预算[{target_cost.item_name}]"
+                    
+                    # ✨ 核心修复：通知系统立刻重算该商品大货资产
+                    db.flush()
+                    from services.inventory_service import InventoryService
+                    InventoryService(db).sync_product_metrics(target_cost.product_id)
             else:
-                # 正常生成新的实付成本条目
-                db.add(CostItem(
+                new_cost = CostItem(
                     product_id=link_config['product_id'], item_name=link_config['name'],
                     actual_cost=cost_in_cny, supplier=base_data['shop'], category=detailed_cat,
                     unit_price=unit_price_cny, quantity=link_config['qty'], 
                     remarks=final_remark, finance_record_id=new_record.id,
                     url=base_data.get('url', '')
-                ))
+                )
+                db.add(new_cost)
+                
+                # ✨ 核心修复：通知系统立刻重算该商品大货资产
+                db.flush()
+                from services.inventory_service import InventoryService
+                InventoryService(db).sync_product_metrics(new_cost.product_id)
+                
                 link_msg += " + 新增商品成本(已折算CNY)"
 
         elif l_type == 'fixed_asset':
@@ -454,17 +461,18 @@ class FinanceService:
         
         # 4. 级联更新关联表
         # ✨ 对于关联在已有预算项上的实付更新
+        product_id_to_sync = None
         if rec.category == "商品成本" and rec.related_item_id:
             target_cost = db.query(CostItem).filter(CostItem.id == rec.related_item_id).first()
             if target_cost:
-                # 逻辑：先减去旧金额，再加上修改后的新金额
                 target_cost.actual_cost = target_cost.actual_cost - abs(rec.amount) + updates['amount_abs']
                 target_cost.remarks = f"{updates['desc']} (已修)"
+                product_id_to_sync = target_cost.product_id 
         else:
-            # 独立的新建实付成本更新
             for cost in db.query(CostItem).filter(CostItem.finance_record_id == record_id).all():
                 cost.actual_cost = updates['amount_abs']
                 cost.remarks = f"{updates['desc']} (已修)"
+                product_id_to_sync = cost.product_id
             
         for fa in db.query(FixedAsset).filter(FixedAsset.finance_record_id == record_id).all():
             if fa.quantity > 0: fa.unit_price = updates['amount_abs'] / fa.quantity
@@ -477,6 +485,11 @@ class FinanceService:
         for bi in db.query(CompanyBalanceItem).filter(CompanyBalanceItem.finance_record_id == record_id).all():
             bi.amount = updates['amount_abs']
             bi.currency = updates['currency']
+
+        db.flush()
+        if product_id_to_sync:
+            from services.inventory_service import InventoryService
+            InventoryService(db).sync_product_metrics(product_id_to_sync)
 
         db.commit()
         return True
@@ -624,22 +637,32 @@ class FinanceService:
                 cash_asset.amount -= rec.amount
                 msg_list.append(f"资金已从【{cash_asset.name}】回滚")
             
-            # ✨ 如果这笔流水是针对某个预算的打款，则撤销实付累加
+            product_id_to_sync = None # ✨ 初始化
+
             if rec.category == "商品成本" and rec.related_item_id:
                 target_cost = db.query(CostItem).filter(CostItem.id == rec.related_item_id).first()
                 if target_cost:
                     target_cost.actual_cost -= abs(rec.amount)
                     if target_cost.actual_cost < 0: target_cost.actual_cost = 0
+                    product_id_to_sync = target_cost.product_id # ✨ 捕捉
                     msg_list.append(f"已从预算项【{target_cost.item_name}】扣除实付回滚")
             else:
-                # 若不是依附于预算，则直接级联删除关联产生的数据 
+                # 记录要被删除的成本项对应的 product_id
+                cost = db.query(CostItem).filter(CostItem.finance_record_id == record_id).first()
+                if cost: product_id_to_sync = cost.product_id
                 db.query(CostItem).filter(CostItem.finance_record_id == record_id).delete()
             
             db.query(FixedAsset).filter(FixedAsset.finance_record_id == record_id).delete()
             db.query(ConsumableItem).filter(ConsumableItem.finance_record_id == record_id).delete()
             db.query(CompanyBalanceItem).filter(CompanyBalanceItem.finance_record_id == record_id).delete()
         
-        # 最后删除本条流水记录本身
         db.delete(rec)
+        db.flush()
+        
+        # ✨ 执行重算
+        if 'product_id_to_sync' in locals() and product_id_to_sync:
+            from services.inventory_service import InventoryService
+            InventoryService(db).sync_product_metrics(product_id_to_sync)
+
         db.commit()
         return " | ".join(msg_list)

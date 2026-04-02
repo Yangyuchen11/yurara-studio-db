@@ -12,7 +12,6 @@ class InventoryService:
 
     # ================= 1. 核心底座：大货资产与单价动态同步 =================
     def sync_product_metrics(self, product_id):
-        """核心计算引擎：根据最新状态动态推导单价、大货资产以及在制资产(WIP)抵扣"""
         prod = self.db.query(Product).filter(Product.id == product_id).first()
         if not prod: return
         
@@ -45,28 +44,34 @@ class InventoryService:
         asset_name = f"{AssetPrefix.STOCK}{prod.name}"
         asset_val = actual_stock * unit_cost
         
-        # ✨ 优先使用 product_id 进行匹配，兼容老数据的 name 匹配
-        item = self.db.query(CompanyBalanceItem).filter(
+        # ✨ 修复：获取所有可能的记录，准备自动清理重复的老数据
+        items = self.db.query(CompanyBalanceItem).filter(
             or_(
                 CompanyBalanceItem.product_id == prod.id,
                 CompanyBalanceItem.name == asset_name
             ),
             CompanyBalanceItem.category == BalanceCategory.ASSET
-        ).first()
+        ).all()
         
         if asset_val > 0.01:
-            if item:
-                item.amount = asset_val
-                item.name = asset_name # 顺便修正可能改过名的商品名字
-                item.product_id = prod.id # 老数据自动打上ID烙印
+            if items:
+                main_item = items[0]
+                main_item.amount = asset_val
+                main_item.name = asset_name 
+                main_item.product_id = prod.id 
+                
+                # ✨ 如果发现了多余的老旧幽灵数据，全部清零删除
+                for orphan in items[1:]:
+                    self.db.delete(orphan)
             else:
                 self.db.add(CompanyBalanceItem(
                     name=asset_name, amount=asset_val, category=BalanceCategory.ASSET, 
-                    currency=Currency.CNY, asset_type="资产", product_id=prod.id # ✨ 绑定外键
+                    currency=Currency.CNY, asset_type="资产", product_id=prod.id
                 ))
         else:
-            if item and not item.finance_record_id:
-                self.db.delete(item)
+            for item in items:
+                if not item.finance_record_id:
+                    self.db.delete(item)
                 
         # 5. 实时动态核算在制资产冲销 (WIP_OFFSET)
         if prod.is_production_completed:
@@ -77,28 +82,33 @@ class InventoryService:
             
         offset_name = f"{AssetPrefix.WIP_OFFSET}{prod.name}"
         
-        # ✨ 优先使用 product_id 进行匹配，兼容老数据的 name 匹配
-        offset_item = self.db.query(CompanyBalanceItem).filter(
+        offset_items = self.db.query(CompanyBalanceItem).filter(
             or_(
                 CompanyBalanceItem.product_id == prod.id,
                 CompanyBalanceItem.name == offset_name
             ),
             CompanyBalanceItem.category == BalanceCategory.ASSET
-        ).first()
+        ).all()
         
         if abs(wip_offset_val) > 0.01:
-            if offset_item:
-                offset_item.amount = wip_offset_val
-                offset_item.name = offset_name # 顺便修正名字
-                offset_item.product_id = prod.id # 自动修复老数据
+            if offset_items:
+                main_offset = offset_items[0]
+                main_offset.amount = wip_offset_val
+                main_offset.name = offset_name 
+                main_offset.product_id = prod.id 
+                
+                # ✨ 清理重复的在制资产数据
+                for orphan in offset_items[1:]:
+                    self.db.delete(orphan)
             else:
                 self.db.add(CompanyBalanceItem(
                     name=offset_name, amount=wip_offset_val, category=BalanceCategory.ASSET, 
-                    currency=Currency.CNY, asset_type="资产", product_id=prod.id # ✨ 绑定外键
+                    currency=Currency.CNY, asset_type="资产", product_id=prod.id
                 ))
         else:
-            if offset_item and not offset_item.finance_record_id:
-                self.db.delete(offset_item)
+            for offset_item in offset_items:
+                if not offset_item.finance_record_id:
+                    self.db.delete(offset_item)
                 
         self.db.flush()
 

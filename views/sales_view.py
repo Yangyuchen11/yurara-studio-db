@@ -1,3 +1,4 @@
+# views/sales_view.py
 import streamlit as st
 import pandas as pd
 import math
@@ -17,7 +18,8 @@ def get_cached_sales_df(test_mode_flag):
     db_cache = st.session_state.get_dynamic_session()
     try:
         raw_logs = SalesService.get_raw_sales_logs(db_cache)
-        df = SalesService.process_sales_data(raw_logs)
+        # ✨ 修复Bug的地方：这里必须把 db_cache 传进去！
+        df = SalesService.process_sales_data(db_cache, raw_logs)
         return df
     finally:
         db_cache.close()
