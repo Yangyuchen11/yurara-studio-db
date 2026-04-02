@@ -1,3 +1,4 @@
+# services/inventory_service.py
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from datetime import date
@@ -44,45 +45,56 @@ class InventoryService:
         asset_name = f"{AssetPrefix.STOCK}{prod.name}"
         asset_val = actual_stock * unit_cost
         
+        # ✨ 优先使用 product_id 进行匹配，兼容老数据的 name 匹配
         item = self.db.query(CompanyBalanceItem).filter(
-            CompanyBalanceItem.name == asset_name, 
+            or_(
+                CompanyBalanceItem.product_id == prod.id,
+                CompanyBalanceItem.name == asset_name
+            ),
             CompanyBalanceItem.category == BalanceCategory.ASSET
         ).first()
         
         if asset_val > 0.01:
             if item:
                 item.amount = asset_val
+                item.name = asset_name # 顺便修正可能改过名的商品名字
+                item.product_id = prod.id # 老数据自动打上ID烙印
             else:
                 self.db.add(CompanyBalanceItem(
                     name=asset_name, amount=asset_val, category=BalanceCategory.ASSET, 
-                    currency=Currency.CNY, asset_type="资产"
+                    currency=Currency.CNY, asset_type="资产", product_id=prod.id # ✨ 绑定外键
                 ))
         else:
             if item and not item.finance_record_id:
                 self.db.delete(item)
                 
-        # 5. ✨ 实时动态核算在制资产冲销 (WIP_OFFSET)
+        # 5. 实时动态核算在制资产冲销 (WIP_OFFSET)
         if prod.is_production_completed:
-            # 如果已经生产完成，100% 抵扣成本（清零在制资产）
             wip_offset_val = -total_cost
         else:
-            # 尚未生产完成时，根据已验收完成入库的数量（按比例）抵扣在制资产
             produced_qty = sum(s.get("produced", 0) for s in stats.values())
             wip_offset_val = -(produced_qty * unit_cost)
             
         offset_name = f"{AssetPrefix.WIP_OFFSET}{prod.name}"
+        
+        # ✨ 优先使用 product_id 进行匹配，兼容老数据的 name 匹配
         offset_item = self.db.query(CompanyBalanceItem).filter(
-            CompanyBalanceItem.name == offset_name,
+            or_(
+                CompanyBalanceItem.product_id == prod.id,
+                CompanyBalanceItem.name == offset_name
+            ),
             CompanyBalanceItem.category == BalanceCategory.ASSET
         ).first()
         
         if abs(wip_offset_val) > 0.01:
             if offset_item:
                 offset_item.amount = wip_offset_val
+                offset_item.name = offset_name # 顺便修正名字
+                offset_item.product_id = prod.id # 自动修复老数据
             else:
                 self.db.add(CompanyBalanceItem(
                     name=offset_name, amount=wip_offset_val, category=BalanceCategory.ASSET, 
-                    currency=Currency.CNY, asset_type="资产"
+                    currency=Currency.CNY, asset_type="资产", product_id=prod.id # ✨ 绑定外键
                 ))
         else:
             if offset_item and not offset_item.finance_record_id:
@@ -254,19 +266,23 @@ class InventoryService:
             msg = "库存移动成功（生成一进一出两笔记录）"
 
         elif move_type == StockLogReason.OUT_STOCK:
+            target_cost_id = None
             if out_type == "消耗" and target_prod_obj and is_set:
                 new_cost = CostItem(
                     product_id=product_id, item_name=cons_content, actual_cost=0, supplier="", category=cons_cat,      
                     unit_price=0, quantity=0, unit="", remarks=f"款式:{variant} 数量:{quantity} | {remark}"
                 )
                 self.db.add(new_cost)
+                self.db.flush() 
+                target_cost_id = new_cost.id
 
             log_note = f"消耗: {cons_content} | {remark}" if out_type == "消耗" else f"出库: {remark}"
             
             self.db.add(InventoryLog(
                 product_name=product_name, variant=variant, change_amount=actual_change_amt,
                 reason=StockLogReason.OUT_STOCK, note=log_note, is_other_out=True, date=date_obj,
-                warehouse_id=warehouse_id, part_name=None if is_set else part_name
+                warehouse_id=warehouse_id, part_name=None if is_set else part_name,
+                cost_item_id=target_cost_id 
             ))
             msg = "出库成功"
 
@@ -297,7 +313,6 @@ class InventoryService:
             msg = "未知操作类型"
 
         self.db.flush()
-        # ✨ 底层拦截一切物理操作，进行统一重算
         self.sync_product_metrics(product_id)
         return msg
 
@@ -326,23 +341,32 @@ class InventoryService:
         log_to_del = self.db.query(InventoryLog).filter(InventoryLog.id == log_id).first()
         if not log_to_del: raise ValueError("记录不存在")
 
+        if getattr(log_to_del, 'order_id', None):
+            raise ValueError("拒绝操作：此库存变动由【销售订单】自动生成。为了保证数据一致性，请前往【销售订单管理】模块撤销发货或删除该订单。")
+
         msg_list = []
         target_prod = self.db.query(Product).filter(Product.name == log_to_del.product_name).first()
         is_set = (log_to_del.part_name is None)
 
         is_consumable_out = (log_to_del.reason == StockLogReason.OUT_STOCK and "消耗" in (log_to_del.note or ""))
         if is_consumable_out and target_prod and is_set:
-            try:
-                content_part = log_to_del.note.split("|")[0].replace("消耗:", "").strip()
-                target_cost = self.db.query(CostItem).filter(
-                    CostItem.product_id == target_prod.id,
-                    CostItem.actual_cost == 0,
-                    CostItem.item_name.like(f"%{content_part}%")
-                ).first()
+            if getattr(log_to_del, 'cost_item_id', None):
+                target_cost = self.db.query(CostItem).filter(CostItem.id == log_to_del.cost_item_id).first()
                 if target_cost: 
                     self.db.delete(target_cost)
-                    msg_list.append("关联消耗成本记录已删除")
-            except: pass
+                    msg_list.append("关联消耗成本记录已精准删除")
+            else:
+                try:
+                    content_part = log_to_del.note.split("|")[0].replace("消耗:", "").strip()
+                    target_cost = self.db.query(CostItem).filter(
+                        CostItem.product_id == target_prod.id,
+                        CostItem.actual_cost == 0,
+                        CostItem.item_name.like(f"%{content_part}%")
+                    ).first()
+                    if target_cost: 
+                        self.db.delete(target_cost)
+                        msg_list.append("关联消耗成本记录已删除(按向后兼容模式)")
+                except: pass
 
         if log_to_del.reason == StockLogReason.OUT_STOCK and log_to_del.is_sold:
             target_fin = self.db.query(FinanceRecord).filter(
@@ -356,17 +380,17 @@ class InventoryService:
                 cash_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == cash_name).first()
                 if cash_item: cash_item.amount -= target_fin.amount
                 self.db.delete(target_fin)
-                msg_list.append("销售流水已回滚")
+                msg_list.append("关联的历史销售流水已回滚(向后兼容)")
                     
         elif log_to_del.reason == StockLogReason.TRANSFER:
-            msg_list.append("单条移动记录已删除（移入/移出为两条记录）")
+            msg_list.append("单条移动记录已删除（注：移入/移出分别为独立的记录）")
 
         self.db.delete(log_to_del)
         self.db.flush()
 
         if target_prod:
             self.sync_product_metrics(target_prod.id)
-            msg_list.append("大货资产及在制资产重算完成")
+            msg_list.append("资产重算完成")
 
         self.db.commit()
         return " | ".join(msg_list) if msg_list else "日志已删除"

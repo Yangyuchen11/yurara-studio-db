@@ -1,7 +1,7 @@
 # services/sales_service.py
 import pandas as pd
 from sqlalchemy import or_
-from models import InventoryLog
+from models import InventoryLog, SalesOrder, SalesOrderItem
 from constants import Currency, StockLogReason
 
 class SalesService:
@@ -23,78 +23,72 @@ class SalesService:
         ).order_by(InventoryLog.id.asc()).all()
 
     @staticmethod
-    def process_sales_data(all_logs):
+    def process_sales_data(db, all_logs): # ✨ 新增 db 参数
         """
         核心逻辑：将数据库日志对象转换为标准化的销售明细 DataFrame
-        处理逻辑包括：
-        1. 销售：负数库存转正数销量
-        2. 退货：正数库存转负数销量
-        3. 撤销：根据历史记录回溯价格和平台，计算冲销金额
         """
         if not all_logs:
             return pd.DataFrame()
 
         raw_data_list = []
-        # 价格记忆器 (Key: Product_Variant, Value: InfoDict)
-        last_sold_info = {}
 
         for log in all_logs:
-            p_key = f"{log.product_name}_{log.variant}"
-            
             # 提取基础信息
             item = {
                 "id": log.id,
                 "date": log.date,
                 "product": log.product_name,
                 "variant": log.variant,
-                "platform": log.platform or "其他/未知", # 默认填充
-                "currency": log.currency or Currency.CNY,
+                "platform": log.platform, 
+                "currency": log.currency,
                 "qty": 0,
                 "amount": 0.0,
                 "type": "unknown"
             }
+            
+            # ✨ 核心重构1：利用外键 order_id 精准溯源缺失的平台/币种信息
+            if (not item["platform"] or not item["currency"]) and getattr(log, 'order_id', None):
+                order = db.query(SalesOrder).filter(SalesOrder.id == log.order_id).first()
+                if order:
+                    item["platform"] = item["platform"] or order.platform
+                    item["currency"] = item["currency"] or order.currency
+                    
+            # Fallback 兜底值
+            item["platform"] = item["platform"] or "其他/未知"
+            item["currency"] = item["currency"] or Currency.CNY
 
             # --- A. 销售 (Sale) ---
             if log.is_sold and log.change_amount < 0:
-                item["qty"] = -log.change_amount # 负转正
+                item["qty"] = -log.change_amount 
                 item["amount"] = log.sale_amount or 0
                 item["type"] = "sale"
-                
-                # 记忆该款式的成交信息，供撤销时回溯
-                last_sold_info[p_key] = {
-                    "unit_price": (item["amount"] / item["qty"]) if item["qty"] else 0,
-                    "currency": item["currency"],
-                    "platform": item["platform"]
-                }
 
             # --- B. 退货 (Return) ---
             elif log.is_sold and log.change_amount > 0:
-                item["qty"] = -log.change_amount # 正转负
-                item["amount"] = log.sale_amount or 0 # 也是负数
+                item["qty"] = -log.change_amount 
+                item["amount"] = log.sale_amount or 0 
                 item["type"] = "return"
 
             # --- C. 撤销 (Undo) ---
             elif log.reason == "发货撤销":
-                # 尝试回溯平台信息 (如果日志里没记)
-                if item["platform"] == "其他/未知":
-                    mem = last_sold_info.get(p_key)
-                    if mem: item["platform"] = mem["platform"]
-                
                 deduct_qty = log.change_amount
-                item["qty"] = -deduct_qty # 变成负数，抵消销量
+                item["qty"] = -deduct_qty 
                 item["type"] = "undo"
                 
-                # 计算回滚金额
                 if log.sale_amount and log.sale_amount != 0:
                     item["amount"] = -abs(log.sale_amount)
-                    item["currency"] = log.currency
                 else:
-                    # 智能估算
-                    mem = last_sold_info.get(p_key)
-                    if mem:
-                        item["amount"] = -(mem["unit_price"] * deduct_qty)
-                        item["currency"] = mem["currency"]
+                    # ✨ 核心重构2：彻底抛弃按字符串拼接的猜测逻辑，改用外键获取精准成交价
+                    if getattr(log, 'order_id', None):
+                        order_item = db.query(SalesOrderItem).filter(
+                            SalesOrderItem.order_id == log.order_id,
+                            SalesOrderItem.product_name == log.product_name,
+                            SalesOrderItem.variant == log.variant
+                        ).first()
+                        if order_item:
+                            item["amount"] = -(order_item.unit_price * deduct_qty)
                     else:
+                        # 面对上古时期的历史老数据(连 order_id 都没有的)，统一算作 0，绝不乱猜
                         item["amount"] = 0
 
             raw_data_list.append(item)
@@ -109,8 +103,6 @@ class SalesService:
         if df.empty:
             return pd.DataFrame()
             
-        # 1. 按产品分组，分别计算 CNY 和 JPY 的销售总额
-        # 💡 这里加上了 include_groups=False 消除 FutureWarning
         df_prod_summary = df.groupby('product').apply(
             lambda x: pd.Series({
                 'CNY总额': x[x['currency'] == 'CNY']['amount'].sum(),
@@ -119,9 +111,7 @@ class SalesService:
             include_groups=False  
         ).reset_index()
         
-        # 2. 计算综合折合的 CNY 总额
         df_prod_summary['折合CNY总额'] = df_prod_summary['CNY总额'] + (df_prod_summary['JPY总额'] * exchange_rate)
-        
-        # 3. 按折合总额降序排列，并只保留需要的列
         df_prod_summary = df_prod_summary.sort_values(by='折合CNY总额', ascending=False)
+        
         return df_prod_summary[['product', '折合CNY总额', 'CNY总额', 'JPY总额']]

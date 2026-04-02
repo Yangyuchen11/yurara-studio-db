@@ -8,7 +8,6 @@ from models import (
     FixedAsset, ConsumableLog, CompanyBalanceItem
 )
 from constants import AssetPrefix, BalanceCategory, Currency, FinanceCategory
-from constants import FinanceCategory
 
 class FinanceService:
     """
@@ -22,7 +21,7 @@ class FinanceService:
         """获取所有可移动的资产项目 (CNY 和 JPY)"""
         return db.query(CompanyBalanceItem).filter(
             CompanyBalanceItem.category == BalanceCategory.ASSET,
-            CompanyBalanceItem.asset_type == "现金" # ✨ 只查现金
+            CompanyBalanceItem.asset_type == "现金" 
         ).order_by(CompanyBalanceItem.currency, CompanyBalanceItem.id.asc()).all()
 
     @staticmethod
@@ -76,7 +75,7 @@ class FinanceService:
                     "金额": abs(r.amount),
                     "分类": r.category, 
                     "备注": r.description or "",
-                    "网址": r.url or "", # 👈 新增这一行
+                    "网址": r.url or "", 
                     "当前CNY余额": running_cny, 
                     "当前JPY余额": running_jpy
                 })
@@ -106,7 +105,6 @@ class FinanceService:
         from_is_cash = from_asset.name.startswith(AssetPrefix.CASH)
         to_is_cash = to_asset.name.startswith(AssetPrefix.CASH)
         
-        # 1. 产生一条汇总流水。涉及现金进出影响流动资金报表
         record_amount = 0
         if from_is_cash and not to_is_cash:
             record_amount = -amount
@@ -115,20 +113,21 @@ class FinanceService:
             
         desc_str = f"资金移动: [{from_asset.name}] -> [{to_asset.name}] | 金额: {amount} | 备注: {desc}"
         
+        # ✨ 绑定强外键
         rec = FinanceRecord(
             date=date_val, 
             amount=record_amount, 
-            currency=from_asset.currency,  # ✨ 动态使用该资产的币种
+            currency=from_asset.currency,  
             category="资金移动", 
-            description=desc_str
+            description=desc_str,
+            account_id=from_asset.id,
+            related_item_id=to_asset.id
         )
         db.add(rec)
         
-        # 2. 更新两端的资产余额
         from_asset.amount -= amount
         to_asset.amount += amount
         
-        # 清理扣空的手动资产
         if from_asset.amount <= 0.01 and not from_is_cash:
             db.delete(from_asset)
             
@@ -146,42 +145,61 @@ class FinanceService:
         asset_out = FinanceService.get_cash_asset_by_id(db, source_acc_id) if source_acc_id else FinanceService.get_cash_asset(db, source_curr)
         asset_in = FinanceService.get_cash_asset_by_id(db, target_acc_id) if target_acc_id else FinanceService.get_cash_asset(db, target_curr)
         
+        # 确保入账侧账户一定存在，获取它的 ID
+        if not asset_in:
+            in_name = f"流动资金({target_curr})"
+            asset_in = CompanyBalanceItem(category=BalanceCategory.ASSET, name=in_name, amount=0, currency=target_curr, asset_type="现金")
+            db.add(asset_in)
+            db.flush()
+            
         out_name = asset_out.name if asset_out else f"流动资金({source_curr})"
-        in_name = asset_in.name if asset_in else f"流动资金({target_curr})"
+        in_name = asset_in.name
 
+        # ✨ 绑定强外键
         rec_out = FinanceRecord(
             date=date_val, amount=-amount_out, currency=source_curr,
-            category=FinanceCategory.EXCHANGE, description=f"兑换支出 (-> {target_curr}) [账户: {out_name}] | {desc}"
+            category=FinanceCategory.EXCHANGE, description=f"兑换支出 (-> {target_curr}) [账户: {out_name}] | {desc}",
+            account_id=asset_out.id if asset_out else None
         )
         db.add(rec_out)
+        
         rec_in = FinanceRecord(
             date=date_val, amount=amount_in, currency=target_curr,
-            category=FinanceCategory.EXCHANGE, description=f"兑换入账 (<- {source_curr}) [账户: {in_name}] | {desc}"
+            category=FinanceCategory.EXCHANGE, description=f"兑换入账 (<- {source_curr}) [账户: {in_name}] | {desc}",
+            account_id=asset_in.id
         )
         db.add(rec_in)
         
         if asset_out: asset_out.amount -= amount_out
-        if asset_in: 
-            asset_in.amount += amount_in
-        else:
-            db.add(CompanyBalanceItem(category=BalanceCategory.ASSET, name=in_name, amount=amount_in, currency=target_curr, asset_type="现金"))
+        asset_in.amount += amount_in
         db.commit()
 
     @staticmethod
     def create_debt(db, date_val, curr, name, amount, source, remark, is_to_cash, related_content, target_acc_id=None):
         if is_to_cash:
             cash_asset = FinanceService.get_cash_asset_by_id(db, target_acc_id) if target_acc_id else FinanceService.get_cash_asset(db, curr)
-            acc_name = cash_asset.name if cash_asset else f"流动资金({curr})"
-            
+            if not cash_asset:
+                acc_name = f"流动资金({curr})"
+                cash_asset = CompanyBalanceItem(category=BalanceCategory.ASSET, name=acc_name, amount=0, currency=curr, asset_type="现金")
+                db.add(cash_asset)
+                db.flush()
+                
             finance_rec = FinanceRecord(
                 date=date_val, amount=amount, currency=curr, category="借入资金",
-                description=f"借入资金: {name} (债权人: {source}) [账户: {acc_name}] | {remark}"
+                description=f"借入资金: {name} (债权人: {source}) [账户: {cash_asset.name}] | {remark}",
+                account_id=cash_asset.id # ✨ 绑定强外键
             )
             db.add(finance_rec)
-            if cash_asset: 
-                cash_asset.amount += amount
-            else:
-                db.add(CompanyBalanceItem(category=BalanceCategory.ASSET, name=acc_name, amount=amount, currency=curr, asset_type="现金"))
+            db.flush()
+            
+            cash_asset.amount += amount
+            
+            # 生成负债并绑定
+            debt = CompanyBalanceItem(name=name, amount=amount, category=BalanceCategory.LIABILITY, currency=curr, finance_record_id=finance_rec.id)
+            db.add(debt)
+            db.flush()
+            finance_rec.related_item_id = debt.id # ✨ 将生成的负债ID反向绑定给流水
+
         else:
             finance_rec = FinanceRecord(
                 date=date_val, amount=0, currency=curr, category="新增挂账资产",
@@ -189,10 +207,17 @@ class FinanceService:
             )
             db.add(finance_rec)
             db.flush()
-            db.add(CompanyBalanceItem(name=related_content, amount=amount, category=BalanceCategory.ASSET, currency=curr, finance_record_id=finance_rec.id))
             
-        db.flush()
-        db.add(CompanyBalanceItem(name=name, amount=amount, category=BalanceCategory.LIABILITY, currency=curr, finance_record_id=finance_rec.id))
+            new_asset = CompanyBalanceItem(name=related_content, amount=amount, category=BalanceCategory.ASSET, currency=curr, finance_record_id=finance_rec.id)
+            db.add(new_asset)
+            db.flush()
+            
+            debt = CompanyBalanceItem(name=name, amount=amount, category=BalanceCategory.LIABILITY, currency=curr, finance_record_id=finance_rec.id)
+            db.add(debt)
+            db.flush()
+            
+            finance_rec.related_item_id = debt.id # ✨ 记录负债ID
+
         db.commit()
 
     @staticmethod
@@ -205,7 +230,9 @@ class FinanceService:
 
         finance_rec = FinanceRecord(
             date=date_val, amount=-amount, currency=target_liab.currency, category="债务偿还",
-            description=f"偿还债务: [{target_liab.name}] [账户: {acc_name}] | {remark}"
+            description=f"偿还债务: [{target_liab.name}] [账户: {acc_name}] | {remark}",
+            account_id=cash_asset.id if cash_asset else None,
+            related_item_id=target_liab.id # ✨ 强绑定要偿还的债务ID
         )
         db.add(finance_rec)
 
@@ -217,24 +244,20 @@ class FinanceService:
 
     @staticmethod
     def offset_debt(db, date_val, debt_id, asset_id, amount, remark):
-        """资产抵债/核销 (单线流水)"""
         target_liab = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == debt_id).first()
         target_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == asset_id).first()
         if not target_liab or not target_asset: raise ValueError("债务或资产不存在")
 
-        # 产生一条 0 金额的流水存根，备注记录资产和债务的名称及金额
-        # 💡 微调：文案可以统一改为带有 [账户/资产: xxx] 的风格，保持流水列表视觉一致
         finance_rec = FinanceRecord(
             date=date_val, amount=0, currency=target_liab.currency, category="资产抵消",
-            description=f"抵消债务[{target_liab.name}] [使用资产/账户: {target_asset.name}] | 核销金额: {amount} | {remark}"
+            description=f"抵消债务[{target_liab.name}] [使用资产/账户: {target_asset.name}] | 核销金额: {amount} | {remark}",
+            related_item_id=target_liab.id # ✨ 强绑定被抵消的债务ID
         )
         db.add(finance_rec)
 
-        # 减扣资产
         target_asset.amount -= amount
         if target_asset.amount <= 0.01: db.delete(target_asset)
         
-        # 减扣负债
         target_liab.amount -= amount
         if target_liab.amount <= 0.01: db.delete(target_liab)
             
@@ -247,41 +270,37 @@ class FinanceService:
         
         acc_id = base_data.get('account_id')
         target_cash = FinanceService.get_cash_asset_by_id(db, acc_id) if acc_id else FinanceService.get_cash_asset(db, base_data['currency'])
-        acc_name = target_cash.name if target_cash else f"流动资金({base_data['currency']})"
+        
+        # 确保收款现金账户提前生成并拿到 ID
+        if not target_cash:
+            target_cash = CompanyBalanceItem(category=BalanceCategory.ASSET, name=f"流动资金({base_data['currency']})", amount=0.0, currency=base_data['currency'], asset_type="现金")
+            db.add(target_cash)
+            db.flush()
+            
+        acc_name = target_cash.name
         
         note_detail = f"{base_data['shop']}" if base_data['shop'] else ""
         if link_config.get('qty', 1) > 1: note_detail += f" (x{link_config['qty']})"
         if base_data['desc']: note_detail += f" | {base_data['desc']}"
         note_detail += f" [账户: {acc_name}]"
         
+        # ✨ 生成流水时强绑定 account_id
         new_record = FinanceRecord(
             date=base_data['date'], amount=signed_amount, currency=base_data['currency'],
             category=base_data['category'], description=f"{link_config.get('name', '')} [{note_detail}]",
-            url=base_data.get('url', '')
+            url=base_data.get('url', ''),
+            account_id=target_cash.id
         )
         db.add(new_record)
         db.flush()
 
-        if not target_cash:
-            target_cash = CompanyBalanceItem(category=BalanceCategory.ASSET, name=acc_name, amount=0.0, currency=base_data['currency'], asset_type="现金")
-            db.add(target_cash)
-        target_cash.amount += signed_amount
-
         # 3. 更新流动资金
-        target_cash = FinanceService.get_cash_asset(db, base_data['currency'])
-        if not target_cash:
-            target_cash = CompanyBalanceItem(
-                category=BalanceCategory.ASSET, name=f"{AssetPrefix.CASH}({base_data['currency']})", 
-                amount=0.0, currency=base_data['currency'], asset_type="现金"
-            )
-            db.add(target_cash)
         target_cash.amount += signed_amount
 
         # 4. 处理联动逻辑
         l_type = link_config.get('link_type')
         link_msg = "资金变动已记录"
         
-        # 4.1 资本/手动资产 (CompanyBalanceItem)
         if l_type in ['equity', 'manual_asset']:
             balance_delta = signed_amount
             if link_config.get('is_new'):
@@ -289,7 +308,7 @@ class FinanceService:
                     name=link_config['name'], amount=balance_delta, 
                     category=BalanceCategory.EQUITY if l_type == 'equity' else BalanceCategory.ASSET,
                     currency=base_data['currency'], finance_record_id=new_record.id,
-                    asset_type=link_config.get('asset_type', '资产') # 接收前端传来的属性
+                    asset_type=link_config.get('asset_type', '资产') 
                 )
                 db.add(new_bi)
                 link_msg += f" + 新{l_type} ({balance_delta:+.2f})"
@@ -303,9 +322,7 @@ class FinanceService:
                     else:
                         link_msg += f" + 更新{l_type} ({balance_delta:+.2f})"
 
-        # 4.2 商品成本 (CostItem)
         elif l_type == 'cost':
-            # JPY折算逻辑
             cost_in_cny = base_data['amount']
             unit_price_cny = link_config['unit_price']
             final_remark = base_data['desc']
@@ -317,16 +334,30 @@ class FinanceService:
 
             detailed_cat = link_config.get('cat') if link_config.get('cat') else base_data['category']
 
-            db.add(CostItem(
-                product_id=link_config['product_id'], item_name=link_config['name'],
-                actual_cost=cost_in_cny, supplier=base_data['shop'], category=detailed_cat, # 👈 使用具体分类
-                unit_price=unit_price_cny, quantity=link_config['qty'], 
-                remarks=final_remark, finance_record_id=new_record.id,
-                url=base_data.get('url', '')
-            ))
-            link_msg += " + 商品成本(已折算CNY)"
+            # ✨ 核心修改：判断是否传来了预算 ID
+            target_cost_id = link_config.get('target_cost_id')
+            if target_cost_id:
+                target_cost = db.query(CostItem).filter(CostItem.id == target_cost_id).first()
+                if target_cost:
+                    # 1. 累加实付金额
+                    target_cost.actual_cost += cost_in_cny
+                    # 2. 附加备注信息
+                    if final_remark:
+                        target_cost.remarks = f"{target_cost.remarks} | {final_remark}" if target_cost.remarks else final_remark
+                    # 3. 将这条流水的强外键指向这个预算项，以便未来精准回滚
+                    new_record.related_item_id = target_cost.id
+                    link_msg += f" + 累加实付至预算[{target_cost.item_name}]"
+            else:
+                # 正常生成新的实付成本条目
+                db.add(CostItem(
+                    product_id=link_config['product_id'], item_name=link_config['name'],
+                    actual_cost=cost_in_cny, supplier=base_data['shop'], category=detailed_cat,
+                    unit_price=unit_price_cny, quantity=link_config['qty'], 
+                    remarks=final_remark, finance_record_id=new_record.id,
+                    url=base_data.get('url', '')
+                ))
+                link_msg += " + 新增商品成本(已折算CNY)"
 
-        # 4.3 固定资产 (FixedAsset)
         elif l_type == 'fixed_asset':
             db.add(FixedAsset(
                 name=link_config['name'], unit_price=link_config['unit_price'], 
@@ -337,16 +368,13 @@ class FinanceService:
             ))
             link_msg += " + 固定资产"
 
-        # 4.4 其他资产/耗材 (ConsumableItem)
         elif l_type == 'consumable':
-            # 计算CNY价值用于日志
             rate = exchange_rate if base_data['currency'] == "JPY" else 1.0
             val_cny = base_data['amount'] * rate
             
             target_item = db.query(ConsumableItem).filter(ConsumableItem.name == link_config['name']).first()
             
             if target_item:
-                # 合并
                 old_total = target_item.unit_price * target_item.remaining_qty
                 new_total = base_data['amount']
                 target_item.remaining_qty += link_config['qty']
@@ -358,7 +386,6 @@ class FinanceService:
                 log_note = f"资产增加(收入): {base_data['desc']}" if is_income else f"购入入库: {base_data['desc']}"
                 link_msg += f" + 其他资产库存 (已合并: {target_item.name})"
             else:
-                # 新建
                 new_con = ConsumableItem(
                     name=link_config['name'], category=link_config.get('cat', '其他'),
                     unit_price=link_config['unit_price'], initial_quantity=link_config['qty'],
@@ -371,7 +398,6 @@ class FinanceService:
                 log_note = f"资产增加(初始): {base_data['desc']}" if is_income else f"初始购入: {base_data['desc']}"
                 link_msg += " + 新其他资产库存"
             
-            # 记录库存日志
             db.add(ConsumableLog(
                 item_name=link_config['name'], change_qty=link_config['qty'],
                 value_cny=val_cny, note=log_note, date=base_data['date']
@@ -388,69 +414,66 @@ class FinanceService:
 
     @staticmethod
     def update_record(db, record_id, updates):
-        """
-        更新流水记录并级联更新
-        updates: {date, type, currency, amount_abs, category, desc}
-        """
         rec = FinanceService.get_record_by_id(db, record_id)
         if not rec: return False
 
-        # === 修复开始：处理资金回滚与重记 ===
+        # 1. 精准回滚旧账户的资金
+        old_cash_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == rec.account_id).first()
+        if not old_cash_asset and rec.description: 
+            # 兼容老数据
+            match = re.search(r'\[账户:\s*(.+?)\]', rec.description)
+            if match:
+                old_cash_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == match.group(1)).first()
         
-        # 1. 回滚旧记录的影响 (Revert old impact)
-        # 获取旧币种的资产账户
-        old_cash_asset = FinanceService.get_cash_asset(db, rec.currency)
         if old_cash_asset:
-            # rec.amount 本身为有符号数（收入为正，支出为负）
-            # 回滚操作就是减去这个数值
             old_cash_asset.amount -= rec.amount
         
-        # 2. 计算新记录的数据 (Prepare new data)
+        # 2. 计算新数据并入账新账户
         new_signed_amount = updates['amount_abs'] if updates['type'] == "收入" else -updates['amount_abs']
         new_currency = updates['currency']
 
-        # 3. 应用新记录的影响 (Apply new impact)
         new_cash_asset = FinanceService.get_cash_asset(db, new_currency)
         if new_cash_asset:
             new_cash_asset.amount += new_signed_amount
         else:
-            # 如果该币种账户不存在，则新建
             new_cash_asset = CompanyBalanceItem(
-                category="asset", 
-                name=f"流动资金({new_currency})", 
-                amount=new_signed_amount, 
-                currency=new_currency
+                category="asset", name=f"流动资金({new_currency})", 
+                amount=new_signed_amount, currency=new_currency
             )
             db.add(new_cash_asset)
+            db.flush()
             
-        # === 修复结束 ===
-
-        # 4. 更新流水记录本身
+        # 3. 更新流水自身 (同步外键)
         rec.date = updates['date']
         rec.currency = new_currency
         rec.amount = new_signed_amount
         rec.category = updates['category']
         rec.description = updates['desc']
         rec.url = updates.get('url', '')
+        rec.account_id = new_cash_asset.id # ✨ 绑定新账户ID
         
-        # 5. 级联更新关联表 (保持原有逻辑，增加币种同步)
-        # CostItem
-        for cost in db.query(CostItem).filter(CostItem.finance_record_id == record_id).all():
-            cost.actual_cost = updates['amount_abs']
-            cost.remarks = f"{updates['desc']} (已修)"
-            # 注意：如果原本是 CostItem，通常不存币种字段(隐含在amount里)或需额外处理，此处保持原逻辑即可
+        # 4. 级联更新关联表
+        # ✨ 对于关联在已有预算项上的实付更新
+        if rec.category == "商品成本" and rec.related_item_id:
+            target_cost = db.query(CostItem).filter(CostItem.id == rec.related_item_id).first()
+            if target_cost:
+                # 逻辑：先减去旧金额，再加上修改后的新金额
+                target_cost.actual_cost = target_cost.actual_cost - abs(rec.amount) + updates['amount_abs']
+                target_cost.remarks = f"{updates['desc']} (已修)"
+        else:
+            # 独立的新建实付成本更新
+            for cost in db.query(CostItem).filter(CostItem.finance_record_id == record_id).all():
+                cost.actual_cost = updates['amount_abs']
+                cost.remarks = f"{updates['desc']} (已修)"
             
-        # FixedAsset
         for fa in db.query(FixedAsset).filter(FixedAsset.finance_record_id == record_id).all():
             if fa.quantity > 0: fa.unit_price = updates['amount_abs'] / fa.quantity
-            fa.currency = updates['currency'] # 确保关联资产币种也同步修改
+            fa.currency = updates['currency'] 
             
-        # ConsumableItem
         for ci in db.query(ConsumableItem).filter(ConsumableItem.finance_record_id == record_id).all():
             if ci.initial_quantity > 0: ci.unit_price = updates['amount_abs'] / ci.initial_quantity
             ci.currency = updates['currency']
             
-        # CompanyBalanceItem (关联的非现金资产)
         for bi in db.query(CompanyBalanceItem).filter(CompanyBalanceItem.finance_record_id == record_id).all():
             bi.amount = updates['amount_abs']
             bi.currency = updates['currency']
@@ -460,7 +483,7 @@ class FinanceService:
 
     @staticmethod
     def delete_record(db, record_id):
-        """删除流水并回滚关联数据（适配极简单线债务架构与多现金账户）"""
+        """删除流水并回滚关联数据（全面使用外键替换正则）"""
         rec = FinanceService.get_record_by_id(db, record_id)
         if not rec: return False
 
@@ -468,67 +491,72 @@ class FinanceService:
             raise ValueError("拒绝操作：销售收入流水受到系统保护，必须从【销售订单管理】模块发起撤销或删除。")
 
         msg_list = []
-        import re
 
-        # === 辅助函数：从备注中提取对应的现金账户 ===
-        def get_acc_from_desc(desc, curr):
-            if not desc:
-                return FinanceService.get_cash_asset(db, curr)
-            match = re.search(r'\[账户:\s*(.+?)\]', desc)
-            if match:
-                acc_name = match.group(1)
-                return db.query(CompanyBalanceItem).filter(
-                    CompanyBalanceItem.name == acc_name, 
-                    CompanyBalanceItem.category == BalanceCategory.ASSET
-                ).first()
-            return FinanceService.get_cash_asset(db, curr)
+        # === 辅助：强外键获取现金账户 fallback ===
+        def get_acc_from_rec(record):
+            if record.account_id:
+                return db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == record.account_id).first()
+            
+            # 向后兼容老数据：正则解析
+            if record.description:
+                match = re.search(r'\[账户:\s*(.+?)\]', record.description)
+                if match:
+                    acc_name = match.group(1)
+                    return db.query(CompanyBalanceItem).filter(
+                        CompanyBalanceItem.name == acc_name, 
+                        CompanyBalanceItem.category == BalanceCategory.ASSET
+                    ).first()
+            return FinanceService.get_cash_asset(db, record.currency)
+
 
         # ================= 债务系统的特殊回滚逻辑 =================
         
-        # 场景 1：删除的是【新增借款/挂账资产】
         if rec.category in ["借入资金", "新增挂账资产"]:
-            # 如果是借入资金，回滚对应的现金账户
             if rec.category == "借入资金":
-                cash = get_acc_from_desc(rec.description, rec.currency)
+                cash = get_acc_from_rec(rec)
                 if cash: 
                     cash.amount -= rec.amount
                     msg_list.append(f"借入现金已从【{cash.name}】扣回")
                 
-            # 因为我们在 create_debt 时，把新增的负债项(甚至挂账资产项)的 finance_record_id 都绑在了这条流水上
-            # 所以直接一条语句就能把挂载的资产/负债全部清理干净！
             deleted_count = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.finance_record_id == rec.id).delete()
             if deleted_count > 0:
                 msg_list.append(f"已级联清理 {deleted_count} 项关联账目/负债")
 
-        # 场景 2：删除的是【债务偿还】（还款撤销，要把现金退回来，负债加回去）
         elif rec.category == "债务偿还":
-            # 1. 资金精准回滚到还款时的账户
-            cash_asset = get_acc_from_desc(rec.description, rec.currency)
+            cash_asset = get_acc_from_rec(rec)
             if cash_asset: 
-                cash_asset.amount -= rec.amount # rec.amount 是负数，减负得正
+                cash_asset.amount -= rec.amount 
                 msg_list.append(f"还款资金已退回至【{cash_asset.name}】")
             
-            # 2. 从备注中解析出债务名称，把欠款加回去
-            try:
-                debt_name = rec.description.split("偿还债务: [")[1].split("]")[0]
-                amount_abs = abs(rec.amount)
-                
-                target_liab = db.query(CompanyBalanceItem).filter(
-                    CompanyBalanceItem.name == debt_name,
-                    CompanyBalanceItem.category == BalanceCategory.LIABILITY
-                ).first()
-                
-                if target_liab: target_liab.amount += amount_abs
-                else: db.add(CompanyBalanceItem(name=debt_name, amount=amount_abs, category=BalanceCategory.LIABILITY, currency=rec.currency))
-                msg_list.append(f"负债【{debt_name}】已复原")
-            except Exception:
+            # ✨ 使用外键精准定位负债
+            target_liab = None
+            if rec.related_item_id:
+                target_liab = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == rec.related_item_id).first()
+            else:
+                # 兼容老数据
+                try:
+                    debt_name = rec.description.split("偿还债务: [")[1].split("]")[0]
+                    target_liab = db.query(CompanyBalanceItem).filter(
+                        CompanyBalanceItem.name == debt_name,
+                        CompanyBalanceItem.category == BalanceCategory.LIABILITY
+                    ).first()
+                except:
+                    pass
+            
+            if target_liab: 
+                target_liab.amount += abs(rec.amount)
+                msg_list.append(f"负债【{target_liab.name}】已复原")
+            else:
                 msg_list.append("未能自动复原负债，请手动核对")
 
-        # 场景 3：删除的是【资产抵消】（抵消撤销，要把资产和负债都加回去）
         elif rec.category == "资产抵消":
+            target_liab = None
+            if rec.related_item_id:
+                target_liab = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == rec.related_item_id).first()
+            
+            # 兼容老数据与恢复逻辑
             try:
                 desc = rec.description
-                # 兼容旧格式(资产[xxx] 抵消债务[yyy])与新格式(抵消债务[yyy] [使用资产/账户: xxx])
                 if "资产[" in desc and "抵消债务[" in desc:
                     asset_name = desc.split("资产[")[1].split("]")[0]
                     debt_name = desc.split("抵消债务[")[1].split("]")[0]
@@ -544,52 +572,69 @@ class FinanceService:
                 else: db.add(CompanyBalanceItem(name=asset_name, amount=amount_part, category=BalanceCategory.ASSET, currency=rec.currency))
                 
                 # 复活/增加负债
-                target_liab = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == debt_name).first()
                 if target_liab: target_liab.amount += amount_part
-                else: db.add(CompanyBalanceItem(name=debt_name, amount=amount_part, category=BalanceCategory.LIABILITY, currency=rec.currency))
+                else:
+                    target_liab = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == debt_name).first()
+                    if target_liab: target_liab.amount += amount_part
+                    else: db.add(CompanyBalanceItem(name=debt_name, amount=amount_part, category=BalanceCategory.LIABILITY, currency=rec.currency))
                 
                 msg_list.append("抵消操作已撤销，资产与负债已双向复原")
             except Exception:
                 msg_list.append("未能自动复原资产/负债，请手动核对")
 
-        # === 场景 4：删除的是【资金移动】 ===
+        # === 资金移动 ===
         elif rec.category == "资金移动":
+            from_asset = None
+            to_asset = None
+            if rec.account_id and rec.related_item_id:
+                from_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == rec.account_id).first()
+                to_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == rec.related_item_id).first()
+                
             try:
-                # 解析格式: 资金移动: [来源] -> [目标] | 金额: 500.0 | 备注: xxx
-                part1 = rec.description.split("资金移动: [")[1]
-                from_name = part1.split("] -> [")[0]
-                to_name = part1.split("] -> [")[1].split("] |")[0]
+                # 若无法找到记录，兼容旧数据解析
+                if not from_asset or not to_asset:
+                    part1 = rec.description.split("资金移动: [")[1]
+                    from_name = part1.split("] -> [")[0]
+                    to_name = part1.split("] -> [")[1].split("] |")[0]
+                    from_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == from_name).first()
+                    to_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == to_name).first()
+
+                # 从流水解析转移数量
                 amount_part = float(rec.description.split("金额: ")[1].split(" |")[0].strip())
                 curr = rec.currency  
 
-                # 复活来源资产
-                from_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == from_name).first()
                 if from_asset: 
                     from_asset.amount += amount_part
                 else: 
                     db.add(CompanyBalanceItem(name=from_name, amount=amount_part, category=BalanceCategory.ASSET, currency=curr, asset_type="现金"))
                 
-                # 减扣/删除：目标资产
-                to_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == to_name).first()
                 if to_asset: 
                     to_asset.amount -= amount_part
-                    if to_asset.amount <= 0.01 and not to_name.startswith(AssetPrefix.CASH):
+                    if to_asset.amount <= 0.01 and getattr(to_asset, "asset_type", "") != "现金":
                         db.delete(to_asset)
                 
-                msg_list.append("资金移动操作已撤销，双方资产余额已复原")
+                msg_list.append("资金移动已撤销")
             except Exception:
-                msg_list.append("未能自动复原移动资产，请手动核对")
+                msg_list.append("未能完全自动复原移动资产，请手动核对")
 
-        # ================= 普通流水(及货币兑换)的回滚逻辑 =================
+        # ================= 普通流水回滚逻辑 =================
         else:
-            # 1. 资金精准回滚：使用正则从描述中提取出当时所操作的现金账户
-            cash_asset = get_acc_from_desc(rec.description, rec.currency)
+            cash_asset = get_acc_from_rec(rec)
             if cash_asset: 
                 cash_asset.amount -= rec.amount
                 msg_list.append(f"资金已从【{cash_asset.name}】回滚")
             
-            # 级联删除关联产生的数据 (如成本、固定资产、实物账面项)
-            db.query(CostItem).filter(CostItem.finance_record_id == record_id).delete()
+            # ✨ 如果这笔流水是针对某个预算的打款，则撤销实付累加
+            if rec.category == "商品成本" and rec.related_item_id:
+                target_cost = db.query(CostItem).filter(CostItem.id == rec.related_item_id).first()
+                if target_cost:
+                    target_cost.actual_cost -= abs(rec.amount)
+                    if target_cost.actual_cost < 0: target_cost.actual_cost = 0
+                    msg_list.append(f"已从预算项【{target_cost.item_name}】扣除实付回滚")
+            else:
+                # 若不是依附于预算，则直接级联删除关联产生的数据 
+                db.query(CostItem).filter(CostItem.finance_record_id == record_id).delete()
+            
             db.query(FixedAsset).filter(FixedAsset.finance_record_id == record_id).delete()
             db.query(ConsumableItem).filter(ConsumableItem.finance_record_id == record_id).delete()
             db.query(CompanyBalanceItem).filter(CompanyBalanceItem.finance_record_id == record_id).delete()

@@ -1,5 +1,6 @@
+# services/sales_order_service.py
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from datetime import date
 from models import (
     SalesOrder, SalesOrderItem, OrderRefund,
@@ -136,7 +137,7 @@ class SalesOrderService:
         order = SalesOrder(
             order_no=order_no, status=OrderStatus.PENDING, total_amount=total_amount,
             currency=currency, platform=platform, created_date=order_date, notes=notes,
-            target_account_name=target_account_name # ✨ 保存收款账户
+            target_account_name=target_account_name 
         )
         self.db.add(order)
         self.db.flush()  
@@ -171,10 +172,12 @@ class SalesOrderService:
             if current_stock < item.quantity:
                 raise ValueError(f"库存不足：{item.product_name}-{item.variant} (需要:{item.quantity}, 可用:{current_stock})")
 
+            # ✨ 强绑定订单 ID
             self.db.add(InventoryLog(
                 product_name=item.product_name, variant=item.variant, change_amount=-item.quantity,
                 reason="出库", date=ship_date, note=f"销售订单发货: {order.order_no}",
-                is_sold=True, sale_amount=item.subtotal, currency=order.currency, platform=order.platform
+                is_sold=True, sale_amount=item.subtotal, currency=order.currency, platform=order.platform,
+                order_id=order.id
             ))
             
             product = self.db.query(Product).filter(Product.name == item.product_name).first()
@@ -204,13 +207,16 @@ class SalesOrderService:
 
         self._distribute_pending_asset(order, -actual_income)
         
-        # ✨ 优先使用自定义账户，没有则降级使用默认
         asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"
         self._update_asset_by_name(asset_name, actual_income, category="asset", currency=order.currency)
+        
+        target_acc = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
 
+        # ✨ 强绑定订单和账户 ID
         self.db.add(FinanceRecord(
             date=complete_date, amount=actual_income, currency=order.currency,
-            category=FinanceCategory.SALES_INCOME, description=f"订单收款: {order.order_no} (平台:{order.platform})"
+            category=FinanceCategory.SALES_INCOME, description=f"订单收款: {order.order_no} (平台:{order.platform})",
+            order_id=order.id, account_id=target_acc.id if target_acc else None
         ))
 
         order.status = OrderStatus.COMPLETED
@@ -241,10 +247,12 @@ class SalesOrderService:
 
         if is_returned and returned_items and order.status in [OrderStatus.SHIPPED, OrderStatus.COMPLETED, OrderStatus.AFTER_SALES]:
             for item in returned_items:
+                # ✨ 强绑定订单 ID
                 self.db.add(InventoryLog(
                     product_name=item["product_name"], variant=item["variant"], change_amount=item["quantity"],
                     reason="退货入库", date=refund_date, note=f"订单退货: {order.order_no} - {refund_reason}",
-                    is_sold=True, sale_amount=-refund_amount, currency=order.currency, platform=order.platform
+                    is_sold=True, sale_amount=-refund_amount, currency=order.currency, platform=order.platform,
+                    order_id=order.id
                 ))
                 product = self.db.query(Product).filter(Product.name == item["product_name"]).first()
                 if product: product_ids_to_sync.add(product.id)
@@ -266,9 +274,13 @@ class SalesOrderService:
         if is_completed:
             asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"
             self._update_asset_by_name(asset_name, -refund_amount, category="asset", currency=order.currency)
+            target_acc = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
+            
+            # ✨ 强绑定订单和账户 ID
             self.db.add(FinanceRecord(
                 date=refund_date, amount=-refund_amount, currency=order.currency,
-                category=FinanceCategory.SALES_INCOME, description=f"订单退款: {order.order_no} - {refund_reason}"
+                category=FinanceCategory.SALES_INCOME, description=f"订单退款: {order.order_no} - {refund_reason}",
+                order_id=order.id, account_id=target_acc.id if target_acc else None
             ))
         else:
             order.total_amount -= refund_amount
@@ -308,10 +320,13 @@ class SalesOrderService:
             if is_completed:
                 asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"
                 self._update_asset_by_name(asset_name, -amount_delta, category="asset", currency=order.currency)
+                target_acc = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
+                
                 if amount_delta != 0:
                     self.db.add(FinanceRecord(
                         date=date.today(), amount=-amount_delta, currency=order.currency, category=FinanceCategory.SALES_INCOME,
-                        description=f"售后金额调整: {order.order_no} (调整 {amount_delta:.2f})"
+                        description=f"售后金额调整: {order.order_no} (调整 {amount_delta:.2f})",
+                        order_id=order.id, account_id=target_acc.id if target_acc else None
                     ))
             else:
                 order.total_amount -= amount_delta
@@ -347,8 +362,9 @@ class SalesOrderService:
                 self.db.delete(cost_item)
 
         if refund.is_returned:
+            # ✨ 使用 order_id 和正则 fallback 获取日志
             logs = self.db.query(InventoryLog).filter(
-                InventoryLog.note.like(f"%{order.order_no}%"),
+                or_(InventoryLog.order_id == order.id, InventoryLog.note.like(f"%{order.order_no}%")),
                 InventoryLog.reason == "退货入库"
             ).all()
 
@@ -360,8 +376,10 @@ class SalesOrderService:
         if is_completed:
             asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"
             self._update_asset_by_name(asset_name, refund_amount, category="asset", currency=order.currency)
+            
+            # ✨ 使用 order_id 和正则 fallback 回滚财务流水
             finances = self.db.query(FinanceRecord).filter(
-                FinanceRecord.description.like(f"%{order.order_no}%"),
+                or_(FinanceRecord.order_id == order.id, FinanceRecord.description.like(f"%{order.order_no}%")),
                 FinanceRecord.amount == -refund_amount
             ).all()
             for finance in finances: self.db.delete(finance)
@@ -395,7 +413,10 @@ class SalesOrderService:
         product_ids_to_sync = set()
 
         if order.status in [OrderStatus.SHIPPED, OrderStatus.COMPLETED, OrderStatus.AFTER_SALES]:
-            logs = self.db.query(InventoryLog).filter(InventoryLog.note.like(f"%{order.order_no}%")).all()
+            # ✨ 彻底使用外键及正则 fallback 进行级联清理
+            logs = self.db.query(InventoryLog).filter(
+                or_(InventoryLog.order_id == order_id, InventoryLog.note.like(f"%{order.order_no}%"))
+            ).all()
             for log in logs:
                 product = self.db.query(Product).filter(Product.name == log.product_name).first()
                 if product: product_ids_to_sync.add(product.id)
@@ -411,9 +432,13 @@ class SalesOrderService:
 
         if order.status == OrderStatus.COMPLETED:
             asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"
+            # 资产还原
             self._update_asset_by_name(asset_name, -order.total_amount, category="asset", currency=order.currency)
 
-            finances = self.db.query(FinanceRecord).filter(FinanceRecord.description.like(f"%{order.order_no}%")).all()
+            # ✨ 彻底使用外键及正则 fallback 进行级联清理
+            finances = self.db.query(FinanceRecord).filter(
+                or_(FinanceRecord.order_id == order_id, FinanceRecord.description.like(f"%{order.order_no}%"))
+            ).all()
             for finance in finances: self.db.delete(finance)
                 
         elif order.status in [OrderStatus.SHIPPED, OrderStatus.AFTER_SALES]:
@@ -521,7 +546,6 @@ class SalesOrderService:
                     
             if has_item_error: continue
 
-            # ✨ 优化：忽略大小写的平台判断
             platform_lower = platform.lower()
             fee = 0.0
             if "微店" in platform_lower: fee = gross_price * 0.006
@@ -538,7 +562,6 @@ class SalesOrderService:
                 item["unit_price"] = final_unit_price
                 item["subtotal"] = item["quantity"] * final_unit_price
                 
-            # ✨ 优化：直接在解析阶段推导目标账户，方便传递给 UI 预览
             if "微店" in platform_lower: target_acc = "流动资金-微店账户"
             elif "booth" in platform_lower: target_acc = "流动资金-booth账户"
             elif currency == "JPY": target_acc = "流动资金-日元临时账户"
@@ -548,7 +571,7 @@ class SalesOrderService:
                 "order_no": order_no, "platform": platform, "currency": currency,
                 "gross_price": gross_price, "fee": fee, "net_price": net_price,
                 "total_qty": total_qty, "items": items_data,
-                "target_account": target_acc # ✨ 记录账户
+                "target_account": target_acc 
             })
 
         return parsed_orders, errors
@@ -559,7 +582,7 @@ class SalesOrderService:
             order, err = self.create_order(
                 items_data=order_data["items"], platform=order_data["platform"],
                 currency=order_data["currency"], notes="Excel批量导入", order_no=order_data["order_no"],
-                target_account_name=order_data["target_account"] # ✨ 直接使用解析好的账户
+                target_account_name=order_data["target_account"] 
             )
             if not err: created_count += 1
         return created_count

@@ -132,10 +132,10 @@ def show_inventory_page(db):
                         current_parts = [p.part_name for p in target_c.parts]
                 
                 if current_parts:
-                    is_set = c_set.checkbox("✅ 整套操作", value=True, help="该款式所有部件同比例增减，并记账。")
+                    is_set = c_set.checkbox("整套操作", value=True, help="该款式所有部件同比例增减，并记账。")
                 else:
                     is_set = True
-                    c_set.checkbox("✅ 整套操作", value=True, disabled=True, help="该款式未拆分部件，默认整套。")
+                    c_set.checkbox("整套操作", value=True, disabled=True, help="该款式未拆分部件，默认整套。")
                 
                 p_part = None
                 if not is_set and current_parts:

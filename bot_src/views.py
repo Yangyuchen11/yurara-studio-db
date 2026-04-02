@@ -416,7 +416,7 @@ class ProductDashboardView(ui.View):
     async def sales_btn(self, interaction: discord.Interaction, button: ui.Button):
         def logic(db):
             s = SalesService()
-            return s.process_sales_data(s.get_raw_sales_logs(db))
+            return s.process_sales_data(db, s.get_raw_sales_logs(db))
         df = await run_db_task(logic)
         embed = discord.Embed(title=f"📈 销售: {self.product_name}", color=discord.Color.red())
         if df.empty: embed.description = "无数据"

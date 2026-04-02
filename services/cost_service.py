@@ -1,5 +1,6 @@
+# services/cost_service.py
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from datetime import date
 from models import Product, CostItem, FinanceRecord, CompanyBalanceItem, InventoryLog, ProductColor
 from constants import PRODUCT_COST_CATEGORIES, AssetPrefix, BalanceCategory, Currency
@@ -26,7 +27,16 @@ class CostService:
     def get_wip_offset(self, product_id):
         prod = self.db.query(Product).filter(Product.id == product_id).first()
         if not prod: return 0.0
-        offset_item = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == f"{AssetPrefix.WIP_OFFSET}{prod.name}").first()
+        
+        # ✨ 优先使用 product_id 获取，向后兼容老数据的 name 获取
+        offset_item = self.db.query(CompanyBalanceItem).filter(
+            or_(
+                CompanyBalanceItem.product_id == product_id,
+                CompanyBalanceItem.name == f"{AssetPrefix.WIP_OFFSET}{prod.name}"
+            ),
+            CompanyBalanceItem.category == BalanceCategory.ASSET
+        ).first()
+        
         return offset_item.amount if offset_item else 0.0
 
     # ================= 2. 预算管理 =================
@@ -104,11 +114,16 @@ class CostService:
                 restore_amount = abs(fin_rec.amount) 
                 restore_currency = fin_rec.currency
                 
-                cash_asset = self.db.query(CompanyBalanceItem).filter(
-                    CompanyBalanceItem.name.like(f"{AssetPrefix.CASH}%"),
-                    CompanyBalanceItem.currency == restore_currency,
-                    CompanyBalanceItem.category == BalanceCategory.ASSET
-                ).first()
+                # ✨ 如果有 account_id，则精准回滚；否则向后兼容
+                cash_asset = None
+                if fin_rec.account_id:
+                    cash_asset = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == fin_rec.account_id).first()
+                else:
+                    cash_asset = self.db.query(CompanyBalanceItem).filter(
+                        CompanyBalanceItem.name.like(f"{AssetPrefix.CASH}%"),
+                        CompanyBalanceItem.currency == restore_currency,
+                        CompanyBalanceItem.category == BalanceCategory.ASSET
+                    ).first()
                 
                 if cash_asset:
                     cash_asset.amount += restore_amount
@@ -125,16 +140,12 @@ class CostService:
 
     # ================= 3. 生产完成 (WIP 处理) =================
     def perform_wip_fix(self, product_id):
-        """
-        标记生产完成：修改标志位，并交给引擎去完全清零在制资产。
-        """
         prod = self.db.query(Product).filter(Product.id == product_id).first()
         if not prod: raise ValueError("产品不存在")
 
         prod.is_production_completed = True
         self.db.commit()
         
-        # 触发底层同步刷新
         from services.inventory_service import InventoryService
         InventoryService(self.db).sync_product_metrics(prod.id)
         

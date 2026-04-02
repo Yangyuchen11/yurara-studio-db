@@ -327,16 +327,23 @@ def render_add_transaction_form(exchange_rate):
                     link_config["cat"] = final_cat
                     
                     budgets = FinanceService.get_budget_items(db_frag, pid, final_cat)
-                    b_opts = ["➕ 手动输入新项目"] + [b.item_name for b in budgets]
+                    
+                    # ✨ 核心修改：使用字典将预算名称和真实的数据库 ID 绑定起来
+                    b_opts = {"➕ 手动输入新项目": None}
+                    for b in budgets:
+                        b_opts[b.item_name] = b.id
                     
                     c_c3, c_c4 = st.columns([1.5, 2], vertical_alignment="bottom")
-                    sel_item = c_c3.selectbox("预算项目匹配", b_opts)
+                    # 下拉框选项为字典的键（即项目名称）
+                    sel_item_label = c_c3.selectbox("预算项目匹配", list(b_opts.keys()))
                     
-                    if sel_item == "➕ 手动输入新项目":
+                    if sel_item_label == "➕ 手动输入新项目":
                         link_config["name"] = c_c4.text_input("具体成本内容", placeholder="如：蕾丝边打样费 (必填)")
                     else:
-                        link_config["name"] = sel_item
-                        c_c4.info(f"✅ 自动挂载至预算项: {sel_item}")
+                        link_config["name"] = sel_item_label
+                        # ✨ 将选中的预算 ID 存入配置中传递给后端
+                        link_config["target_cost_id"] = b_opts[sel_item_label]
+                        c_c4.info(f"✅ 将直接累加实付金额至预算项：{sel_item_label}")
 
                 elif cat == "其他资产购入":
                     needs_qty = True

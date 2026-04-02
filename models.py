@@ -80,7 +80,10 @@ class InventoryLog(Base):
     is_other_out = Column(Boolean, default=False) # 是否为其他出库
     warehouse_id = Column(Integer, ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True)
     part_name = Column(String, nullable=True) # 如果为空，代表是"整套操作"
+    order_id = Column(Integer, ForeignKey("sales_orders.id", ondelete="CASCADE"), nullable=True) # 绑定的销售订单
+    cost_item_id = Column(Integer, ForeignKey("cost_items.id", ondelete="SET NULL"), nullable=True) # 绑定的成本项 (消耗出库用)
     warehouse = relationship("Warehouse")
+
 
 # --- C. 财务记录 ---
 class FinanceRecord(Base):
@@ -92,6 +95,9 @@ class FinanceRecord(Base):
     category = Column(String) 
     description = Column(String)
     url = Column(String, nullable=True)
+    account_id = Column(Integer, ForeignKey("company_balance_items.id", ondelete="SET NULL"), nullable=True) # 绑定的现金账户
+    order_id = Column(Integer, ForeignKey("sales_orders.id", ondelete="CASCADE"), nullable=True) # 绑定的销售订单
+    related_item_id = Column(Integer, nullable=True)
 
 # --- D. 公司账面/资产负债 ---
 class CompanyBalanceItem(Base):
@@ -102,8 +108,8 @@ class CompanyBalanceItem(Base):
     amount = Column(Float)    # 金额
     currency = Column(String, default="CNY") # 币种：CNY 或 JPY
     asset_type = Column(String, default="资产")
-    # 【数据库级联删除
     finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=True)
 
 # --- E. 固定资产管理 ---
 class FixedAsset(Base):
