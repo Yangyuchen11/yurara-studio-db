@@ -36,101 +36,147 @@ def get_warehouse_stock_map(db, warehouse_id):
 
 @fragment_decorator
 def render_pos_machine(db, template, all_cash_assets, image_lookup):
-    """POS收银机：真·浏览器全屏、巨型结账按钮、触屏优化"""
+    """POS收银机：恢复购物车缩略图与非全屏底部历史记录，保持边框对齐与全屏优化"""
     
-    # 状态初始化
+    # 1. 状态初始化
     if "offline_cart" not in st.session_state:
         st.session_state.offline_cart = {}
     if "pos_fullscreen" not in st.session_state:
         st.session_state.pos_fullscreen = False
     if "pos_pay_method" not in st.session_state:
         st.session_state.pos_pay_method = "现金"
+    if "show_history_only" not in st.session_state:
+        st.session_state.show_history_only = False
 
-    # ================= 浏览器底层全屏 API 探针注入 (黑科技) =================
+    # 2. 注入全屏与滚动控制脚本
     components.html(
         """
         <script>
-        // 获取父级(即Streamlit主页面)的document对象
         const parentDoc = window.parent.document;
-        
-        // 防止每次组件刷新时重复绑定事件
+        // 全屏逻辑处理
         if (!parentDoc.getElementById('pos-fs-listener')) {
-            const script = parentDoc.createElement('script');
-            script.id = 'pos-fs-listener';
-            script.innerHTML = `
+            const s = parentDoc.createElement('script');
+            s.id = 'pos-fs-listener';
+            s.innerHTML = `
                 document.addEventListener('click', function(e) {
                     let t = e.target;
-                    // 向上冒泡查找，直到找到真实的 BUTTON 标签
                     while (t && t.tagName !== 'BUTTON') { t = t.parentElement; }
-                    
                     if (t && t.tagName === 'BUTTON') {
                         if (t.innerText.includes('全屏模式')) {
                             let docElm = document.documentElement;
-                            if (docElm.requestFullscreen) { 
-                                docElm.requestFullscreen().catch(err => console.log('Fullscreen error:', err)); 
-                            } else if (docElm.webkitRequestFullscreen) { 
-                                docElm.webkitRequestFullscreen(); 
-                            }
+                            if (docElm.requestFullscreen) { docElm.requestFullscreen(); }
+                            else if (docElm.webkitRequestFullscreen) { docElm.webkitRequestFullscreen(); }
                         } else if (t.innerText.includes('退出全屏')) {
-                            if (document.exitFullscreen) { 
-                                document.exitFullscreen().catch(err => console.log('Exit error:', err)); 
-                            } else if (document.webkitExitFullscreen) { 
-                                document.webkitExitFullscreen(); 
-                            }
+                            if (document.exitFullscreen) { document.exitFullscreen(); }
+                            else if (document.webkitExitFullscreen) { document.webkitExitFullscreen(); }
                         }
                     }
                 });
             `;
-            parentDoc.head.appendChild(script);
+            parentDoc.head.appendChild(s);
         }
+        // 局部滚动处理
+        setInterval(() => {
+            const markers = parentDoc.querySelectorAll('.pos-scroll-marker');
+            markers.forEach(marker => {
+                let col = marker.closest('div[data-testid="column"]');
+                if (col && col.style.overflowY !== 'auto') {
+                    col.style.height = 'calc(100vh - 2rem)';
+                    col.style.overflowY = 'auto';
+                    col.style.overscrollBehavior = 'contain';
+                    col.style.WebkitOverflowScrolling = 'touch';
+                }
+            });
+        }, 500);
         </script>
         """,
-        height=0,
-        width=0
+        height=0, width=0
     )
 
-    # ================= 沉浸式全屏与巨型按钮 CSS 注入 =================
+    # 3. 样式注入
+    fullscreen_style = ""
     if st.session_state.pos_fullscreen:
-        st.markdown("""
-        <style>
-        /* 全屏时隐藏侧边栏、顶部 Header、以及 Tab 栏 */
+        fullscreen_style = """
         [data-testid="stSidebar"] {display: none !important;}
         header {display: none !important;}
         [data-testid="stTabs"] [data-baseweb="tab-list"] {display: none !important;}
-        /* 扩展主工作区宽度，消除所有多余边距 */
-        .block-container {padding-top: 1rem !important; padding-bottom: 1rem !important; max-width: 100% !important;}
-        </style>
-        """, unsafe_allow_html=True)
-        
-    # 无论是否全屏，结账按钮都保持巨大
-    st.markdown("""
+        html, body, [data-testid="stAppViewContainer"], .main {
+            overflow: hidden !important;
+            height: 100vh !important;
+            overscroll-behavior: none !important;
+        }
+        .block-container {
+            padding-top: 0rem !important; 
+            padding-bottom: 0rem !important; 
+            max-width: 100% !important;
+            height: 100vh !important;
+            overflow: hidden !important;
+        }
+        """
+
+    st.markdown(f"""
     <style>
-    /* 定位结账按钮并将其变得超大 */
-    div[data-testid="stElementContainer"]:has(.checkout-btn-marker) + div[data-testid="stElementContainer"] button {
-        height: 100px !important;
-        min-height: 100px !important;
+    {fullscreen_style}
+    /* 隐藏滚动条 */
+    ::-webkit-scrollbar {{ display: none !important; }}
+    
+    /* 结账按钮样式优化 */
+    div[data-testid="stElementContainer"]:has(.checkout-btn-marker) + div[data-testid="stElementContainer"] button {{
+        height: 80px !important;
         border-radius: 12px !important;
-    }
-    div[data-testid="stElementContainer"]:has(.checkout-btn-marker) + div[data-testid="stElementContainer"] button p {
-        font-size: 28px !important;
+    }}
+    div[data-testid="stElementContainer"]:has(.checkout-btn-marker) + div[data-testid="stElementContainer"] button p {{
+        font-size: 24px !important;
         font-weight: bold !important;
-    }
+    }}
+    
+    /* 强制调整右侧列的第一个容器(结账单)，使其与左侧商品列表框对齐 */
+    div[data-testid="column"]:nth-child(2) div[data-testid="stVerticalBlock"] > div:nth-child(2) {{
+        margin-top: 26px !important; 
+    }}
     </style>
     """, unsafe_allow_html=True)
-        
+
+    # 4. 界面渲染逻辑
+    svc = OfflineSalesService(db)
+
+    # ================= 情况 A: 专门的历史记录界面 (全屏模式下查看历史) =================
+    if st.session_state.show_history_only:
+        st.markdown('<div class="pos-scroll-marker"></div>', unsafe_allow_html=True)
+        c_hist_head, c_hist_back = st.columns([5, 1])
+        c_hist_head.subheader(f"📜 {template.name} - 历史交易全览")
+        if c_hist_back.button("🔙 返回收银", use_container_width=True):
+            st.session_state.show_history_only = False
+            st.rerun()
+            
+        orders = svc.get_orders_by_template(template.code)
+        if orders:
+            order_data = []
+            for o in orders:
+                items_str = ", ".join([f"{i.product_name}-{i.variant} ×{i.quantity}" for i in o.items])
+                import re
+                fee = 0.0
+                match = re.search(r"扣除手续费 ([\d\.]+)", o.notes or "")
+                if match: fee = float(match.group(1))
+                order_data.append({
+                    "订单号": o.order_no, "日期": str(o.created_date), 
+                    "明细": items_str, "原价": o.total_amount, "实收": o.total_amount - fee, "备注": o.notes
+                })
+            st.dataframe(pd.DataFrame(order_data), width="stretch", hide_index=True)
+        else:
+            st.info("暂无历史交易")
+        return # 结束历史界面渲染
+
+    # ================= 情况 B: 标准收银界面 =================
     c_goods, c_cart = st.columns([2.5, 1.3])
     
-    # ================= 左侧：商品点击区 =================
     with c_goods:
-        # 头部区域带全屏切换按钮
-        c_title, c_fs_btn = st.columns([5, 1], vertical_alignment="bottom")
-        c_title.markdown(f"### 🛒 {template.name} ({template.platform})")
-        c_title.caption(f"出货仓库: {template.warehouse.name if template.warehouse else '未分配'}")
+        st.markdown('<div class="pos-scroll-marker"></div>', unsafe_allow_html=True)
+        # 顶部标题
+        st.markdown(f"### 🛒 {template.name} <small>({template.platform})</small>", unsafe_allow_html=True)
+        st.caption(f"出货仓库: {template.warehouse.name if template.warehouse else '未分配'}")
         
-        if c_fs_btn.button("🔲 退出全屏" if st.session_state.pos_fullscreen else "🔲 全屏模式", use_container_width=True):
-            st.session_state.pos_fullscreen = not st.session_state.pos_fullscreen
-            st.rerun()
-        
+        # 商品矩阵
         if not template.items:
             st.info("模板为空")
         else:
@@ -148,7 +194,7 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                         else:
                             st.markdown("<div style='height:70px; background:#f0f2f6; border-radius:5px; margin-bottom:5px;'></div>", unsafe_allow_html=True)
                         
-                        # 2. 统一高度的库存状态提示
+                        # 2. 库存状态提示与按钮
                         if is_out_of_stock:
                             st.markdown("<div style='font-size:12px; color:red; text-align:center; margin-bottom:4px; font-weight:bold;'>🚫 已售罄</div>", unsafe_allow_html=True)
                             btn_label_out = f"{item.product_name}\n{item.variant}\n🚫 暂无库存"
@@ -169,8 +215,18 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                                     }
                                 st.rerun()
 
-    # ================= 右侧：购物车与结算区 =================
     with c_cart:
+        # 1. 顶部控制按钮组
+        btn_col1, btn_col2 = st.columns(2)
+        if btn_col1.button("🔲 退出全屏" if st.session_state.pos_fullscreen else "🔲 全屏模式", use_container_width=True):
+            st.session_state.pos_fullscreen = not st.session_state.pos_fullscreen
+            st.rerun()
+        if btn_col2.button("📜 历史交易", use_container_width=True):
+            st.session_state.show_history_only = True
+            st.rerun()
+
+        # 2. 结账单容器
+        st.markdown('<div class="pos-scroll-marker"></div>', unsafe_allow_html=True)
         with st.container(border=True):
             st.markdown("### 🧾 结账单")
             cart_items = list(st.session_state.offline_cart.values())
@@ -179,7 +235,7 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
             if not cart_items: 
                 st.caption("购物车为空")
             else:
-                # 渲染带微型缩略图的购物车列表
+                # ================= 恢复：结账单内带缩略图的列表 =================
                 for idx, ci in enumerate(cart_items):
                     r_img, r_c1, r_c2, r_c3 = st.columns([1.5, 3, 1, 1], vertical_alignment="center")
                     
@@ -198,106 +254,76 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                         if st.session_state.offline_cart[cart_key]["qty"] <= 0:
                             del st.session_state.offline_cart[cart_key]
                         st.rerun()
+                # ===============================================================
 
             st.divider()
             
-            # --- 触控版支付方式选择 ---
-            st.markdown("**选择支付方式:**")
+            # 支付选择
             c_pay1, c_pay2 = st.columns(2)
             if c_pay1.button("💵 现金", type="primary" if st.session_state.pos_pay_method == "现金" else "secondary", use_container_width=True):
-                st.session_state.pos_pay_method = "现金"
-                st.rerun()
+                st.session_state.pos_pay_method = "现金"; st.rerun()
             if c_pay2.button("📱 PayPay", type="primary" if st.session_state.pos_pay_method == "PayPay" else "secondary", use_container_width=True):
-                st.session_state.pos_pay_method = "PayPay"
-                st.rerun()
+                st.session_state.pos_pay_method = "PayPay"; st.rerun()
                 
-            pay_method = st.session_state.pos_pay_method
-            fee = total_amount * 0.0198 if pay_method == "PayPay" else 0.0
+            fee = total_amount * 0.0198 if st.session_state.pos_pay_method == "PayPay" else 0.0
+            st.markdown(f"**总计: <span style='color:red; font-size:22px;'>{total_amount:,.2f}</span>**", unsafe_allow_html=True)
             
-            st.markdown(f"**小计: <span style='color:red; font-size:24px;'>{total_amount:,.2f} {template.currency}</span>**", unsafe_allow_html=True)
-            if pay_method == "PayPay":
-                st.markdown(
-                    f"**PayPay手续费 (1.98%):** <span style='color:#4caf50;'>-{fee:,.2f} {template.currency}</span> &nbsp;➔&nbsp; "
-                    f"**实收: <span style='color:red;'>{(total_amount - fee):,.2f} {template.currency}</span>**", 
-                    unsafe_allow_html=True
-                )
-            
-            # --- 收款账户智能匹配 ---
+            # 收款账户
             valid_accs = [a for a in all_cash_assets if a.currency == template.currency]
             acc_opts = {a.name: a.id for a in valid_accs}
-            acc_names = list(acc_opts.keys())
             target_acc_id = None
-            
-            if acc_names:
-                default_idx = 0
-                if pay_method == "现金":
-                    for i, name in enumerate(acc_names):
-                        if "日元临时" in name or "现金" in name:
-                            default_idx = i
-                            break
-                elif pay_method == "PayPay":
-                    for i, name in enumerate(acc_names):
-                        if "paypay" in name.lower():
-                            default_idx = i
-                            break
-                            
-                sel_acc = st.selectbox("收款账户", acc_names, index=default_idx)
+            if acc_opts:
+                sel_acc = st.selectbox("收款账户", list(acc_opts.keys()), label_visibility="collapsed")
                 target_acc_id = acc_opts[sel_acc]
-            else:
-                st.error(f"缺少 {template.currency} 现金账户！")
-                
-            st.write("") 
-            # ✨ 插入隐形标记，由上方的 CSS 捕捉并放大紧随其后的按钮
+
+            # 巨大化结账按钮
             st.markdown('<div class="checkout-btn-marker"></div>', unsafe_allow_html=True)
             if st.button("✅ 完成交易", type="primary", use_container_width=True, disabled=(not cart_items or not target_acc_id)):
                 try:
-                    svc = OfflineSalesService(db)
-                    order_no, net_in = svc.checkout_offline_order(
+                    svc.checkout_offline_order(
                         template_id=template.id, cart_items=cart_items,
-                        payment_method=pay_method, fee_rate=0.0198,
+                        payment_method=st.session_state.pos_pay_method, fee_rate=0.0198,
                         account_id=target_acc_id
                     )
-                    st.toast(f"交易成功: {net_in:.2f}", icon="💰")
                     st.session_state.offline_cart = {}
                     sync_all_caches()
                     st.rerun()
-                except Exception as e:
-                    st.error(f"失败: {e}")
+                except Exception as e: st.error(f"失败: {e}")
 
-    # ================= 底部：历史订单列表 =================
-    st.divider()
-    st.subheader(f"📜 [{template.name}] 历史交易")
-    svc = OfflineSalesService(db)
-    orders = svc.get_orders_by_template(template.code)
-    if orders:
-        order_data = []
-        for o in orders:
-            items_str = ", ".join([f"{i.product_name}-{i.variant} ×{i.quantity}" for i in o.items])
-            
-            fee = 0.0
-            match = re.search(r"扣除手续费 ([\d\.]+)", o.notes or "")
-            if match:
-                fee = float(match.group(1))
-            net_income = o.total_amount - fee
-            
-            order_data.append({
-                "订单号": o.order_no, "日期": str(o.created_date), "平台": o.platform,
-                "商品明细": items_str, "原价小计": o.total_amount, "实收净额": net_income, "备注": o.notes
-            })
-            
-        st.dataframe(
-            pd.DataFrame(order_data), 
-            width="stretch", 
-            hide_index=True,
-            column_config={
-                "原价小计": st.column_config.NumberColumn(format="%.2f"),
-                "实收净额": st.column_config.NumberColumn(format="%.2f")
-            }
-        )
-    else:
-        st.info("该模板暂无销售记录。")
-
-
+    # ================= 恢复：非全屏模式下的原版底部历史记录 =================
+    if not st.session_state.pos_fullscreen:
+        st.divider()
+        st.subheader(f"📜 [{template.name}] 历史交易")
+        orders = svc.get_orders_by_template(template.code)
+        if orders:
+            order_data = []
+            for o in orders:
+                items_str = ", ".join([f"{i.product_name}-{i.variant} ×{i.quantity}" for i in o.items])
+                
+                import re
+                fee = 0.0
+                match = re.search(r"扣除手续费 ([\d\.]+)", o.notes or "")
+                if match:
+                    fee = float(match.group(1))
+                net_income = o.total_amount - fee
+                
+                order_data.append({
+                    "订单号": o.order_no, "日期": str(o.created_date), "平台": o.platform,
+                    "商品明细": items_str, "原价小计": o.total_amount, "实收净额": net_income, "备注": o.notes
+                })
+                
+            st.dataframe(
+                pd.DataFrame(order_data), 
+                width="stretch", 
+                hide_index=True,
+                column_config={
+                    "原价小计": st.column_config.NumberColumn(format="%.2f"),
+                    "实收净额": st.column_config.NumberColumn(format="%.2f")
+                }
+            )
+        else:
+            st.info("该模板暂无销售记录。")
+                         
 def show_offline_sales_page(db):
     st.header("🏪 线下展会模式")
     svc = OfflineSalesService(db)
