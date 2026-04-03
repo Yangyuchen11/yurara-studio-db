@@ -10,6 +10,7 @@ from services.finance_service import FinanceService
 from services.inventory_service import InventoryService
 from constants import PLATFORM_CODES
 from cache_manager import sync_all_caches
+import streamlit.components.v1 as components
 
 if hasattr(st, "fragment"):
     fragment_decorator = st.fragment
@@ -46,33 +47,47 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
         st.session_state.pos_pay_method = "现金"
 
     # ================= 浏览器底层全屏 API 探针注入 (黑科技) =================
-    # 利用 img onerror 绕过 iframe 沙盒，直接在父级 document 绑定真实点击事件
-    st.markdown('''
-    <img src="empty" onerror="
-        if (!document.getElementById('pos-fs-listener')) {
-            const s = document.createElement('script');
-            s.id = 'pos-fs-listener';
-            s.innerHTML = `
+    components.html(
+        """
+        <script>
+        // 获取父级(即Streamlit主页面)的document对象
+        const parentDoc = window.parent.document;
+        
+        // 防止每次组件刷新时重复绑定事件
+        if (!parentDoc.getElementById('pos-fs-listener')) {
+            const script = parentDoc.createElement('script');
+            script.id = 'pos-fs-listener';
+            script.innerHTML = `
                 document.addEventListener('click', function(e) {
                     let t = e.target;
+                    // 向上冒泡查找，直到找到真实的 BUTTON 标签
                     while (t && t.tagName !== 'BUTTON') { t = t.parentElement; }
+                    
                     if (t && t.tagName === 'BUTTON') {
                         if (t.innerText.includes('全屏模式')) {
                             let docElm = document.documentElement;
-                            // 兼容 Chrome/Edge 和 iPad Safari 的全屏调用
-                            if (docElm.requestFullscreen) { docElm.requestFullscreen().catch(err=>console.log(err)); }
-                            else if (docElm.webkitRequestFullscreen) { docElm.webkitRequestFullscreen(); }
+                            if (docElm.requestFullscreen) { 
+                                docElm.requestFullscreen().catch(err => console.log('Fullscreen error:', err)); 
+                            } else if (docElm.webkitRequestFullscreen) { 
+                                docElm.webkitRequestFullscreen(); 
+                            }
                         } else if (t.innerText.includes('退出全屏')) {
-                            if (document.exitFullscreen) { document.exitFullscreen().catch(err=>console.log(err)); }
-                            else if (document.webkitExitFullscreen) { document.webkitExitFullscreen(); }
+                            if (document.exitFullscreen) { 
+                                document.exitFullscreen().catch(err => console.log('Exit error:', err)); 
+                            } else if (document.webkitExitFullscreen) { 
+                                document.webkitExitFullscreen(); 
+                            }
                         }
                     }
                 });
             `;
-            document.head.appendChild(s);
+            parentDoc.head.appendChild(script);
         }
-    " style="display:none;">
-    ''', unsafe_allow_html=True)
+        </script>
+        """,
+        height=0,
+        width=0
+    )
 
     # ================= 沉浸式全屏与巨型按钮 CSS 注入 =================
     if st.session_state.pos_fullscreen:
