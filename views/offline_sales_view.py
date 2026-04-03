@@ -35,15 +35,57 @@ def get_warehouse_stock_map(db, warehouse_id):
 
 @fragment_decorator
 def render_pos_machine(db, template, all_cash_assets, image_lookup):
-    """POS收银机：超大触屏按钮、等高卡片、购物车缩略图及智能账户匹配"""
+    """POS收银机：全屏沉浸模式、巨型结账按钮、触屏优化"""
+    
+    # 状态初始化
     if "offline_cart" not in st.session_state:
         st.session_state.offline_cart = {}
+    if "pos_fullscreen" not in st.session_state:
+        st.session_state.pos_fullscreen = False
+    if "pos_pay_method" not in st.session_state:
+        st.session_state.pos_pay_method = "现金"
+
+    # ================= 沉浸式全屏与巨型按钮 CSS 注入 =================
+    if st.session_state.pos_fullscreen:
+        st.markdown("""
+        <style>
+        /* 全屏时隐藏侧边栏、顶部 Header、以及 Tab 栏 */
+        [data-testid="stSidebar"] {display: none !important;}
+        header {display: none !important;}
+        [data-testid="stTabs"] [data-baseweb="tab-list"] {display: none !important;}
+        /* 扩展主工作区宽度，减少内边距 */
+        .block-container {padding-top: 1rem !important; padding-bottom: 1rem !important; max-width: 100% !important;}
+        </style>
+        """, unsafe_allow_html=True)
         
-    c_goods, c_cart = st.columns([2.2, 1.2])
+    # 无论是否全屏，结账按钮都保持巨大
+    st.markdown("""
+    <style>
+    /* 定位结账按钮并将其变得超大 */
+    div[data-testid="stElementContainer"]:has(.checkout-btn-marker) + div[data-testid="stElementContainer"] button {
+        height: 100px !important;
+        min-height: 100px !important;
+        border-radius: 12px !important;
+    }
+    div[data-testid="stElementContainer"]:has(.checkout-btn-marker) + div[data-testid="stElementContainer"] button p {
+        font-size: 28px !important;
+        font-weight: bold !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+        
+    c_goods, c_cart = st.columns([2.5, 1.3])
     
+    # ================= 左侧：商品点击区 =================
     with c_goods:
-        st.markdown(f"### 🛒 {template.name} ({template.platform})")
-        st.caption(f"出货仓库: {template.warehouse.name if template.warehouse else '未分配'}")
+        # 头部区域带全屏切换按钮
+        c_title, c_fs_btn = st.columns([5, 1], vertical_alignment="bottom")
+        c_title.markdown(f"### 🛒 {template.name} ({template.platform})")
+        c_title.caption(f"出货仓库: {template.warehouse.name if template.warehouse else '未分配'}")
+        
+        if c_fs_btn.button("🔲 退出全屏" if st.session_state.pos_fullscreen else "🔲 全屏模式", use_container_width=True):
+            st.session_state.pos_fullscreen = not st.session_state.pos_fullscreen
+            st.rerun()
         
         if not template.items:
             st.info("模板为空")
@@ -65,12 +107,10 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                         # 2. 统一高度的库存状态提示
                         if is_out_of_stock:
                             st.markdown("<div style='font-size:12px; color:red; text-align:center; margin-bottom:4px; font-weight:bold;'>🚫 已售罄</div>", unsafe_allow_html=True)
-                            # 3行文字的禁用按钮，保持高度一致
                             btn_label_out = f"{item.product_name}\n{item.variant}\n🚫 暂无库存"
                             st.button(btn_label_out, key=f"btn_off_{item.id}", disabled=True, use_container_width=True)
                         else:
                             st.markdown(f"<div style='font-size:12px; color:#4caf50; text-align:center; margin-bottom:4px; font-weight:bold;'>📦 余量: {item.remaining_quantity}</div>", unsafe_allow_html=True)
-                            # 3行文字的点击按钮，保持高度一致
                             btn_label = f"{item.product_name}\n{item.variant}\n¥ {item.preset_price:.2f} ➕"
                             if st.button(btn_label, key=f"pos_btn_{item.id}", use_container_width=True):
                                 if cart_key in st.session_state.offline_cart:
@@ -85,19 +125,20 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                                     }
                                 st.rerun()
 
+    # ================= 右侧：购物车与结算区 =================
     with c_cart:
         with st.container(border=True):
             st.markdown("### 🧾 结账单")
             cart_items = list(st.session_state.offline_cart.values())
             total_amount = sum(ci["qty"] * ci["unit_price"] for ci in cart_items)
             
-            if not cart_items: st.caption("空")
+            if not cart_items: 
+                st.caption("购物车为空")
             else:
-                # 渲染带缩略图的购物车列表
+                # 渲染带微型缩略图的购物车列表
                 for idx, ci in enumerate(cart_items):
-                    r_img, r_c1, r_c2, r_c3 = st.columns([1.2, 3, 1.2, 1], vertical_alignment="center")
+                    r_img, r_c1, r_c2, r_c3 = st.columns([1.5, 3, 1, 1], vertical_alignment="center")
                     
-                    # 购物车缩略图
                     img_data = image_lookup.get(f"{ci['product_name']}_{ci['variant']}")
                     if img_data:
                         r_img.image(img_data, use_container_width=True)
@@ -105,7 +146,7 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                         r_img.markdown("<div style='height:30px; background:#f0f2f6; border-radius:3px;'></div>", unsafe_allow_html=True)
                         
                     r_c1.markdown(f"<span style='font-size:13px; font-weight:bold;'>{ci['product_name']}</span><br><span style='font-size:11px; color:gray;'>{ci['variant']}</span>", unsafe_allow_html=True)
-                    r_c2.write(f"x{ci['qty']}")
+                    r_c2.markdown(f"**x {ci['qty']}**")
                     
                     if r_c3.button("❌", key=f"rem_{idx}", help="移除一项"):
                         cart_key = f"{ci['product_name']}_{ci['variant']}"
@@ -115,10 +156,20 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                         st.rerun()
 
             st.divider()
-            pay_method = st.radio("支付", ["现金", "PayPay"], horizontal=True)
+            
+            # --- 触控版支付方式选择 ---
+            st.markdown("**选择支付方式:**")
+            c_pay1, c_pay2 = st.columns(2)
+            if c_pay1.button("💵 现金", type="primary" if st.session_state.pos_pay_method == "现金" else "secondary", use_container_width=True):
+                st.session_state.pos_pay_method = "现金"
+                st.rerun()
+            if c_pay2.button("📱 PayPay", type="primary" if st.session_state.pos_pay_method == "PayPay" else "secondary", use_container_width=True):
+                st.session_state.pos_pay_method = "PayPay"
+                st.rerun()
+                
+            pay_method = st.session_state.pos_pay_method
             fee = total_amount * 0.0198 if pay_method == "PayPay" else 0.0
             
-            # ✨ 优化价格显示逻辑
             st.markdown(f"**小计: <span style='color:red; font-size:24px;'>{total_amount:,.2f} {template.currency}</span>**", unsafe_allow_html=True)
             if pay_method == "PayPay":
                 st.markdown(
@@ -127,7 +178,7 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                     unsafe_allow_html=True
                 )
             
-            # ✨ 收款账户智能默认匹配
+            # --- 收款账户智能匹配 ---
             valid_accs = [a for a in all_cash_assets if a.currency == template.currency]
             acc_opts = {a.name: a.id for a in valid_accs}
             acc_names = list(acc_opts.keys())
@@ -136,13 +187,11 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
             if acc_names:
                 default_idx = 0
                 if pay_method == "现金":
-                    # 现金支付寻找日元临时账户
                     for i, name in enumerate(acc_names):
                         if "日元临时" in name or "现金" in name:
                             default_idx = i
                             break
                 elif pay_method == "PayPay":
-                    # PayPay支付寻找PayPay账户（不区分大小写）
                     for i, name in enumerate(acc_names):
                         if "paypay" in name.lower():
                             default_idx = i
@@ -153,7 +202,10 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
             else:
                 st.error(f"缺少 {template.currency} 现金账户！")
                 
-            if st.button("✅ 完成交易", type="primary", use_container_width=True, disabled=(not cart_items or not target_acc_id)):
+            st.write("") 
+            # ✨ 插入隐形标记，由上方的 CSS 捕捉并放大紧随其后的按钮
+            st.markdown('<div class="checkout-btn-marker"></div>', unsafe_allow_html=True)
+            if st.button("完成交易", type="primary", use_container_width=True, disabled=(not cart_items or not target_acc_id)):
                 try:
                     svc = OfflineSalesService(db)
                     order_no, net_in = svc.checkout_offline_order(
@@ -168,9 +220,9 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                 except Exception as e:
                     st.error(f"失败: {e}")
 
-    # 历史列表
+    # ================= 底部：历史订单列表 =================
     st.divider()
-    st.subheader("📜 历史交易 (当前模板)")
+    st.subheader(f"📜 [{template.name}] 历史交易")
     svc = OfflineSalesService(db)
     orders = svc.get_orders_by_template(template.code)
     if orders:
@@ -209,7 +261,6 @@ def show_offline_sales_page(db):
     all_prods = ProductService(db).get_all_products()
     image_lookup = {f"{p.name}_{c.color_name}": c.image_data for p in all_prods for c in p.colors}
     
-    # 获取现有仓库和平台列表
     warehouses = InventoryService(db).get_all_warehouses()
     wh_opts = {w.name: w.id for w in warehouses}
     platform_list = list(PLATFORM_CODES.values())
@@ -217,13 +268,25 @@ def show_offline_sales_page(db):
     tab_pos, tab_tpl = st.tabs(["💻 POS 收银台", "⚙️ 模板配置"])
     
     with tab_pos:
-        if not templates: st.warning("请先创建模板")
+        if not templates: 
+            st.warning("请先创建模板")
         else:
             tpl_map = {f"{t.name} ({t.code})": t for t in templates}
-            sel_tpl = st.selectbox("当前活动模板", list(tpl_map.keys()))
-            active_tpl = tpl_map[sel_tpl]
+            tpl_names = list(tpl_map.keys())
+            
+            # ✨ 记录当前选中的模板到 session_state，以便全屏时隐藏下拉框也能记住
+            if "active_tpl_name" not in st.session_state or st.session_state.active_tpl_name not in tpl_names:
+                st.session_state.active_tpl_name = tpl_names[0]
+            
+            # ✨ 如果处于全屏模式，则彻底隐藏顶部的模板选择下拉框
+            if not st.session_state.get("pos_fullscreen", False):
+                sel_tpl = st.selectbox("当前活动模板", tpl_names, index=tpl_names.index(st.session_state.active_tpl_name))
+                st.session_state.active_tpl_name = sel_tpl
+                st.divider()
+                
+            active_tpl = tpl_map[st.session_state.active_tpl_name]
             all_cash = [a for a in FinanceService.get_transferable_assets(db) if getattr(a, 'asset_type', '') == "现金"]
-            st.divider()
+            
             render_pos_machine(db, active_tpl, all_cash, image_lookup)
             
     with tab_tpl:
