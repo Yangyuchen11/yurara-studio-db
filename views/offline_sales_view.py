@@ -35,7 +35,7 @@ def get_warehouse_stock_map(db, warehouse_id):
 
 @fragment_decorator
 def render_pos_machine(db, template, all_cash_assets, image_lookup):
-    """POS收银机：全屏沉浸模式、巨型结账按钮、触屏优化"""
+    """POS收银机：真·浏览器全屏、巨型结账按钮、触屏优化"""
     
     # 状态初始化
     if "offline_cart" not in st.session_state:
@@ -45,6 +45,35 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
     if "pos_pay_method" not in st.session_state:
         st.session_state.pos_pay_method = "现金"
 
+    # ================= 浏览器底层全屏 API 探针注入 (黑科技) =================
+    # 利用 img onerror 绕过 iframe 沙盒，直接在父级 document 绑定真实点击事件
+    st.markdown('''
+    <img src="empty" onerror="
+        if (!document.getElementById('pos-fs-listener')) {
+            const s = document.createElement('script');
+            s.id = 'pos-fs-listener';
+            s.innerHTML = `
+                document.addEventListener('click', function(e) {
+                    let t = e.target;
+                    while (t && t.tagName !== 'BUTTON') { t = t.parentElement; }
+                    if (t && t.tagName === 'BUTTON') {
+                        if (t.innerText.includes('全屏模式')) {
+                            let docElm = document.documentElement;
+                            // 兼容 Chrome/Edge 和 iPad Safari 的全屏调用
+                            if (docElm.requestFullscreen) { docElm.requestFullscreen().catch(err=>console.log(err)); }
+                            else if (docElm.webkitRequestFullscreen) { docElm.webkitRequestFullscreen(); }
+                        } else if (t.innerText.includes('退出全屏')) {
+                            if (document.exitFullscreen) { document.exitFullscreen().catch(err=>console.log(err)); }
+                            else if (document.webkitExitFullscreen) { document.webkitExitFullscreen(); }
+                        }
+                    }
+                });
+            `;
+            document.head.appendChild(s);
+        }
+    " style="display:none;">
+    ''', unsafe_allow_html=True)
+
     # ================= 沉浸式全屏与巨型按钮 CSS 注入 =================
     if st.session_state.pos_fullscreen:
         st.markdown("""
@@ -53,7 +82,7 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
         [data-testid="stSidebar"] {display: none !important;}
         header {display: none !important;}
         [data-testid="stTabs"] [data-baseweb="tab-list"] {display: none !important;}
-        /* 扩展主工作区宽度，减少内边距 */
+        /* 扩展主工作区宽度，消除所有多余边距 */
         .block-container {padding-top: 1rem !important; padding-bottom: 1rem !important; max-width: 100% !important;}
         </style>
         """, unsafe_allow_html=True)
@@ -205,7 +234,7 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
             st.write("") 
             # ✨ 插入隐形标记，由上方的 CSS 捕捉并放大紧随其后的按钮
             st.markdown('<div class="checkout-btn-marker"></div>', unsafe_allow_html=True)
-            if st.button("完成交易", type="primary", use_container_width=True, disabled=(not cart_items or not target_acc_id)):
+            if st.button("✅ 完成交易", type="primary", use_container_width=True, disabled=(not cart_items or not target_acc_id)):
                 try:
                     svc = OfflineSalesService(db)
                     order_no, net_in = svc.checkout_offline_order(
@@ -274,11 +303,10 @@ def show_offline_sales_page(db):
             tpl_map = {f"{t.name} ({t.code})": t for t in templates}
             tpl_names = list(tpl_map.keys())
             
-            # ✨ 记录当前选中的模板到 session_state，以便全屏时隐藏下拉框也能记住
             if "active_tpl_name" not in st.session_state or st.session_state.active_tpl_name not in tpl_names:
                 st.session_state.active_tpl_name = tpl_names[0]
             
-            # ✨ 如果处于全屏模式，则彻底隐藏顶部的模板选择下拉框
+            # 全屏时隐藏选择框
             if not st.session_state.get("pos_fullscreen", False):
                 sel_tpl = st.selectbox("当前活动模板", tpl_names, index=tpl_names.index(st.session_state.active_tpl_name))
                 st.session_state.active_tpl_name = sel_tpl
