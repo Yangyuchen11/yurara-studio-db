@@ -78,30 +78,29 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
         header {display: none !important;}
         [data-testid="stTabs"] [data-baseweb="tab-list"] {display: none !important;}
         
+        /* 核心修改：允许页面纵向滚动 */
         html, body, [data-testid="stAppViewContainer"], .main {
-            overflow: hidden !important;
-            height: 100vh !important;
-        }
-        .block-container {
-            padding: 0.5rem 1.5rem !important; /* 给左右边缘留出 1.5rem 空间 */
-            max-width: 100% !important;
-            height: 100vh !important;
-            overflow: hidden !important;
+            overflow-y: auto !important; /* 允许滚动 */
+            height: auto !important;     /* 高度根据内容自适应 */
+            min-height: 100vh !important;
         }
         
-        /* 强制对齐：移除左侧标题顶部间距，调整右侧列位移 */
+        .block-container {
+            padding: 0.5rem 1.5rem !important;
+            max-width: 100% !important;
+            height: auto !important;      /* 确保容器不会被截断 */
+            overflow: visible !important;
+        }
+        
+        /* 针对左侧商品列表和右侧购物车，如果内容过多，也可以保持内部滚动 */
+        .pos-scroll-marker {
+            display: block;
+        }
+
+        /* 强制对齐修正 */
         div[data-testid="column"]:nth-child(1) h3 {
             margin-top: 0 !important;
             padding-top: 5px !important;
-        }
-        div[data-testid="column"]:nth-child(2) div[data-testid="stVerticalBlock"] > div:nth-child(2) {
-            margin-top: 0px !important; /* 修正上边框对齐 */
-        }
-
-        /* 购物车列表高度自适应：100%屏幕减去顶部按钮和底部结算区高度 */
-        div[data-testid="stElementContainer"]:has(.cart-list-marker) + div[data-testid="stVerticalBlockBorderWrapper"] {
-            height: calc(100vh - 440px) !important; 
-            min-height: 150px !important;
         }
         """
 
