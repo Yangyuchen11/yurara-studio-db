@@ -232,28 +232,30 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
             cart_items = list(st.session_state.offline_cart.values())
             total_amount = sum(ci["qty"] * ci["unit_price"] for ci in cart_items)
             
-            if not cart_items: 
-                st.caption("购物车为空")
-            else:
-                # ================= 恢复：结账单内带缩略图的列表 =================
-                for idx, ci in enumerate(cart_items):
-                    r_img, r_c1, r_c2, r_c3 = st.columns([1.5, 3, 1, 1], vertical_alignment="center")
-                    
-                    img_data = image_lookup.get(f"{ci['product_name']}_{ci['variant']}")
-                    if img_data:
-                        r_img.image(img_data, use_container_width=True)
-                    else:
-                        r_img.markdown("<div style='height:30px; background:#f0f2f6; border-radius:3px;'></div>", unsafe_allow_html=True)
+            # 【修复】使用定高容器，让商品列表自己滚动，把底下的结账按钮永远卡在最底下
+            with st.container(height=350, border=False):
+                if not cart_items: 
+                    st.caption("购物车为空")
+                else:
+                    # ================= 结账单内带缩略图的列表 =================
+                    for idx, ci in enumerate(cart_items):
+                        r_img, r_c1, r_c2, r_c3 = st.columns([1.5, 3, 1, 1], vertical_alignment="center")
                         
-                    r_c1.markdown(f"<span style='font-size:13px; font-weight:bold;'>{ci['product_name']}</span><br><span style='font-size:11px; color:gray;'>{ci['variant']}</span>", unsafe_allow_html=True)
-                    r_c2.markdown(f"**x {ci['qty']}**")
-                    
-                    if r_c3.button("❌", key=f"rem_{idx}", help="移除一项"):
-                        cart_key = f"{ci['product_name']}_{ci['variant']}"
-                        st.session_state.offline_cart[cart_key]["qty"] -= 1
-                        if st.session_state.offline_cart[cart_key]["qty"] <= 0:
-                            del st.session_state.offline_cart[cart_key]
-                        st.rerun()
+                        img_data = image_lookup.get(f"{ci['product_name']}_{ci['variant']}")
+                        if img_data:
+                            r_img.image(img_data, use_container_width=True)
+                        else:
+                            r_img.markdown("<div style='height:30px; background:#f0f2f6; border-radius:3px;'></div>", unsafe_allow_html=True)
+                            
+                        r_c1.markdown(f"<span style='font-size:13px; font-weight:bold;'>{ci['product_name']}</span><br><span style='font-size:11px; color:gray;'>{ci['variant']}</span>", unsafe_allow_html=True)
+                        r_c2.markdown(f"**x {ci['qty']}**")
+                        
+                        if r_c3.button("❌", key=f"rem_{idx}", help="移除一项"):
+                            cart_key = f"{ci['product_name']}_{ci['variant']}"
+                            st.session_state.offline_cart[cart_key]["qty"] -= 1
+                            if st.session_state.offline_cart[cart_key]["qty"] <= 0:
+                                del st.session_state.offline_cart[cart_key]
+                            st.rerun()
                 # ===============================================================
 
             st.divider()
@@ -325,7 +327,8 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
             st.info("该模板暂无销售记录。")
                          
 def show_offline_sales_page(db):
-    st.header("🏪 线下展会模式")
+    if not st.session_state.get("pos_fullscreen", False):
+        st.header("🏪 线下展会模式")
     svc = OfflineSalesService(db)
     templates = svc.get_all_templates()
     all_prods = ProductService(db).get_all_products()
