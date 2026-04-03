@@ -67,6 +67,10 @@ class FinanceService:
                 if r.currency == "CNY": running_cny += r.amount
                 elif r.currency == "JPY": running_jpy += r.amount
                 
+                url_str = r.url.strip() if r.url else ""
+                if url_str and not url_str.startswith(("http://", "https://")):
+                    url_str = "https://" + url_str
+
                 processed_data.append({
                     "ID": r.id, 
                     "日期": r.date, 
@@ -341,6 +345,19 @@ class FinanceService:
                     target_cost.actual_cost += cost_in_cny
                     if final_remark:
                         target_cost.remarks = f"{target_cost.remarks} | {final_remark}" if target_cost.remarks else final_remark
+                    # 正确更新预算项的原币金额和币种
+                    if getattr(target_cost, 'original_amount', None) is None or target_cost.actual_cost == cost_in_cny:
+                        # 第一次付款，直接覆盖为当前付款的币种和金额
+                        target_cost.currency = base_data['currency']
+                        target_cost.original_amount = base_data['amount']
+                    elif target_cost.currency == base_data['currency']:
+                        # 同一币种多次付款，直接累加原币金额
+                        target_cost.original_amount += base_data['amount']
+                    else:
+                        # 如果存在不同币种混合付款给同一个预算项，退回CNY折算显示，防止单位错乱
+                        target_cost.currency = 'CNY'
+                        target_cost.original_amount = target_cost.actual_cost
+                    
                     new_record.related_item_id = target_cost.id
                     link_msg += f" + 累加实付至预算[{target_cost.item_name}]"
                     
@@ -354,7 +371,8 @@ class FinanceService:
                     actual_cost=cost_in_cny, supplier=base_data['shop'], category=detailed_cat,
                     unit_price=unit_price_cny, quantity=link_config['qty'], 
                     remarks=final_remark, finance_record_id=new_record.id,
-                    url=base_data.get('url', '')
+                    url=base_data.get('url', ''),
+                    currency=base_data['currency'], original_amount=base_data['amount']
                 )
                 db.add(new_cost)
                 
@@ -413,6 +431,141 @@ class FinanceService:
         db.commit()
         return link_msg
 
+    @staticmethod
+    def create_batch_expense_transaction(db, base_data, batch_config, items_data, exchange_rate):
+        """
+        处理批量录入：将一个同来源、同账户的订单拆分为多条资产/成本项记录，
+        并支持记录统一的邮费。
+        """
+        acc_id = base_data.get('account_id')
+        target_cash = FinanceService.get_cash_asset_by_id(db, acc_id)
+        if not target_cash:
+            raise ValueError("指定的现金账户不存在")
+
+        shipping_fee = batch_config.get("shipping_fee", 0.0)
+        items_total = sum(item['amount'] for item in items_data)
+        
+        if items_total <= 0 and shipping_fee <= 0:
+            raise ValueError("有效记录总金额必须大于0")
+
+        # 1. 记录购入物品的主体流水账及关联资产项
+        if items_total > 0:
+            item_desc = f"购入 {len(items_data)} 项"
+            if base_data['shop']: item_desc += f" [{base_data['shop']}]"
+            item_desc += f" [账户: {target_cash.name}]"
+            
+            # ✨ 新增：提取批量物品中的第一个网址，作为总账流水的展示链接
+            first_url = ""
+            for item in items_data:
+                if item.get('url'):
+                    first_url = item['url']
+                    break
+
+            # 生成一条针对物品总价的流水
+            main_rec = FinanceRecord(
+                date=base_data['date'], amount=-items_total, currency=base_data['currency'],
+                category=base_data['category'], description=item_desc, account_id=target_cash.id,
+                url=first_url
+            )
+            db.add(main_rec)
+            db.flush() # 获得流水 ID
+            target_cash.amount -= items_total
+            
+            # 遍历并写入所有细项
+            for item in items_data:
+                rate = exchange_rate if base_data['currency'] == "JPY" else 1.0
+                val_cny = item['amount'] * rate
+                unit_price_cny = val_cny / item['qty'] if item['qty'] else 0
+                
+                if base_data['category'] == "商品成本":
+                    new_cost = CostItem(
+                        product_id=batch_config['product_id'], item_name=item['name'],
+                        actual_cost=val_cny, supplier=base_data['shop'], category=batch_config['cost_cat'],
+                        unit_price=unit_price_cny, quantity=item['qty'], remarks=item['desc'],
+                        finance_record_id=main_rec.id, url=item.get('url', ''),
+                        currency=base_data['currency'], original_amount=item['amount']
+                    )
+                    db.add(new_cost)
+                
+                elif base_data['category'] == "固定资产购入":
+                    db.add(FixedAsset(
+                        name=item['name'], unit_price=item['amount']/item['qty'] if item['qty'] else 0,
+                        quantity=item['qty'], remaining_qty=item['qty'],
+                        shop_name=base_data['shop'], remarks=item['desc'],
+                        currency=base_data['currency'], finance_record_id=main_rec.id, url=item.get('url', '')
+                    ))
+                
+                elif base_data['category'] == "其他资产购入":
+                    # 其他资产有合并同名项的逻辑
+                    target_item = db.query(ConsumableItem).filter(ConsumableItem.name == item['name']).first()
+                    if target_item:
+                        old_total = target_item.unit_price * target_item.remaining_qty
+                        target_item.remaining_qty += item['qty']
+                        if target_item.remaining_qty > 0:
+                            target_item.unit_price = (old_total + item['amount']) / target_item.remaining_qty
+                        if base_data['shop']: target_item.shop_name = base_data['shop']
+                        if batch_config.get('asset_cat'): target_item.category = batch_config['asset_cat']
+                    else:
+                        new_con = ConsumableItem(
+                            name=item['name'], category=batch_config.get('asset_cat', '其他'),
+                            unit_price=item['amount']/item['qty'] if item['qty'] else 0,
+                            initial_quantity=item['qty'], remaining_qty=item['qty'],
+                            shop_name=base_data['shop'], remarks=item['desc'],
+                            currency=base_data['currency'], finance_record_id=main_rec.id, url=item.get('url', '')
+                        )
+                        db.add(new_con)
+                    
+                    db.add(ConsumableLog(
+                        item_name=item['name'], change_qty=item['qty'], value_cny=val_cny,
+                        note=f"批量购入入库: {item['desc']}", date=base_data['date']
+                    ))
+
+            # 更新库存与在制大货资产逻辑联动
+            if base_data['category'] == "商品成本":
+                db.flush()
+                from services.inventory_service import InventoryService
+                InventoryService(db).sync_product_metrics(batch_config['product_id'])
+
+        # 2. 独立处理共同邮费
+        if shipping_fee > 0:
+            if base_data['category'] == "商品成本":
+                shipping_desc = f"共同邮费 [{base_data['shop']}] [账户: {target_cash.name}]"
+                ship_rec = FinanceRecord(
+                    date=base_data['date'], amount=-shipping_fee, currency=base_data['currency'],
+                    category="商品成本", description=shipping_desc, account_id=target_cash.id
+                )
+                db.add(ship_rec)
+                db.flush()
+                target_cash.amount -= shipping_fee
+                
+                rate = exchange_rate if base_data['currency'] == "JPY" else 1.0
+                ship_cny = shipping_fee * rate
+                
+                new_cost = CostItem(
+                    product_id=batch_config['product_id'], item_name="共同邮费",
+                    actual_cost=ship_cny, supplier=base_data['shop'], category="物流邮费",
+                    unit_price=ship_cny, quantity=1, remarks="批量购入共用邮费",
+                    finance_record_id=ship_rec.id,
+                    currency=base_data['currency'], original_amount=shipping_fee
+                )
+                db.add(new_cost)
+                db.flush()
+                from services.inventory_service import InventoryService
+                InventoryService(db).sync_product_metrics(batch_config['product_id'])
+            
+            else:
+                # 针对固定资产和其他资产，邮费计入支出细分的【其他】
+                shipping_desc = f"共同购入邮费 [{base_data['shop']}] [账户: {target_cash.name}]"
+                ship_rec = FinanceRecord(
+                    date=base_data['date'], amount=-shipping_fee, currency=base_data['currency'],
+                    category="其他", description=shipping_desc, account_id=target_cash.id
+                )
+                db.add(ship_rec)
+                target_cash.amount -= shipping_fee
+
+        db.commit()
+        return "批量录入与账单切割成功"
+
     # ================= 编辑与删除 =================
 
     @staticmethod
@@ -423,6 +576,16 @@ class FinanceService:
     def update_record(db, record_id, updates):
         rec = FinanceService.get_record_by_id(db, record_id)
         if not rec: return False
+
+        # 检查这条流水是否关联了多个明细项（即是否为批量录入产生的）
+        related_costs_count = db.query(CostItem).filter(CostItem.finance_record_id == record_id).count()
+        related_fixed_assets_count = db.query(FixedAsset).filter(FixedAsset.finance_record_id == record_id).count()
+        
+        # 只要关联了大于1个的成本明细或固定资产，就拦截金额或币种的修改
+        if related_costs_count > 1 or related_fixed_assets_count > 1:
+            # 如果仅仅是修改备注、网址或者日期，可以放行；但如果修改了核心的金额、币种、账户或分类，必须拦截
+            if updates.get('amount_abs') != abs(rec.amount) or updates.get('currency') != rec.currency:
+                raise ValueError("⚠️ 保护机制触发：该流水包含批量录入的多个明细物品。为保证成本分摊数据的准确性，不支持直接修改总金额。请【删除】该流水后重新批量录入。")
 
         # 1. 精准回滚旧账户的资金
         old_cash_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == rec.account_id).first()
@@ -458,7 +621,6 @@ class FinanceService:
         rec.account_id = new_cash_asset.id # ✨ 强绑定用户指定的账户ID
         
         # 4. 级联更新关联表
-        # ✨ 对于关联在已有预算项上的实付更新
         product_id_to_sync = None
         if rec.category == "商品成本" and rec.related_item_id:
             target_cost = db.query(CostItem).filter(CostItem.id == rec.related_item_id).first()
@@ -467,10 +629,20 @@ class FinanceService:
                 target_cost.remarks = f"{updates['desc']} (已修)"
                 product_id_to_sync = target_cost.product_id 
         else:
-            for cost in db.query(CostItem).filter(CostItem.finance_record_id == record_id).all():
-                cost.actual_cost = updates['amount_abs']
+            # 修改：只有在明细数量为1时，才同步更新金额；否则只更新备注
+            all_costs = db.query(CostItem).filter(CostItem.finance_record_id == record_id).all()
+            for cost in all_costs:
+                if len(all_costs) == 1:
+                    cost.actual_cost = updates['amount_abs']
                 cost.remarks = f"{updates['desc']} (已修)"
                 product_id_to_sync = cost.product_id
+            
+        all_fas = db.query(FixedAsset).filter(FixedAsset.finance_record_id == record_id).all()
+        for fa in all_fas:
+            if len(all_fas) == 1 and fa.quantity > 0: 
+                fa.unit_price = updates['amount_abs'] / fa.quantity
+            fa.currency = updates['currency'] 
+            fa.remarks = updates['desc'] # 同步更新备注
             
         for fa in db.query(FixedAsset).filter(FixedAsset.finance_record_id == record_id).all():
             if fa.quantity > 0: fa.unit_price = updates['amount_abs'] / fa.quantity

@@ -215,7 +215,8 @@ class SalesOrderService:
         # ✨ 强绑定订单和账户 ID
         self.db.add(FinanceRecord(
             date=complete_date, amount=actual_income, currency=order.currency,
-            category=FinanceCategory.SALES_INCOME, description=f"订单收款: {order.order_no} (平台:{order.platform})",
+            category=FinanceCategory.SALES_INCOME, 
+            description=f"订单收款: {order.order_no} (平台:{order.platform}) [账户: {asset_name}]",
             order_id=order.id, account_id=target_acc.id if target_acc else None
         ))
 
@@ -279,7 +280,8 @@ class SalesOrderService:
             # ✨ 强绑定订单和账户 ID
             self.db.add(FinanceRecord(
                 date=refund_date, amount=-refund_amount, currency=order.currency,
-                category=FinanceCategory.SALES_INCOME, description=f"订单退款: {order.order_no} - {refund_reason}",
+                category=FinanceCategory.SALES_INCOME, 
+                description=f"订单退款: {order.order_no} - {refund_reason} [账户: {asset_name}]",
                 order_id=order.id, account_id=target_acc.id if target_acc else None
             ))
         else:
@@ -548,10 +550,35 @@ class SalesOrderService:
 
             platform_lower = platform.lower()
             fee = 0.0
-            if "微店" in platform_lower: fee = gross_price * 0.006
-            elif "booth" in platform_lower: fee = gross_price * 0.056 + (22 if currency == "JPY" else 1.0)
+            shipping_and_other = 0.0
+            
+            if "booth" in platform_lower:
+                preset_item_total = 0.0
+                for item in items_data:
+                    # 抓取系统中该商品在 Booth 平台的预设售价
+                    target_p = self.db.query(Product).filter(Product.name == item["product_name"]).first()
+                    if target_p:
+                        target_c = next((c for c in target_p.colors if c.color_name == item["variant"]), None)
+                        if target_c:
+                            # ✨ 修复点：统一转为小写匹配
+                            target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
+                            preset_item_total += target_price * item["quantity"]
                 
-            net_price = gross_price - fee
+                # ✨ 增加安全防御
+                if preset_item_total > 0:
+                    shipping_and_other = max(0.0, gross_price - preset_item_total)
+                else:
+                    shipping_and_other = 0.0
+                
+                # Booth 最新费率：5.6% + 45 JPY (非日元时折算约 2.16 CNY)
+                base_fixed_fee = 45 if currency == "JPY" else 2.16
+                fee = gross_price * 0.056 + base_fixed_fee
+                
+            elif "微店" in platform_lower:
+                fee = gross_price * 0.006
+                
+            # 核心：真正的商品净收必须剥离邮费与手续费
+            net_price = gross_price - fee - shipping_and_other
             
             if net_price <= 0:
                 errors.append(f"订单号 {order_no}: 扣除手续费后的净金额({net_price:.2f}) 小于等于 0")

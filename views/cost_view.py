@@ -91,18 +91,26 @@ def show_cost_page(db):
                 for i in cat_items:
                     is_budget_item = (i.supplier == "预算设定")
                     
+                    # ✨ 获取原币种和原金额（做了兼容处理，防止历史老数据报错）
+                    curr = getattr(i, 'currency', None) or "CNY"
+                    orig_amt = getattr(i, 'original_amount', None)
+                    if orig_amt is None:
+                        orig_amt = i.actual_cost
+
                     budget_qty = i.quantity if is_budget_item else None
                     budget_unit_price = i.unit_price if is_budget_item else None
                     budget_total = (i.unit_price * i.quantity) if is_budget_item else None
                     
                     actual_qty = i.quantity if not is_budget_item else None
-                    actual_total = i.actual_cost
-                    actual_unit_price = (i.actual_cost / i.quantity) if (not is_budget_item and i.quantity > 0) else None
+                    # ✨ 这里将表格呈现的金额替换为原币金额
+                    actual_total = orig_amt 
+                    actual_unit_price = (orig_amt / i.quantity) if (not is_budget_item and i.quantity > 0) else None
 
                     data_list.append({
                         "_id": i.id,
                         "支出内容": i.item_name,
                         "单位": i.unit or "",
+                        "币种": curr,  # ✨ 新增的一列
                         "预算数量": budget_qty or 0,
                         "预算单价": budget_unit_price or 0,
                         "预算总价": budget_total or 0,
@@ -119,11 +127,12 @@ def show_cost_page(db):
                 df = pd.DataFrame(data_list)
                 
                 if cat in service.DETAILED_CATS:
-                    col_order = ["支出内容", "单位", "预算数量", "预算单价", "预算总价", "实际数量", "实付单价", "实付总价", "供应商", "相关链接", "备注"]
+                    col_order = ["支出内容", "单位", "币种", "预算数量", "预算单价", "预算总价", "实际数量", "实付单价", "实付总价", "供应商", "相关链接", "备注"]
                     col_cfg = {
                         "_id": None, "_is_budget": None,
                         "支出内容": st.column_config.TextColumn(disabled=True),
-                        "单位": st.column_config.TextColumn(), 
+                        "单位": st.column_config.TextColumn(),
+                        "币种": st.column_config.TextColumn(disabled=True), 
                         "预算数量": st.column_config.NumberColumn(min_value=0.0, step=0.01, format="%.2f"),
                         "预算单价": st.column_config.NumberColumn(min_value=0.0, step=0.01, format="¥ %.2f"),
                         "预算总价": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
@@ -135,10 +144,11 @@ def show_cost_page(db):
                         "备注": st.column_config.TextColumn(),
                     }
                 else:
-                    col_order = ["支出内容", "预算总价", "实付总价", "供应商", "相关链接", "备注"]
+                    col_order = ["支出内容", "币种", "预算总价", "实付总价", "供应商", "相关链接", "备注"]
                     col_cfg = {
                         "_id": None, "_is_budget": None,
                         "支出内容": st.column_config.TextColumn(disabled=True),
+                        "币种": st.column_config.TextColumn(disabled=True),
                         "预算总价": st.column_config.NumberColumn(min_value=0.0, step=10.0, format="¥ %.2f"),
                         "实付总价": st.column_config.NumberColumn(format="¥ %.2f", disabled=True),
                         "供应商": st.column_config.TextColumn(),

@@ -42,6 +42,11 @@ def render_add_transaction_form(exchange_rate):
     # 局部组件内使用动态分配的 session
     db_frag = st.session_state.get_dynamic_session()
     try:
+        # ✨ 新增：引入动态表单版本号，用于提交成功后一键清空所有输入框和表格
+        if "fin_form_ver" not in st.session_state:
+            st.session_state.fin_form_ver = 0
+        fv = st.session_state.fin_form_ver
+        
         # 获取所有的现金账户资源
         all_cash_assets = [a for a in FinanceService.get_transferable_assets(db_frag) if getattr(a, 'asset_type', '') == "现金"]
         
@@ -96,13 +101,13 @@ def render_add_transaction_form(exchange_rate):
                 
                 st.markdown("##### 3. 交易金额")
                 c_ex1, c_ex2 = st.columns(2)
-                amount_out = c_ex1.number_input(f"流出金额 ({source_curr})", min_value=0.0, step=100.0, format="%.2f")
-                
+                # ✨ 绑定 fv
+                amount_out = c_ex1.number_input(f"流出金额 ({source_curr})", min_value=0.0, step=100.0, format="%.2f", key=f"ex_out_{fv}")
                 est_val = amount_out / exchange_rate if source_curr == "CNY" else amount_out * exchange_rate
-                amount_in = c_ex2.number_input(f"入账金额 ({target_curr})", value=est_val, min_value=0.0, step=100.0, format="%.2f", help="自动按系统汇率估算，可手动修正实收金额")
+                amount_in = c_ex2.number_input(f"入账金额 ({target_curr})", value=est_val, min_value=0.0, step=100.0, format="%.2f", help="自动按系统汇率估算", key=f"ex_in_{fv}")
                 
                 st.markdown("##### 4. 附加信息")
-                desc = st.text_input("备注说明", placeholder="如：支付宝购汇、信用卡日元结算账单等")
+                desc = st.text_input("备注说明", placeholder="如：支付宝购汇、信用卡日元结算账单等", key=f"ex_desc_{fv}")
                 
                 st.write("")
                 if st.button("💾 确认兑换", type="primary", width="stretch"):
@@ -112,6 +117,7 @@ def render_add_transaction_form(exchange_rate):
                         try:
                             FinanceService.execute_exchange(db_frag, f_date, source_curr, target_curr, amount_out, amount_in, desc, source_acc_id, target_acc_id)
                             st.toast(f"兑换成功：-{amount_out}{source_curr}, +{amount_in}{target_curr}", icon="💱")
+                            st.session_state.fin_form_ver += 1 # ✨ 成功后版本号+1，一键清空输入框
                             sync_all_caches()
                             st.rerun()
                         except Exception as e:
@@ -125,20 +131,20 @@ def render_add_transaction_form(exchange_rate):
                 if "新增" in debt_op:
                     st.markdown("##### 2. 债务内容")
                     c_t1, c_t2 = st.columns(2)
-                    d_name = c_t1.text_input("债务名称", placeholder="如：银行经营贷、欠某加工厂货款 (必填)")
+                    d_name = c_t1.text_input("债务名称", placeholder="如：银行经营贷、欠某加工厂货款 (必填)", key=f"debt_n_{fv}")
                     
                     dest_options = ["存入流动资金 (拿到现金)", "新增资产项 (形成实物/账面资产)"]
                     dest = c_t2.selectbox("借入价值去向", dest_options)
                     is_to_cash = (dest == dest_options[0])
                     
                     if is_to_cash:
-                        rel_content = "" # 不需要填资产名
+                        rel_content = ""
                     else:
-                        rel_content = st.text_input("新增挂账资产名称", placeholder="如：未付款的打印机 (必填)")
+                        rel_content = st.text_input("新增挂账资产名称", placeholder="如：未付款的打印机 (必填)", key=f"debt_rel_{fv}")
 
                     st.markdown("##### 3. 交易金额、币种与账户")
                     c_d1, c_curr = st.columns([1.5, 1])
-                    d_amount = c_d1.number_input("金额", min_value=0.0, step=100.0)
+                    d_amount = c_d1.number_input("金额", min_value=0.0, step=100.0, key=f"debt_amt_{fv}")
                     curr = c_curr.selectbox("币种", ["CNY", "JPY"])
 
                     target_acc_id = None
@@ -153,8 +159,8 @@ def render_add_transaction_form(exchange_rate):
 
                     st.markdown("##### 4. 附加信息")
                     c_add1, c_add2 = st.columns(2)
-                    d_source = c_add1.text_input("债权人/资金来源", placeholder="如：工商银行、加工厂A")
-                    d_remark = c_add2.text_input("备注说明")
+                    d_source = c_add1.text_input("债权人/资金来源", placeholder="如：工商银行、加工厂A", key=f"debt_src_{fv}")
+                    d_remark = c_add2.text_input("备注说明", key=f"debt_rem_{fv}")
 
                     st.write("")
                     if st.button("💾 确认新增债务", type="primary", width="stretch"):
@@ -167,6 +173,7 @@ def render_add_transaction_form(exchange_rate):
                                     is_to_cash=is_to_cash, related_content=rel_content, target_acc_id=target_acc_id
                                 )
                                 st.toast("债务记录成功", icon="📝")
+                                st.session_state.fin_form_ver += 1
                                 sync_all_caches()
                                 st.rerun()
                             except Exception as e:
@@ -190,7 +197,7 @@ def render_add_transaction_form(exchange_rate):
                         
                         if "资金" in repay_type:
                             c_r1, c_curr = st.columns([1.5, 1])
-                            amt = c_r1.number_input("偿还金额", min_value=0.0, step=100.0, max_value=max_repay, value=max_repay)
+                            amt = c_r1.number_input("偿还金额", min_value=0.0, step=100.0, max_value=max_repay, value=max_repay, key=f"repay_amt_{fv}")
                             c_curr.info(f"结算币种: **{curr}**")
                             
                             source_acc_id = None
@@ -203,13 +210,14 @@ def render_add_transaction_form(exchange_rate):
                                 st.warning(f"该币种 ({curr}) 暂无现金账户，系统将自动扣减默认账户。")
                             
                             st.markdown("##### 4. 附加信息")
-                            rem = st.text_input("备注说明", placeholder="选填")
+                            rem = st.text_input("备注说明", placeholder="选填", key=f"repay_rem_{fv}")
                             
                             st.write("")
                             if st.button("💾 确认资金还款", type="primary", width="stretch"):
                                 try:
                                     FinanceService.repay_debt(db_frag, f_date, sel_id, amt, rem, source_acc_id)
                                     st.toast("还款成功", icon="💸")
+                                    st.session_state.fin_form_ver += 1
                                     sync_all_caches()
                                     st.rerun()
                                 except Exception as e:
@@ -220,16 +228,17 @@ def render_add_transaction_form(exchange_rate):
                             
                             c_a1, c_a2 = st.columns([2, 1.5])
                             asset_label = c_a1.selectbox("选择用于抵消的资产", list(asset_map.keys()))
-                            amt = c_a2.number_input("用于抵消的账面金额", min_value=0.0, max_value=max_repay, value=max_repay)
+                            amt = c_a2.number_input("用于抵消的账面金额", min_value=0.0, max_value=max_repay, value=max_repay, key=f"off_amt_{fv}")
                             
                             st.markdown("##### 4. 附加信息")
-                            rem = st.text_input("备注说明", placeholder="选填")
+                            rem = st.text_input("备注说明", placeholder="选填", key=f"off_rem_{fv}")
                             
                             st.write("")
                             if st.button("💾 确认资产抵消", type="primary", width="stretch"):
                                 try:
                                     FinanceService.offset_debt(db_frag, f_date, sel_id, asset_map[asset_label], amt, rem)
                                     st.toast("抵消成功", icon="🔄")
+                                    st.session_state.fin_form_ver += 1
                                     sync_all_caches()
                                     st.rerun()
                                 except Exception as e:
@@ -247,185 +256,295 @@ def render_add_transaction_form(exchange_rate):
                     cats = ["商品成本", "固定资产购入", "其他资产购入", "撤资", "现有资产减少", "其他"]
                     base_data["category"] = c_cat1.selectbox("支出细分类型", cats)
 
-                # --- 2. 业务内容 ---
-                st.markdown("##### 2. 业务内容")
-                needs_qty = False
                 cat = base_data["category"]
-                
-                if cat == "投资":
-                    equities = FinanceService.get_balance_items(db_frag, "equity")
-                    eq_opts = ["➕ 新增资本项目"] + [e.name for e in equities]
-                    c_eq1, c_eq2 = st.columns([1.5, 2])
-                    sel_eq = c_eq1.selectbox("投资归属项目", eq_opts)
+
+                # ================= 专属：批量录入 / 匹配预算 交互区域 =================
+                if rec_type == "支出" and cat in ["商品成本", "固定资产购入", "其他资产购入"]:
+                    st.markdown("##### 2. 共同设置 (共用信息)")
+                    batch_config = {}
+                    c_share1, c_share2 = st.columns(2)
                     
-                    link_config["link_type"] = "equity"
-                    if sel_eq == "➕ 新增资本项目":
-                        link_config["is_new"] = True
-                        link_config["name"] = c_eq2.text_input("新资本项目名称", placeholder="如：股东A注资 (必填)")
+                    budget_options = {"➕ 不匹配预算 (批量录入新成本)": None}
+                    
+                    if cat == "商品成本":
+                        products = FinanceService.get_all_products(db_frag)
+                        p_opts = {p.id: p.name for p in products}
+                        batch_config["product_id"] = c_share1.selectbox("归属商品", list(p_opts.keys()), format_func=lambda x: p_opts[x])
+                        batch_config["cost_cat"] = c_share2.selectbox("共同成本分类", PRODUCT_COST_CATEGORIES)
+                        
+                        # 动态获取当前选定商品及分类下的预算项
+                        budgets = FinanceService.get_budget_items(db_frag, batch_config["product_id"], batch_config["cost_cat"])
+                        for b in budgets:
+                            budget_options[f"匹配预算: {b.item_name}"] = b.id
+                            
+                    elif cat == "其他资产购入":
+                        batch_config["asset_cat"] = c_share1.selectbox("资产子分类", ["包装材", "无实体", "备用素材", "其他", "商品周边", "办公用品"], index=0)
+                        
+                    c_share3, c_share4 = st.columns(2)
+                    batch_config["shop"] = c_share3.text_input("收款方/店铺名称", placeholder="如：某淘宝店", key=f"b_shop_{fv}")
+                    batch_config["currency"] = c_share4.selectbox("币种", ["CNY", "JPY"])
+                    
+                    valid_accs = [a for a in all_cash_assets if a.currency == batch_config["currency"]]
+                    acc_opts = {f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})": a.id for a in valid_accs}
+                    
+                    if not acc_opts:
+                        st.warning(f"该币种 ({batch_config['currency']}) 暂无现金账户。")
+                        batch_config["account_id"] = None
                     else:
+                        sel_acc = st.selectbox("操作账户", list(acc_opts.keys()))
+                        batch_config["account_id"] = acc_opts.get(sel_acc)
+
+                    # ================= 逻辑分流：是否匹配了预算？ =================
+                    selected_budget_id = None
+                    if cat == "商品成本":
+                        sel_budget_label = st.selectbox("🎯 预算项目匹配", list(budget_options.keys()))
+                        selected_budget_id = budget_options[sel_budget_label]
+
+                    if selected_budget_id is not None:
+                        # ---------------- 模式 A: 单条记录匹配预算 ----------------
+                        st.info(f"✅ 当前模式：将实付金额累加至预算 **{sel_budget_label.replace('匹配预算: ', '')}**。此模式下不支持批量拆单和单独列出邮费。")
+                        st.markdown("##### 3. 实付金额与明细")
+                        c_s1, c_s2 = st.columns(2)
+                        single_amount = c_s1.number_input("实付总额", min_value=0.0, step=10.0, format="%.2f", key=f"s_amt_{fv}")
+                        single_qty = c_s2.number_input("数量", min_value=0.01, value=1.0, key=f"s_qty_{fv}")
+                        
+                        c_s3, c_s4 = st.columns(2)
+                        single_desc = c_s3.text_input("具体成本内容/备注", placeholder="选填，将追加至原备注后", key=f"s_desc_{fv}")
+                        single_url = c_s4.text_input("购入页面网址", placeholder="选填", key=f"s_url_{fv}")
+                        
+                        st.write("")
+                        if st.button("💾 确认记账 (匹配预算)", type="primary", width="stretch"):
+                            if single_amount <= 0:
+                                st.warning("⚠️ 金额必须大于0")
+                            elif batch_config["account_id"] is None:
+                                st.warning("⚠️ 请先建立并选择账户。")
+                            else:
+                                base_data = {
+                                    "date": f_date, "type": "支出", "currency": batch_config["currency"], 
+                                    "amount": single_amount, "category": cat, "shop": batch_config["shop"], 
+                                    "desc": single_desc, "url": single_url, "account_id": batch_config["account_id"]
+                                }
+                                link_config = {
+                                    "link_type": "cost", "target_cost_id": selected_budget_id,
+                                    "name": sel_budget_label.replace("匹配预算: ", ""), 
+                                    "qty": single_qty, "unit_price": single_amount / single_qty if single_qty else 0, 
+                                    "product_id": batch_config["product_id"], "cat": batch_config["cost_cat"]
+                                }
+                                try:
+                                    msg = FinanceService.create_general_transaction(db_frag, base_data, link_config, exchange_rate)
+                                    st.toast(f"记账成功！{msg}", icon="✅")
+                                    st.session_state.fin_form_ver += 1
+                                    sync_all_caches()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"写入失败: {e}")
+
+                    else:
+                        # ---------------- 模式 B: 批量录入模式 ----------------
+                        batch_config["shipping_fee"] = st.number_input("共同邮费金额", min_value=0.0, step=10.0, format="%.2f", key=f"b_ship_{fv}")
+                        
+                        st.markdown("##### 3. 购入物品明细 (可批量录入)")
+                        st.caption("您可以新增多行，每行代表一个独立的物品记录。")
+                        
+                        # ✨ 使用带有版本的 key 初始化 DataFrame，这样版本号一旦 +1，旧的表自动被丢弃并重置！
+                        editor_state_key = f"batch_editor_state_{cat}_{fv}"
+                        if editor_state_key not in st.session_state:
+                            st.session_state[editor_state_key] = pd.DataFrame([{
+                                "内容/名称": "", "实付金额": 0.0, "数量": 1.0, "备注": "", "网址": ""
+                            }])
+                            
+                        edited_items = st.data_editor(
+                            st.session_state[editor_state_key], 
+                            num_rows="dynamic", 
+                            width="stretch", 
+                            key=f"de_{editor_state_key}", # 绑定对应的 key
+                            column_config={
+                                "内容/名称": st.column_config.TextColumn(required=True),
+                                "实付金额": st.column_config.NumberColumn(min_value=0.0, format="%.2f"),
+                                "数量": st.column_config.NumberColumn(min_value=0.01),
+                            }
+                        )
+                        
+                        # 过滤掉空行，安全地计算实付金额列的总和
+                        valid_calc_rows = edited_items[edited_items["内容/名称"].str.strip() != ""]
+                        items_sum = pd.to_numeric(valid_calc_rows["实付金额"], errors='coerce').fillna(0.0).sum()
+                        shipping_fee = batch_config["shipping_fee"]
+                        total_with_shipping = items_sum + shipping_fee
+                        
+                        # 使用 HTML 渲染一个醒目的总结算面板
+                        st.markdown(
+                            f"<div style='padding: 12px; background-color: rgba(33, 150, 243, 0.1); "
+                            f"border-radius: 8px; border-left: 5px solid #2196F3; margin-top: 10px; margin-bottom: 15px;'>"
+                            f"<div style='font-size: 14px; color: #aaa; margin-bottom: 5px;'>"
+                            f"🧾 物品小计: <b>{items_sum:,.2f}</b> {batch_config['currency']} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                            f"📦 共同邮费: <b>{shipping_fee:,.2f}</b> {batch_config['currency']}</div>"
+                            f"<div style='font-size: 18px; font-weight: bold; color: #4fc3f7;'>"
+                            f"💰 订单扣款总计: {total_with_shipping:,.2f} {batch_config['currency']}</div>"
+                            f"</div>", 
+                            unsafe_allow_html=True
+                        )
+
+                        st.write("")
+                        if st.button("💾 保存/记账", type="primary", width="stretch"):
+                            valid_rows = edited_items[edited_items["内容/名称"].str.strip() != ""]
+                            if valid_rows.empty and batch_config["shipping_fee"] <= 0:
+                                st.warning("⚠️ 请至少填写一项购入明细，或输入邮费。")
+                            elif batch_config["account_id"] is None:
+                                st.warning("⚠️ 请先建立并选择账户。")
+                            else:
+                                try:
+                                    items_data = []
+                                    for _, row in valid_rows.iterrows():
+                                        items_data.append({
+                                            "name": str(row["内容/名称"]).strip(),
+                                            "amount": float(row["实付金额"]),
+                                            "qty": float(row["数量"]),
+                                            "desc": str(row["备注"]).strip() if pd.notna(row["备注"]) else "",
+                                            "url": str(row["网址"]).strip() if pd.notna(row["网址"]) else ""
+                                        })
+                                        
+                                    base_data = {
+                                        "date": f_date,
+                                        "currency": batch_config["currency"],
+                                        "account_id": batch_config["account_id"],
+                                        "shop": batch_config["shop"],
+                                        "category": cat
+                                    }
+                                    
+                                    msg = FinanceService.create_batch_expense_transaction(
+                                        db_frag, base_data, batch_config, items_data, exchange_rate
+                                    )
+                                    st.toast(f"{msg}", icon="✅")
+                                    st.session_state.fin_form_ver += 1 # ✨ 一键重置清空
+                                    sync_all_caches()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"写入失败: {e}")
+
+                # ================= 普通单项录入区域 (其他类型，如：投资、其他支出) =================
+                else:
+                    # --- 2. 业务内容 ---
+                    st.markdown("##### 2. 业务内容")
+                    needs_qty = False
+                    
+                    if cat == "投资":
+                        equities = FinanceService.get_balance_items(db_frag, "equity")
+                        eq_opts = ["➕ 新增资本项目"] + [e.name for e in equities]
+                        c_eq1, c_eq2 = st.columns([1.5, 2])
+                        sel_eq = c_eq1.selectbox("投资归属项目", eq_opts)
+                        
+                        link_config["link_type"] = "equity"
+                        if sel_eq == "➕ 新增资本项目":
+                            link_config["is_new"] = True
+                            link_config["name"] = c_eq2.text_input("新资本项目名称", placeholder="如：股东A注资 (必填)", key=f"inv_n_{fv}")
+                        else:
+                            target = next(e for e in equities if e.name == sel_eq)
+                            link_config["target_id"] = target.id
+                            link_config["name"] = target.name
+                            
+                    elif cat == "撤资":
+                        link_config["link_type"] = "equity"
+                        equities = FinanceService.get_balance_items(db_frag, "equity")
+                        if not equities:
+                            st.warning("当前无资本项目可撤资")
+                            st.stop()
+                        sel_eq = st.selectbox("选择撤资项目", [e.name for e in equities])
                         target = next(e for e in equities if e.name == sel_eq)
                         link_config["target_id"] = target.id
                         link_config["name"] = target.name
+
+                    elif cat == "其他资产增加":
+                        needs_qty = True
+                        link_config["link_type"] = "consumable"
+                        link_config["name"] = st.text_input("新增资产名称", placeholder="如：纸箱、不干胶 (必填)", key=f"oa_n_{fv}")
+
+                    elif cat == "现有资产增加":
+                        link_config["link_type"] = "manual_asset"
+                        assets = FinanceService.get_balance_items(db_frag, "asset")
+                        valid_assets = [a for a in assets if not a.name.startswith(("在制", "预入库", "流动资金"))]
+                        if not valid_assets:
+                            st.warning("暂无有效的手动资产项目")
+                            st.stop()
+                        sel_asset = st.selectbox("选择现有资产", [a.name for a in valid_assets])
+                        target = next(a for a in valid_assets if a.name == sel_asset)
+                        link_config["target_id"] = target.id
+                        link_config["name"] = target.name
+
+                    elif cat == "新资产增加":
+                        link_config["link_type"] = "manual_asset"
+                        link_config["is_new"] = True
+                        c_na1, c_na2 = st.columns(2)
+                        link_config["name"] = c_na1.text_input("新资产名称", placeholder="如：支付宝备用金 (必填)", key=f"na_n_{fv}")
+                        link_config["asset_type"] = c_na2.selectbox("资产属性", ["现金", "资产"], help="只有标为'现金'的资产才能进行资金移动")
+
+                    elif cat == "现有资产减少":
+                        link_config["link_type"] = "manual_asset"
+                        assets = FinanceService.get_balance_items(db_frag, "asset")
+                        valid_assets = [a for a in assets if not a.name.startswith(("在制", "预入库", "流动资金"))]
+                        if not valid_assets:
+                            st.warning("暂无有效的手动资产项目")
+                            st.stop()
+                        sel_asset = st.selectbox("选择要减少的资产", [a.name for a in valid_assets])
+                        target = next(a for a in valid_assets if a.name == sel_asset)
+                        link_config["target_id"] = target.id
+                        link_config["name"] = target.name
+
+                    else:
+                        link_config["name"] = st.text_input("收支明细描述", placeholder="如：顺丰快递费、工作餐补 (必填)", key=f"gen_n_{fv}")
+
+                    # --- 3. 交易金额、数量与账户 ---
+                    st.markdown("##### 3. 交易金额、数量与账户")
+                    
+                    if needs_qty:
+                        c_amt1, c_curr, c_qty = st.columns([1.5, 1, 1.5])
+                        amt_label = "收入总额" if rec_type == "收入" else "实付总额"
+                        base_data["amount"] = c_amt1.number_input(amt_label, min_value=0.0, step=10.0, format="%.2f", key=f"gen_amt_{fv}")
+                        base_data["currency"] = c_curr.selectbox("币种", ["CNY", "JPY"])
+                        link_config["qty"] = c_qty.number_input("数量", min_value=0.01, value=1.0, key=f"gen_qty_{fv}")
+                        link_config["unit_price"] = base_data["amount"] / link_config["qty"] if link_config["qty"] else 0
+                    else:
+                        c_amt1, c_curr, _ = st.columns([1.5, 1, 1.5])
+                        amt_label = "收入金额" if rec_type == "收入" else "支出金额"
+                        base_data["amount"] = c_amt1.number_input(amt_label, min_value=0.0, step=10.0, format="%.2f", key=f"gen_amt_noq_{fv}")
+                        base_data["currency"] = c_curr.selectbox("币种", ["CNY", "JPY"])
+
+                    valid_accs = [a for a in all_cash_assets if a.currency == base_data["currency"]]
+                    acc_opts = {f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})": a.id for a in valid_accs}
+                    
+                    if not acc_opts:
+                        st.warning(f"该币种 ({base_data['currency']}) 暂无现金账户，系统将自动创建默认账户。")
+                        base_data["account_id"] = None
+                    else:
+                        sel_acc = st.selectbox("入账账户" if rec_type == "收入" else "操作账户", list(acc_opts.keys()))
+                        base_data["account_id"] = acc_opts.get(sel_acc)
+
+                    # --- 4. 附加信息 ---
+                    st.markdown("##### 4. 附加信息")
+                    c_add1, c_add2 = st.columns(2)
+                    shop_label = "付款人/资金来源" if rec_type == "收入" else "收款方/店铺名称"
+                    base_data["shop"] = c_add1.text_input(shop_label, placeholder="选填", key=f"gen_shop_{fv}")
+                    base_data["desc"] = c_add2.text_input("其他备注", placeholder="选填，如：型号颜色详情等", key=f"gen_desc_{fv}")
+                    base_data["url"] = st.text_input("相关页面网址", placeholder="选填", key=f"gen_url_{fv}")
+                    
+                    # 防空容错处理
+                    if not link_config.get("name") and cat in ["销售收入", "退款", "其他现金收入", "其他"]:
+                        link_config["name"] = base_data["desc"] or cat 
                         
-                elif cat == "撤资":
-                    link_config["link_type"] = "equity"
-                    equities = FinanceService.get_balance_items(db_frag, "equity")
-                    if not equities:
-                        st.warning("当前无资本项目可撤资")
-                        st.stop()
-                    sel_eq = st.selectbox("选择撤资项目", [e.name for e in equities])
-                    target = next(e for e in equities if e.name == sel_eq)
-                    link_config["target_id"] = target.id
-                    link_config["name"] = target.name
-
-                elif cat == "其他资产增加":
-                    needs_qty = True
-                    link_config["link_type"] = "consumable"
-                    link_config["name"] = st.text_input("新增资产名称", placeholder="如：纸箱、不干胶 (必填)")
-
-                elif cat == "现有资产增加":
-                    link_config["link_type"] = "manual_asset"
-                    assets = FinanceService.get_balance_items(db_frag, "asset")
-                    valid_assets = [a for a in assets if not a.name.startswith(("在制", "预入库", "流动资金"))]
-                    if not valid_assets:
-                        st.warning("暂无有效的手动资产项目")
-                        st.stop()
-                    sel_asset = st.selectbox("选择现有资产", [a.name for a in valid_assets])
-                    target = next(a for a in valid_assets if a.name == sel_asset)
-                    link_config["target_id"] = target.id
-                    link_config["name"] = target.name
-
-                elif cat == "新资产增加":
-                    link_config["link_type"] = "manual_asset"
-                    link_config["is_new"] = True
-                    c_na1, c_na2 = st.columns(2)
-                    link_config["name"] = c_na1.text_input("新资产名称", placeholder="如：支付宝备用金 (必填)")
-                    link_config["asset_type"] = c_na2.selectbox("资产属性", ["现金", "资产"], help="只有标为'现金'的资产才能进行资金移动")
-
-                elif cat == "现有资产减少":
-                    link_config["link_type"] = "manual_asset"
-                    assets = FinanceService.get_balance_items(db_frag, "asset")
-                    valid_assets = [a for a in assets if not a.name.startswith(("在制", "预入库", "流动资金"))]
-                    if not valid_assets:
-                        st.warning("暂无有效的手动资产项目")
-                        st.stop()
-                    sel_asset = st.selectbox("选择要减少的资产", [a.name for a in valid_assets])
-                    target = next(a for a in valid_assets if a.name == sel_asset)
-                    link_config["target_id"] = target.id
-                    link_config["name"] = target.name
-
-                elif cat == "商品成本":
-                    needs_qty = True
-                    link_config["link_type"] = "cost"
-                    c_c1, c_c2 = st.columns(2)
-                    products = FinanceService.get_all_products(db_frag)
-                    p_opts = {p.id: p.name for p in products}
-                    pid = c_c1.selectbox("归属商品", list(p_opts.keys()), format_func=lambda x: p_opts[x])
-                    link_config["product_id"] = pid
-                    
-                    final_cat = c_c2.selectbox("成本分类", PRODUCT_COST_CATEGORIES)
-                    link_config["cat"] = final_cat
-                    
-                    budgets = FinanceService.get_budget_items(db_frag, pid, final_cat)
-                    
-                    # ✨ 核心修改：使用字典将预算名称和真实的数据库 ID 绑定起来
-                    b_opts = {"➕ 手动输入新项目": None}
-                    for b in budgets:
-                        b_opts[b.item_name] = b.id
-                    
-                    c_c3, c_c4 = st.columns([1.5, 2], vertical_alignment="bottom")
-                    # 下拉框选项为字典的键（即项目名称）
-                    sel_item_label = c_c3.selectbox("预算项目匹配", list(b_opts.keys()))
-                    
-                    if sel_item_label == "➕ 手动输入新项目":
-                        link_config["name"] = c_c4.text_input("具体成本内容", placeholder="如：蕾丝边打样费 (必填)")
-                    else:
-                        link_config["name"] = sel_item_label
-                        # ✨ 将选中的预算 ID 存入配置中传递给后端
-                        link_config["target_cost_id"] = b_opts[sel_item_label]
-                        c_c4.info(f"✅ 将直接累加实付金额至预算项：{sel_item_label}")
-
-                elif cat == "其他资产购入":
-                    needs_qty = True
-                    link_config["link_type"] = "consumable"
-                    all_cons = FinanceService.get_consumable_items(db_frag)
-                    c_opts = ["➕ 登记新资产种类"] + [c.name for c in all_cons]
-                    
-                    c_oa1, c_oa2 = st.columns([1.5, 1])
-                    sel_name = c_oa1.selectbox("资产名称", c_opts)
-                    
-                    if sel_name == "➕ 登记新资产种类":
-                        link_config["name"] = c_oa1.text_input("填写新资产名称", placeholder="如：飞机盒 (必填)")
-                        link_config["cat"] = c_oa2.selectbox("资产子分类", ["包装材", "无实体", "备用素材", "其他", "商品周边", "办公用品"], index=0)
-                    else:
-                        link_config["name"] = sel_name
-                        target = next((c for c in all_cons if c.name == sel_name), None)
-                        default_idx = 0
-                        if target: 
-                            valid_cats = ["包装材", "无实体", "备用素材", "其他", "商品周边", "办公用品"]
-                            default_idx = valid_cats.index(target.category) if target.category in valid_cats else 0
-                        link_config["cat"] = c_oa2.selectbox("资产子分类", ["包装材", "无实体", "备用素材", "其他", "商品周边", "办公用品"], index=default_idx)
-
-                elif cat == "固定资产购入":
-                    needs_qty = True
-                    link_config["link_type"] = "fixed_asset"
-                    link_config["name"] = st.text_input("固定资产名称", placeholder="如：缝纫机、相机 (必填)")
-
-                else:
-                    link_config["name"] = st.text_input("收支明细描述", placeholder="如：顺丰快递费、工作餐补 (必填)")
-
-                # --- 3. 交易金额、数量与账户 ---
-                st.markdown("##### 3. 交易金额、数量与账户")
-                
-                if needs_qty:
-                    c_amt1, c_curr, c_qty = st.columns([1.5, 1, 1.5])
-                    amt_label = "收入总额" if rec_type == "收入" else "实付总额"
-                    base_data["amount"] = c_amt1.number_input(amt_label, min_value=0.0, step=10.0, format="%.2f")
-                    base_data["currency"] = c_curr.selectbox("币种", ["CNY", "JPY"])
-                    link_config["qty"] = c_qty.number_input("数量", min_value=0.01, value=1.0)
-                    link_config["unit_price"] = base_data["amount"] / link_config["qty"] if link_config["qty"] else 0
-                else:
-                    c_amt1, c_curr, _ = st.columns([1.5, 1, 1.5])
-                    amt_label = "收入金额" if rec_type == "收入" else "支出金额"
-                    base_data["amount"] = c_amt1.number_input(amt_label, min_value=0.0, step=10.0, format="%.2f")
-                    base_data["currency"] = c_curr.selectbox("币种", ["CNY", "JPY"])
-
-                valid_accs = [a for a in all_cash_assets if a.currency == base_data["currency"]]
-                acc_opts = {f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})": a.id for a in valid_accs}
-                
-                if not acc_opts:
-                    st.warning(f"该币种 ({base_data['currency']}) 暂无现金账户，系统将自动创建默认账户。")
-                    base_data["account_id"] = None
-                else:
-                    sel_acc = st.selectbox("入账账户" if rec_type == "收入" else "操作账户", list(acc_opts.keys()))
-                    base_data["account_id"] = acc_opts.get(sel_acc)
-
-                # --- 4. 附加信息 ---
-                st.markdown("##### 4. 附加信息")
-                c_add1, c_add2 = st.columns(2)
-                shop_label = "付款人/资金来源" if rec_type == "收入" else "收款方/店铺名称"
-                base_data["shop"] = c_add1.text_input(shop_label, placeholder="选填")
-                base_data["desc"] = c_add2.text_input("其他备注", placeholder="选填，如：型号颜色详情等")
-                base_data["url"] = st.text_input("购入页面网址", placeholder="选填，如：淘宝商品链接")
-                
-                # 防空容错处理
-                if not link_config.get("name") and cat in ["销售收入", "退款", "其他现金收入", "其他"]:
-                    link_config["name"] = base_data["desc"] or cat 
-                    
-                st.write("")
-                if st.button("💾 确认记账", type="primary", width="stretch"):
-                    if base_data["amount"] <= 0:
-                        st.warning("⚠️ 金额必须大于0")
-                    elif not link_config.get("name") and not base_data.get("desc"):
-                        st.warning("⚠️ 请填写具体的业务内容或备注")
-                    else:
-                        try:
-                            msg = FinanceService.create_general_transaction(db_frag, base_data, link_config, exchange_rate)
-                            st.toast(f"记账成功！{msg}", icon="✅")
-                            sync_all_caches()
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"写入失败: {e}")
+                    st.write("")
+                    if st.button("💾 确认记账", type="primary", width="stretch"):
+                        if base_data["amount"] <= 0:
+                            st.warning("⚠️ 金额必须大于0")
+                        elif not link_config.get("name") and not base_data.get("desc"):
+                            st.warning("⚠️ 请填写具体的业务内容或备注")
+                        else:
+                            try:
+                                msg = FinanceService.create_general_transaction(db_frag, base_data, link_config, exchange_rate)
+                                st.toast(f"记账成功！{msg}", icon="✅")
+                                st.session_state.fin_form_ver += 1
+                                sync_all_caches()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"写入失败: {e}")
             
             # >>>>> 场景 D: 资金移动 <<<<<
             elif rec_type == "资金移动":
@@ -440,12 +559,10 @@ def render_add_transaction_form(exchange_rate):
                     def format_asset(a):
                         return f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})"
                         
-                    # -- 构建转出账户下拉框 --
                     from_options = {format_asset(a): a for a in all_cash_assets}
                     from_label = st.selectbox("转出账户 (移动前项目)", list(from_options.keys()), key="fund_from")
                     from_asset = from_options[from_label]
                     
-                    # -- 动态构建转入账户下拉框 --
                     to_assets = [a for a in all_cash_assets if a.currency == from_asset.currency and a.id != from_asset.id]
                     
                     if not to_assets:
@@ -461,7 +578,8 @@ def render_add_transaction_form(exchange_rate):
                             min_value=0.0, 
                             max_value=float(from_asset.amount),
                             step=100.0 if from_asset.currency == "CNY" else 1000.0, 
-                            format="%.2f"
+                            format="%.2f",
+                            key=f"trans_amt_{fv}"
                         )
                         
                         if amount > 0:
@@ -470,7 +588,7 @@ def render_add_transaction_form(exchange_rate):
                             c_prev2.success(f"📈 **{to_asset.name}** 移动后预览: {(to_asset.amount + amount):,.2f} {to_asset.currency}")
                             
                         st.markdown("##### 4. 附加信息")
-                        desc = st.text_input("备注说明", placeholder="如：将流动资金投入到某项目储备金中")
+                        desc = st.text_input("备注说明", placeholder="如：将流动资金投入到某项目储备金中", key=f"trans_rem_{fv}")
                         
                         st.write("")
                         if st.button("💾 确认移动", type="primary", use_container_width=True):
@@ -482,13 +600,13 @@ def render_add_transaction_form(exchange_rate):
                                         db_frag, f_date, from_asset.id, to_asset.id, amount, desc
                                     )
                                     st.toast(f"资金移动成功：{amount} {from_asset.currency}", icon="🔄")
+                                    st.session_state.fin_form_ver += 1
                                     sync_all_caches()
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"移动失败: {e}")
     finally:
         db_frag.close()
-
 # ================= 局部组件：编辑与删除 =================
 @fragment_if_available
 def render_edit_delete_panel(df_render):

@@ -62,16 +62,14 @@ def show_sales_order_page(db):
 
     test_mode = st.session_state.get("test_mode", False)
     service = SalesOrderService(db)
-
-    # ================= 0. 商品选择 =================
     all_products = db.query(Product).all()
-    product_options = ["全部商品"] + [p.name for p in all_products]
 
+    # ================= 0. 数据筛选 =================
+    product_options = ["全部商品"] + [p.name for p in all_products]
     selected_product = st.selectbox(
-        "📦 选择商品",
+        "🔍 选择商品以筛选下方表格与统计数据",
         product_options,
-        key="sales_order_product_filter",
-        help="选择商品后，下方所有统计和订单都将筛选该商品"
+        key="sales_order_product_filter"
     )
     product_filter = None if selected_product == "全部商品" else selected_product
     st.divider()
@@ -87,126 +85,192 @@ def show_sales_order_page(db):
         c5.metric("售后中", stats["after_sales"], delta_color="inverse")
     st.divider()
 
-    # ================= 2. 创建订单 =================
+    # ================= 2. 创建订单 (购物车模式) =================
+    # 初始化购物车
+    if "order_cart" not in st.session_state:
+        st.session_state.order_cart = []
+
     with st.expander("➕ 创建新订单", expanded=False):
-        if not product_filter:
-            st.warning("⚠️ 请先在顶部选择具体商品后再创建订单")
+        st.subheader("1. 订单基础信息")
+        col_r1_1, col_r1_2 = st.columns(2)
+        order_no = col_r1_1.text_input("订单号", placeholder="输入订单号（必填）", key="order_no_input")
+        order_date = col_r1_2.date_input("订单日期", value=date.today())
+
+        col_r2_1, col_r2_2, col_r2_3 = st.columns([1, 1, 2])
+        platform = col_r2_1.selectbox("销售平台", list(PLATFORM_CODES.values()))
+        currency = col_r2_2.selectbox("币种", ["CNY", "JPY"])
+        
+        # --- 获取并筛选现金账户 ---
+        cash_items = db.query(CompanyBalanceItem).filter(
+            CompanyBalanceItem.category == "asset",
+            CompanyBalanceItem.asset_type == "现金",
+            CompanyBalanceItem.currency == currency
+        ).all()
+        cash_account_names = [item.name for item in cash_items]
+
+        if platform == "微店": default_acc_name = "流动资金-微店账户"
+        elif platform == "Booth": default_acc_name = "流动资金-booth账户"
+        elif currency == "JPY": default_acc_name = "流动资金-日元临时账户"
+        else: default_acc_name = "流动资金-支付宝账户"
+
+        if default_acc_name not in cash_account_names:
+            cash_account_names.insert(0, default_acc_name) 
+        default_idx = cash_account_names.index(default_acc_name)
+
+        target_account_name = col_r2_3.selectbox("收款现金账户", cash_account_names, index=default_idx)
+
+        st.divider()
+        
+        # --- 购物车操作区 ---
+        st.subheader("2. 订单商品列表 (添加商品)")
+        
+        c_p, c_v, c_q, c_b = st.columns([2, 1.5, 1, 1], vertical_alignment="bottom")
+        sel_p_name = c_p.selectbox("选择商品", [p.name for p in all_products], key="cart_p")
+        
+        # 联动获取款式
+        sel_p_obj = next((p for p in all_products if p.name == sel_p_name), None) if sel_p_name else None
+        v_options = [c.color_name for c in sel_p_obj.colors] if sel_p_obj else []
+        
+        sel_v_name = c_v.selectbox("选择款式", v_options, key="cart_v")
+        sel_qty = c_q.number_input("数量", min_value=1, step=1, value=1, key="cart_q")
+        
+        if c_b.button("➕ 加入订单", type="primary", use_container_width=True):
+            if sel_p_name and sel_v_name:
+                # 检查订单购物车中是否已有该商品+款式组合，有则追加数量
+                found = False
+                for item in st.session_state.order_cart:
+                    if item["product_name"] == sel_p_name and item["variant"] == sel_v_name:
+                        item["quantity"] += sel_qty
+                        found = True
+                        break
+                if not found:
+                    st.session_state.order_cart.append({
+                        "product_name": sel_p_name,
+                        "variant": sel_v_name,
+                        "quantity": sel_qty
+                    })
+                st.rerun()
+
+        # --- 订单展示与编辑区 ---
+        if st.session_state.order_cart:
+            st.markdown("**当前已加入的商品 (支持直接修改数量或删除空行):**")
+            cart_df = pd.DataFrame(st.session_state.order_cart)
+            edited_cart = st.data_editor(
+                cart_df,
+                width="stretch",
+                num_rows="dynamic", # 允许用户选中左侧复选框按 Delete 删除整行
+                key="cart_editor",
+                column_config={
+                    "product_name": st.column_config.TextColumn("商品名称", disabled=True),
+                    "variant": st.column_config.TextColumn("款式", disabled=True),
+                    "quantity": st.column_config.NumberColumn("数量", min_value=1, step=1)
+                }
+            )
+            
+            # 数据清洗：过滤掉被用户删除空置的行
+            cleaned_cart = []
+            for record in edited_cart.to_dict('records'):
+                if pd.notna(record.get("product_name")) and str(record.get("product_name")).strip() != "":
+                    cleaned_cart.append(record)
+            st.session_state.order_cart = cleaned_cart
         else:
-            st.subheader("订单信息")
-            products = db.query(Product).all()
-            product_dict = {p.name: p for p in products}
+            st.info("🛒 订单为空，请在上方选择商品并加入。")
 
-            if product_filter not in product_dict:
-                st.error("选择的商品不存在")
-            else:
-                selected_product_obj = product_dict[product_filter]
-                color_options = [c.color_name for c in selected_product_obj.colors]
+        st.divider()
 
-                # ✨ UI 修改：全新四行布局
-                # 第一行：订单号，订单日期
-                col_r1_1, col_r1_2 = st.columns(2)
-                order_no = col_r1_1.text_input("订单号", placeholder="输入订单号（必填）", key="order_no_input")
-                order_date = col_r1_2.date_input("订单日期", value=date.today())
-
-                # 第二行：销售平台，币种，收款现金账户
-                col_r2_1, col_r2_2, col_r2_3 = st.columns([1, 1, 2])
-                platform = col_r2_1.selectbox("销售平台", list(PLATFORM_CODES.values()))
-                currency = col_r2_2.selectbox("币种", ["CNY", "JPY"])
+        # --- 结算区 ---
+        st.subheader("3. 结算信息")
+        col_r3_1, col_r3_2 = st.columns([1, 2], vertical_alignment="bottom")
+        total_price = col_r3_1.number_input("订单总价 (含邮费)", min_value=0.0, step=10.0, value=0.0, format="%.2f", key="order_total_price")
+        deduct_fee = col_r3_2.checkbox("扣除平台手续费", value=True)
+        notes = st.text_input("订单备注", placeholder="如：客户名称、特殊要求等", key="order_notes_input")
+        
+        # 实时计算结算数据
+        total_quantity = sum(item["quantity"] for item in st.session_state.order_cart) if st.session_state.order_cart else 0
+        gross_price = total_price
+        fee = 0.0
+        shipping_and_other = 0.0
+        
+        # ✨ 针对 Booth 的精准计费与邮费剥离
+        if platform == "Booth" and st.session_state.order_cart:
+            preset_item_total = 0.0
+            price_missing = False # ✨ 标记是否有商品未找到定价
+            for item in st.session_state.order_cart:
+                p_obj = next((p for p in all_products if p.name == item["product_name"]), None)
+                unit_p = 0.0
+                if p_obj:
+                    target_c = next((c for c in p_obj.colors if c.color_name == item["variant"]), None)
+                    if target_c:
+                        # ✨ 修复点：统一转为小写进行匹配，防止大小写问题导致找不到金额
+                        target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
+                        unit_p = target_price
                 
-                # --- 获取并筛选现金账户 ---
-                cash_items = db.query(CompanyBalanceItem).filter(
-                    CompanyBalanceItem.category == "asset",
-                    CompanyBalanceItem.asset_type == "现金",
-                    CompanyBalanceItem.currency == currency
-                ).all()
-                cash_account_names = [item.name for item in cash_items]
+                if unit_p <= 0:
+                    price_missing = True
+                preset_item_total += unit_p * item["quantity"]
+            
+            # ✨ 安全防御：如果没找到商品定价，禁止强行剥离邮费
+            if price_missing or preset_item_total <= 0:
+                st.warning("⚠️ 警告：购物车中包含未在【商品管理】中设置 Booth 定价的商品！系统无法剥离邮费，本次计算将暂不扣除邮费。")
+                shipping_and_other = 0.0
+            else:
+                # 抽出包含的邮费和打赏（总价 - 设定的商品总价）
+                shipping_and_other = max(0.0, gross_price - preset_item_total)
 
-                # 推导默认账户名
-                if platform == "微店": default_acc_name = "流动资金-微店账户"
-                elif platform == "Booth": default_acc_name = "流动资金-booth账户"
-                elif currency == "JPY": default_acc_name = "流动资金-日元临时账户"
-                else: default_acc_name = "流动资金-支付宝账户"
+        if deduct_fee:
+            if platform == "微店": 
+                fee = gross_price * 0.006
+            elif platform == "Booth": 
+                # ✨ 根据 Booth 官方最新费率：5.6% + 45 JPY (总价为基数)
+                exchange_rate = st.session_state.get("global_rate_input", 4.8) / 100.0
+                base_fixed_fee = 45 if currency == "JPY" else (45 * exchange_rate)
+                fee = gross_price * 0.056 + base_fixed_fee
+            
+        # 核心：真正的商品净收必须剥离邮费与手续费
+        net_price = gross_price - fee - shipping_and_other
 
-                # 如果默认账户还不存在，将其临时塞入列表，系统底层结算时会自动建好这个账户
-                if default_acc_name not in cash_account_names:
-                    cash_account_names.insert(0, default_acc_name) 
-                default_idx = cash_account_names.index(default_acc_name)
+        col_qty_display, col_price_display, col_spacer = st.columns([1, 1.8, 1.2])
+        col_qty_display.markdown(f"**总数量: {total_quantity} 件**")
 
-                target_account_name = col_r2_3.selectbox("收款现金账户", cash_account_names, index=default_idx, help="当订单标记为【完成】时，金额会自动入账到此账户")
+        if total_quantity > 0 and gross_price > 0:
+            unit_price = net_price / total_quantity
+            fee_str = f" (预估手续费: {fee:.2f})" if fee > 0 else ""
+            ship_str = f" (含邮费: {shipping_and_other:.2f})" if shipping_and_other > 0 else ""
+            col_price_display.markdown(f"**商品净收: {net_price:.2f} {currency} | 净单价: {unit_price:.2f} {currency}/件**<br><span style='font-size: 0.85em; color: gray;'>{fee_str}{ship_str}</span>", unsafe_allow_html=True)
+        else:
+            col_price_display.markdown(f"**平均净单价: - {currency}/件**")
 
-                # 第三行：订单总价，扣除平台手续费
-                col_r3_1, col_r3_2 = st.columns([1, 2], vertical_alignment="bottom")
-                total_price = col_r3_1.number_input("订单总价", min_value=0.0, step=10.0, value=0.0, format="%.2f", key="order_total_price")
-                deduct_fee = col_r3_2.checkbox("扣除平台手续费", value=False, help="微店(0.6%), Booth(5.6%+22 JPY/笔)")
-
-                # 第四行：订单备注
-                notes = st.text_input("订单备注", placeholder="如：客户名称、特殊要求等", key="order_notes_input")
-                st.divider()
-
-                st.markdown("**商品款式明细（请输入每个款式的数量）:**")
-                if not color_options:
-                    st.warning("该商品没有可用的款式")
+        if st.button("✅ 提交订单", type="primary", width="stretch"):
+            if not order_no or not order_no.strip(): st.error("❌ 请输入订单号")
+            elif not st.session_state.order_cart: st.error("❌ 请至少加入一件商品")
+            elif total_quantity == 0: st.error("❌ 商品总数量不能为 0")
+            elif gross_price <= 0: st.error("❌ 请输入订单总价")
+            elif net_price < 0: st.error("❌ 扣除手续费和邮费后的商品净额小于 0，请检查总价或商品定价设置")
+            else:
+                items_data = []
+                final_unit_price = net_price / total_quantity
+                for item in st.session_state.order_cart:
+                    if item["quantity"] > 0:
+                        items_data.append({
+                            "product_name": item["product_name"],
+                            "variant": item["variant"],
+                            "quantity": item["quantity"],
+                            "unit_price": final_unit_price,
+                            "subtotal": item["quantity"] * final_unit_price
+                        })
+                
+                order, error = service.create_order(
+                    items_data=items_data, platform=platform, currency=currency, 
+                    notes=notes, order_date=order_date, order_no=order_no.strip(),
+                    target_account_name=target_account_name
+                )
+                if error:
+                    st.error(f"创建失败: {error}")
                 else:
-                    variant_quantities = {}
-                    for idx, color in enumerate(color_options):
-                        col_variant, col_qty, col_spacer = st.columns([1, 1, 3])
-                        col_variant.write(f"**{color}**")
-                        qty = col_qty.number_input("数量", min_value=0, step=1, value=0, key=f"variant_qty_{idx}_{color}", label_visibility="collapsed")
-                        variant_quantities[color] = qty
-
-                    st.divider()
-                    
-                    # === 计算逻辑：处理手续费 ===
-                    total_quantity = sum(variant_quantities.values())
-                    gross_price = total_price
-                    fee = 0.0
-                    
-                    if deduct_fee:
-                        if platform == "微店":
-                            fee = gross_price * 0.006
-                        elif platform == "Booth":
-                            # Booth 计算：仅在选择日元时严格+22JPY；如错选了CNY暂以近1 CNY替代
-                            base_fixed_fee = 22 if currency == "JPY" else 1.0 
-                            fee = gross_price * 0.056 + base_fixed_fee
-                            
-                    net_price = gross_price - fee
-                    
-                    # === 显示数据 ===
-                    col_qty_display, col_price_display, col_spacer = st.columns([1, 1.8, 1.2])
-                    col_qty_display.markdown(f"**总数量: {total_quantity} 件**")
-
-                    if total_quantity > 0 and gross_price > 0:
-                        unit_price = net_price / total_quantity
-                        fee_str = f" (已扣除预估手续费: {fee:.2f})" if fee > 0 else ""
-                        col_price_display.markdown(f"**实际净收: {net_price:.2f} {currency} | 平均单价: {unit_price:.2f} {currency}/件**{fee_str}")
-                    else:
-                        col_price_display.markdown(f"**平均单价: - {currency}/件**")
-
-                    if st.button("✅ 提交订单", type="primary", width="stretch"):
-                        if not order_no or not order_no.strip(): st.error("❌ 请输入订单号")
-                        elif total_quantity == 0: st.error("❌ 请至少输入一个款式的数量")
-                        elif gross_price <= 0: st.error("❌ 请输入订单总价")
-                        elif net_price <= 0: st.error("❌ 扣除手续费后的净金额小于等于 0，请检查")
-                        else:
-                            items_data = []
-                            # 注意：保存至数据库的是扣除过手续费之后的净额(net_price)
-                            final_unit_price = net_price / total_quantity
-                            for color, qty in variant_quantities.items():
-                                if qty > 0:
-                                    items_data.append({"product_name": product_filter, "variant": color, "quantity": qty, "unit_price": final_unit_price, "subtotal": qty * final_unit_price})
-                            
-                            # ✨ 传递收款账户
-                            order, error = service.create_order(
-                                items_data=items_data, platform=platform, currency=currency, 
-                                notes=notes, order_date=order_date, order_no=order_no.strip(),
-                                target_account_name=target_account_name
-                            )
-                            if error:
-                                st.error(f"创建失败: {error}")
-                            else:
-                                st.success(f"✅ 订单 {order.order_no} 创建成功！(记账金额: {net_price:.2f} {currency})")
-                                sync_all_caches() 
-                                st.rerun()
+                    st.success(f"✅ 订单 {order.order_no} 创建成功！(商品入账金额: {net_price:.2f} {currency})")
+                    st.session_state.order_cart = []
+                    sync_all_caches() 
+                    st.rerun()
 
     # ================= 2.5 批量导入订单 =================
     with st.expander("📥 批量导入订单 (Excel)", expanded=False):
