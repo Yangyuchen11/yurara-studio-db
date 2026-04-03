@@ -60,7 +60,6 @@ class InventoryService:
                 main_item.name = asset_name 
                 main_item.product_id = prod.id 
                 
-                # ✨ 如果发现了多余的老旧幽灵数据，全部清零删除
                 for orphan in items[1:]:
                     self.db.delete(orphan)
             else:
@@ -97,7 +96,6 @@ class InventoryService:
                 main_offset.name = offset_name 
                 main_offset.product_id = prod.id 
                 
-                # ✨ 清理重复的在制资产数据
                 for orphan in offset_items[1:]:
                     self.db.delete(orphan)
             else:
@@ -257,20 +255,51 @@ class InventoryService:
                                out_type=None, cons_cat=None, cons_content=None):
         
         target_prod_obj = self.db.query(Product).filter(Product.id == product_id).first()
+        
+        # ✨ 核心修复：执行出库和库存移动前的严格库存校验
+        if move_type in [StockLogReason.OUT_STOCK, StockLogReason.TRANSFER]:
+            wh_details = self.get_warehouse_inventory_details()
+            
+            # 解析本次操作具体扣减了哪些底层部件
+            parts_to_check = {}
+            if is_set:
+                target_c = next((c for c in target_prod_obj.colors if c.color_name == variant), None) if target_prod_obj else None
+                if target_c and target_c.parts:
+                    for p in target_c.parts:
+                        parts_to_check[p.part_name] = quantity * p.quantity
+                else:
+                    parts_to_check["整套"] = quantity
+            else:
+                parts_to_check[part_name] = quantity
+                
+            # 获取目标仓库的物理库存快照
+            stock_in_wh = wh_details.get(warehouse_id, {}).get("stock", {}).get(product_name, {}).get(variant, {})
+            wh_name = wh_details.get(warehouse_id, {}).get("name", "未分配仓库")
+            
+            # 逐个部件进行校验
+            for pt, req_qty in parts_to_check.items():
+                avail_qty = stock_in_wh.get(pt, 0)
+                if avail_qty < req_qty:
+                    raise ValueError(f"库存不足！【{product_name}-{variant}】的部件【{pt}】在【{wh_name}】中仅剩 {avail_qty} 件，无法执行扣减 {req_qty} 件的操作。")
+
         actual_change_amt = -quantity if move_type == StockLogReason.OUT_STOCK else quantity
 
         if move_type == StockLogReason.TRANSFER:
             if warehouse_id == to_warehouse_id:
                 raise ValueError("移出仓库和移入仓库不能相同！")
             
+            # 优化流水备注：清晰写明移入移出仓库的名字
+            wh_from_name = wh_details.get(warehouse_id, {}).get("name", "未分配仓库")
+            wh_to_name = self.db.query(Warehouse).filter(Warehouse.id == to_warehouse_id).first().name if to_warehouse_id else "未分配仓库"
+            
             self.db.add(InventoryLog(
                 product_name=product_name, variant=variant, change_amount=-quantity,
-                reason=StockLogReason.TRANSFER, note=f"移出至某仓 | {remark}", date=date_obj,
+                reason=StockLogReason.TRANSFER, note=f"移出至【{wh_to_name}】 | {remark}", date=date_obj,
                 warehouse_id=warehouse_id, part_name=None if is_set else part_name
             ))
             self.db.add(InventoryLog(
                 product_name=product_name, variant=variant, change_amount=quantity,
-                reason=StockLogReason.TRANSFER, note=f"从某仓移入 | {remark}", date=date_obj,
+                reason=StockLogReason.TRANSFER, note=f"从【{wh_from_name}】移入 | {remark}", date=date_obj,
                 warehouse_id=to_warehouse_id, part_name=None if is_set else part_name
             ))
             msg = "库存移动成功（生成一进一出两笔记录）"

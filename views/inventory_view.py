@@ -18,7 +18,6 @@ def show_inventory_page(db):
         warehouses = service.get_all_warehouses()
         wh_options = {w.name: w.id for w in warehouses}
         
-        # ✨ UI 修改：垂直底部对齐
         c_sel, c_btn, _ = st.columns([1.5, 1.5, 2], vertical_alignment="bottom")
         p_name = c_sel.selectbox("选择产品", product_names or ["暂无产品"])
         
@@ -42,7 +41,6 @@ def show_inventory_page(db):
                         except Exception as e:
                             st.error(f"操作失败: {e}")
                 else:
-                    # ✨ 修正：增加 margin-bottom: 16px 抵消 markdown 的换行下沉，使其与下拉框完美水平对齐
                     st.markdown(
                         "<div style='display: flex; align-items: center; justify-content: center; "
                         "background-color: rgba(76, 175, 80, 0.1); border: 1px solid #4caf50; "
@@ -244,6 +242,14 @@ def show_inventory_page(db):
         wh_details = service.get_warehouse_inventory_details()
         if not wh_details:
             st.info("尚未创建任何仓库")
+            
+        # ✨ 获取产品和需求映射，用于计算该仓库的实物能凑出多少整套
+        products = service.get_all_products()
+        req_map = {} 
+        for prod in products:
+            req_map[prod.name] = {}
+            for c in prod.colors:
+                req_map[prod.name][c.color_name] = {p.part_name: p.quantity for p in c.parts} if c.parts else {"整套": 1}
         
         for w_id, w_data in wh_details.items():
             if w_id is None and not w_data["stock"]: continue 
@@ -259,18 +265,41 @@ def show_inventory_page(db):
                             except Exception as e:
                                 st.error(str(e))
                 else:
-                    st.caption("以下为该仓库内包含的各个部件物理数量：")
-                    wh_table = []
+                    has_any_stock = False
+                    
+                    # ✨ 核心改动：按商品独立分类和建表
                     for prod_n, v_dict in w_data["stock"].items():
+                        prod_table = []
                         for var_n, pt_dict in v_dict.items():
+                            
+                            # 获取该款式的部件配比要求
+                            reqs = req_map.get(prod_n, {}).get(var_n, {"整套": 1})
+                            
+                            # ✨ 根据仓库里的物理散件数量和配比，木桶原理计算能凑出的整套数
+                            possible_sets = 0
+                            if reqs:
+                                possible_sets = min((pt_dict.get(pt, 0) // req) for pt, req in reqs.items())
+                                
                             for pt_n, qty in pt_dict.items():
                                 if qty != 0:
-                                    wh_table.append({"商品": prod_n, "款式": var_n, "部件": pt_n, "物理数量": qty})
-                    if wh_table:
-                        st.dataframe(pd.DataFrame(wh_table), width="stretch", hide_index=True)
-                    else:
+                                    prod_table.append({
+                                        "款式": var_n, 
+                                        "部件": pt_n, 
+                                        "物理数量": qty,
+                                        "可组装整套数": possible_sets
+                                    })
+                        
+                        # 渲染该商品专属的子表格
+                        if prod_table:
+                            has_any_stock = True
+                            st.markdown(f"##### 🛍️ {prod_n}")
+                            st.dataframe(pd.DataFrame(prod_table), width="stretch", hide_index=True)
+                            
+                    if not has_any_stock:
                         st.caption("库存已全部清空。")
-                        if st.button("🗑️ 删除该仓库", key=f"del_wh_{w_id}_empty"):
+                        
+                    if w_id is not None:
+                        if st.button("🗑️ 删除该仓库", key=f"del_wh_{w_id}_btn"):
                             try:
                                 service.delete_warehouse(w_id)
                                 st.rerun()

@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import date
 from services.sales_order_service import SalesOrderService
 from cache_manager import sync_all_caches
-from models import Product, CompanyBalanceItem
+from models import Product, CompanyBalanceItem, Warehouse
 from constants import OrderStatus, PLATFORM_CODES
 
 # ------------------ 🚀 性能优化：独立数据层缓存 ------------------
@@ -63,6 +63,10 @@ def show_sales_order_page(db):
     test_mode = st.session_state.get("test_mode", False)
     service = SalesOrderService(db)
     all_products = db.query(Product).all()
+    
+    # 获取所有的仓库
+    all_warehouses = db.query(Warehouse).all()
+    wh_map = {w.name: w.id for w in all_warehouses}
 
     # ================= 2. 创建订单 (购物车模式) =================
     # 初始化购物车
@@ -103,7 +107,7 @@ def show_sales_order_page(db):
         # --- 购物车操作区 ---
         st.subheader("2. 订单商品列表 (添加商品)")
         
-        c_p, c_v, c_q, c_b = st.columns([2, 1.5, 1, 1], vertical_alignment="bottom")
+        c_p, c_v, c_q, c_w, c_b = st.columns([2, 1.5, 1, 1.5, 1], vertical_alignment="bottom")
         sel_p_name = c_p.selectbox("选择商品", [p.name for p in all_products], key="cart_p")
         
         # 联动获取款式
@@ -113,20 +117,27 @@ def show_sales_order_page(db):
         sel_v_name = c_v.selectbox("选择款式", v_options, key="cart_v")
         sel_qty = c_q.number_input("数量", min_value=1, step=1, value=1, key="cart_q")
         
+        # ✨ 新增仓库选择
+        wh_options_list = list(wh_map.keys()) + ["未分配"]
+        sel_wh_name = c_w.selectbox("出货仓库", wh_options_list, key="cart_w")
+        
         if c_b.button("➕ 加入订单", type="primary", use_container_width=True):
             if sel_p_name and sel_v_name:
-                # 检查订单购物车中是否已有该商品+款式组合，有则追加数量
+                # 检查订单购物车中是否已有该商品+款式+仓库的组合
                 found = False
                 for item in st.session_state.order_cart:
-                    if item["product_name"] == sel_p_name and item["variant"] == sel_v_name:
+                    if item["product_name"] == sel_p_name and item["variant"] == sel_v_name and item["warehouse_name"] == sel_wh_name:
                         item["quantity"] += sel_qty
                         found = True
                         break
                 if not found:
+                    wh_id = wh_map.get(sel_wh_name)
                     st.session_state.order_cart.append({
                         "product_name": sel_p_name,
                         "variant": sel_v_name,
-                        "quantity": sel_qty
+                        "quantity": sel_qty,
+                        "warehouse_id": wh_id,
+                        "warehouse_name": sel_wh_name
                     })
                 st.rerun()
 
@@ -137,11 +148,13 @@ def show_sales_order_page(db):
             edited_cart = st.data_editor(
                 cart_df,
                 width="stretch",
-                num_rows="dynamic", # 允许用户选中左侧复选框按 Delete 删除整行
+                num_rows="dynamic",
                 key="cart_editor",
                 column_config={
                     "product_name": st.column_config.TextColumn("商品名称", disabled=True),
                     "variant": st.column_config.TextColumn("款式", disabled=True),
+                    "warehouse_id": None, # 隐藏内部ID
+                    "warehouse_name": st.column_config.TextColumn("出货仓库", disabled=True),
                     "quantity": st.column_config.NumberColumn("数量", min_value=1, step=1)
                 }
             )
@@ -170,17 +183,15 @@ def show_sales_order_page(db):
         fee = 0.0
         shipping_and_other = 0.0
         
-        # ✨ 针对 Booth 的精准计费与邮费剥离
         if platform == "Booth" and st.session_state.order_cart:
             preset_item_total = 0.0
-            price_missing = False # ✨ 标记是否有商品未找到定价
+            price_missing = False
             for item in st.session_state.order_cart:
                 p_obj = next((p for p in all_products if p.name == item["product_name"]), None)
                 unit_p = 0.0
                 if p_obj:
                     target_c = next((c for c in p_obj.colors if c.color_name == item["variant"]), None)
                     if target_c:
-                        # ✨ 修复点：统一转为小写进行匹配，防止大小写问题导致找不到金额
                         target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
                         unit_p = target_price
                 
@@ -188,24 +199,20 @@ def show_sales_order_page(db):
                     price_missing = True
                 preset_item_total += unit_p * item["quantity"]
             
-            # ✨ 安全防御：如果没找到商品定价，禁止强行剥离邮费
             if price_missing or preset_item_total <= 0:
                 st.warning("⚠️ 警告：购物车中包含未在【商品管理】中设置 Booth 定价的商品！系统无法剥离邮费，本次计算将暂不扣除邮费。")
                 shipping_and_other = 0.0
             else:
-                # 抽出包含的邮费和打赏（总价 - 设定的商品总价）
                 shipping_and_other = max(0.0, gross_price - preset_item_total)
 
         if deduct_fee:
             if platform == "微店": 
                 fee = gross_price * 0.006
             elif platform == "Booth": 
-                # ✨ 根据 Booth 官方最新费率：5.6% + 45 JPY (总价为基数)
                 exchange_rate = st.session_state.get("global_rate_input", 4.8) / 100.0
                 base_fixed_fee = 45 if currency == "JPY" else (45 * exchange_rate)
                 fee = gross_price * 0.056 + base_fixed_fee
             
-        # 核心：真正的商品净收必须剥离邮费与手续费
         net_price = gross_price - fee - shipping_and_other
 
         col_qty_display, col_price_display, col_spacer = st.columns([1, 1.8, 1.2])
@@ -235,7 +242,8 @@ def show_sales_order_page(db):
                             "variant": item["variant"],
                             "quantity": item["quantity"],
                             "unit_price": final_unit_price,
-                            "subtotal": item["quantity"] * final_unit_price
+                            "subtotal": item["quantity"] * final_unit_price,
+                            "warehouse_id": item.get("warehouse_id") # ✨ 传递 warehouse_id 到后端
                         })
                 
                 order, error = service.create_order(
@@ -254,11 +262,11 @@ def show_sales_order_page(db):
     # ================= 2.5 批量导入订单 =================
     with st.expander("📥 批量导入订单 (Excel)", expanded=False):
         st.markdown("""
-        **表格格式要求**：请上传包含以下 7 列的 Excel 文件（列名必须完全一致）：
-        `订单号` | `商品名` | `商品型号` | `数量` | `销售平台` | `订单总额` | `币种`
+        **表格格式要求**：请上传包含以下 **8 列** 的 Excel 文件（列名必须完全一致）：
+        `订单号` | `商品名` | `商品型号` | `数量` | `销售平台` | `订单总额` | `币种` | **`出货仓库`**
         
-        💡 **多款式说明**：**一个订单只能占一行，严禁出现重复订单号**。如果同一个订单内有多个不同颜色/型号，请在`商品型号`和`数量`列用**英文分号 (;)** 隔开。
-        例如：型号填 `粉色;蓝色`，数量填 `1;2`，代表买了一件粉色和两件蓝色。
+        💡 **多款式说明**：**一个订单只能占一行，严禁出现重复订单号**。如果同一个订单内有多个不同颜色/型号，请在`商品型号`和`数量`列用**英文分号 (;)** 隔开。  
+        💡 **出货仓库说明**：你可以针对不同的商品填写不同仓库（也用分号隔开）。**如果该订单所有商品都在同一个仓，只写一次仓库名即可，系统会自动帮你匹配**。如果不指定仓库请填 `未分配`。
         """)
         
         if "uploader_key" not in st.session_state:
@@ -284,11 +292,13 @@ def show_sales_order_page(db):
                     
                     preview_data = []
                     for po in parsed_orders:
-                        items_str = ", ".join([f"{i['product_name']}-{i['variant']} ×{i['quantity']}" for i in po["items"]])
+                        # 获取仓库名称
+                        wh_id_to_name = {w.id: w.name for w in all_warehouses}
+                        items_str = ", ".join([f"{i['product_name']}-{i['variant']} ×{i['quantity']} (仓: {wh_id_to_name.get(i['warehouse_id'], '未分配')})" for i in po["items"]])
                         preview_data.append({
                             "订单号": po["order_no"],
                             "平台": po["platform"],
-                            "收款目标账户": po["target_account"], # ✨ 新增预览展示
+                            "收款目标账户": po["target_account"], 
                             "币种": po["currency"],
                             "总数量": po["total_qty"],
                             "原总价": po["gross_price"],
@@ -513,13 +523,13 @@ def show_sales_order_page(db):
                     col_d5.write(f"**发货日期:** {o.shipped_date or '未发货'}")
                     col_d6.write(f"**完成日期:** {o.completed_date or '未完成'}")
 
-                    # ✨ 详情页展示收款目标账户
                     st.write(f"**设定收款账户:** {o.target_account_name or '系统默认'}")
                     st.write(f"**备注:** {o.notes or '无'}")
 
                     st.divider()
                     st.markdown("**商品明细:**")
-                    items_detail = [{"商品": i.product_name, "款式": i.variant, "数量": i.quantity, "单价": i.unit_price, "小计": i.subtotal} for i in o.items]
+                    # ✨ 详情中直接展示绑定的仓库名称
+                    items_detail = [{"商品": i.product_name, "款式": i.variant, "出货仓库": i.warehouse.name if i.warehouse else "未分配", "数量": i.quantity, "单价": i.unit_price, "小计": i.subtotal} for i in o.items]
                     st.dataframe(pd.DataFrame(items_detail), width="stretch", hide_index=True, column_config={"单价": st.column_config.NumberColumn(format="%.2f"), "小计": st.column_config.NumberColumn(format="%.2f")})
                     
                     st.write(f"**订单总额: {o.total_amount:.2f} {o.currency}**")
@@ -586,8 +596,10 @@ def show_sales_order_page(db):
                         if is_returned:
                             st.markdown("**选择退货商品:**")
                             for item in o.items:
+                                # ✨ 加入原发货仓库的名字以防同商品不同仓混淆
+                                wh_name_display = item.warehouse.name if item.warehouse else '未分配仓库'
                                 return_qty = st.number_input(
-                                    f"{item.product_name}-{item.variant}",
+                                    f"{item.product_name}-{item.variant} (原出货: {wh_name_display})",
                                     min_value=0,
                                     max_value=item.quantity,
                                     step=1,
@@ -597,7 +609,8 @@ def show_sales_order_page(db):
                                     returned_items.append({
                                         "product_name": item.product_name,
                                         "variant": item.variant,
-                                        "quantity": return_qty
+                                        "quantity": return_qty,
+                                        "warehouse_id": item.warehouse_id # ✨ 附带仓库ID，使得退货时能精准返回对应仓
                                     })
 
                         col_rf1, col_rf2 = st.columns(2)

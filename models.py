@@ -198,15 +198,15 @@ class SalesOrderItem(Base):
     __tablename__ = "sales_order_items"
     id = Column(Integer, primary_key=True, index=True)
     order_id = Column(Integer, ForeignKey("sales_orders.id", ondelete="CASCADE"))
-
     product_name = Column(String) # 商品名称
     variant = Column(String) # 款式/颜色
     quantity = Column(Integer) # 数量
     unit_price = Column(Float) # 单价
     subtotal = Column(Float) # 小计 (quantity * unit_price)
-
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True)
     # 关联
     order = relationship("SalesOrder", back_populates="items")
+    warehouse = relationship("Warehouse")
 
 class OrderRefund(Base):
     __tablename__ = "order_refunds"
@@ -232,3 +232,29 @@ class Warehouse(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True)
     remarks = Column(String, nullable=True)
+
+# --- L. 线下销售模板管理 ---
+class OfflineTemplate(Base):
+    __tablename__ = "offline_templates"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True) 
+    code = Column(String, unique=True, index=True) 
+    currency = Column(String, default="CNY")       
+    created_at = Column(Date, default=datetime.now)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True)
+    platform = Column(String) 
+    
+    items = relationship("OfflineTemplateItem", back_populates="template", cascade="all, delete-orphan")
+    warehouse = relationship("Warehouse")
+
+class OfflineTemplateItem(Base):
+    __tablename__ = "offline_template_items"
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, ForeignKey("offline_templates.id", ondelete="CASCADE"))
+    product_name = Column(String) 
+    variant = Column(String)      
+    preset_price = Column(Float, default=0.0) 
+    quantity = Column(Integer, default=0)           # 初始分配数量
+    remaining_quantity = Column(Integer, default=0) # 当前可用分配数量
+    
+    template = relationship("OfflineTemplate", back_populates="items")

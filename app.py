@@ -27,6 +27,7 @@ from views.asset_view import show_asset_page
 from views.consumable_view import show_other_asset_page
 from views.sales_view import show_sales_page
 from views.sales_order_view import show_sales_order_page
+from views.offline_sales_view import show_offline_sales_page
 from views.report_view import show_report_page
 from streamlit_option_menu import option_menu
 
@@ -223,6 +224,7 @@ with st.sidebar:
             "商品管理",
             "商品成本核算",
             "销售订单管理",
+            "线下销售管理",
             "销售额一览",
             "仓库库存管理",
             "固定资产管理",
@@ -235,6 +237,7 @@ with st.sidebar:
             "bag-heart",
             "calculator",
             "cart-check",
+            "shop",
             "graph-up-arrow",
             "arrow-left-right",
             "camera-reels",
@@ -443,3 +446,5 @@ elif selected == "其他资产管理":
     show_other_asset_page(db, exchange_rate)
 elif selected == "财务报表与分析":
     show_report_page(db, exchange_rate)
+elif selected == "线下销售管理":
+    show_offline_sales_page(db)

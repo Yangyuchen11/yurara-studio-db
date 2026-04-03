@@ -5,7 +5,7 @@ from datetime import date
 from models import (
     SalesOrder, SalesOrderItem, OrderRefund,
     Product, InventoryLog, CompanyBalanceItem,
-    CostItem, FinanceRecord
+    CostItem, FinanceRecord, Warehouse
 )
 from constants import OrderStatus, FinanceCategory, AssetPrefix
 
@@ -61,7 +61,7 @@ class SalesOrderService:
 
     def get_all_orders(self, status=None, product_name=None, limit=100):
         query = self.db.query(SalesOrder).options(
-            joinedload(SalesOrder.items),
+            joinedload(SalesOrder.items).joinedload(SalesOrderItem.warehouse),
             joinedload(SalesOrder.refunds)
         )
         if status: query = query.filter(SalesOrder.status == status)
@@ -73,7 +73,9 @@ class SalesOrderService:
         return query.order_by(SalesOrder.id.desc()).limit(limit).all()
 
     def get_order_by_id(self, order_id):
-        return self.db.query(SalesOrder).filter(SalesOrder.id == order_id).first()
+        return self.db.query(SalesOrder).options(
+            joinedload(SalesOrder.items).joinedload(SalesOrderItem.warehouse)
+        ).filter(SalesOrder.id == order_id).first()
 
     def get_order_statistics(self, product_name=None):
         base_query = self.db.query(func.count(SalesOrder.id.distinct()))
@@ -145,7 +147,8 @@ class SalesOrderService:
         for item in items_data:
             order_item = SalesOrderItem(
                 order_id=order.id, product_name=item["product_name"], variant=item["variant"],
-                quantity=item["quantity"], unit_price=item["unit_price"], subtotal=item["quantity"] * item["unit_price"]
+                quantity=item["quantity"], unit_price=item["unit_price"], subtotal=item["quantity"] * item["unit_price"],
+                warehouse_id=item.get("warehouse_id") # ✨ 绑定指定的出货仓库
             )
             self.db.add(order_item)
 
@@ -161,23 +164,34 @@ class SalesOrderService:
 
         ship_date = ship_date or date.today()
         product_ids_to_sync = set()
+        
+        valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动"]
 
         for item in order.items:
-            current_stock = self.db.query(func.sum(InventoryLog.change_amount)).filter(
+            # ✨ 根据该条目的指定仓库，进行精准库存校验
+            stock_query = self.db.query(func.sum(InventoryLog.change_amount)).filter(
                 InventoryLog.product_name == item.product_name,
                 InventoryLog.variant == item.variant,
-                InventoryLog.reason.in_(["入库", "出库", "退货入库", "发货撤销"])
-            ).scalar() or 0
+                InventoryLog.reason.in_(valid_reasons)
+            )
+            
+            if item.warehouse_id is not None:
+                stock_query = stock_query.filter(InventoryLog.warehouse_id == item.warehouse_id)
+            else:
+                stock_query = stock_query.filter(InventoryLog.warehouse_id == None)
+
+            current_stock = stock_query.scalar() or 0
 
             if current_stock < item.quantity:
-                raise ValueError(f"库存不足：{item.product_name}-{item.variant} (需要:{item.quantity}, 可用:{current_stock})")
+                wh_name_display = item.warehouse.name if item.warehouse_id else '未分配仓库'
+                raise ValueError(f"库存不足：{item.product_name}-{item.variant} 在【{wh_name_display}】(需要:{item.quantity}, 可用:{current_stock})")
 
-            # ✨ 强绑定订单 ID
+            # ✨ 强绑定订单 ID 和 出货仓库 ID
             self.db.add(InventoryLog(
                 product_name=item.product_name, variant=item.variant, change_amount=-item.quantity,
                 reason="出库", date=ship_date, note=f"销售订单发货: {order.order_no}",
                 is_sold=True, sale_amount=item.subtotal, currency=order.currency, platform=order.platform,
-                order_id=order.id
+                order_id=order.id, warehouse_id=item.warehouse_id
             ))
             
             product = self.db.query(Product).filter(Product.name == item.product_name).first()
@@ -212,7 +226,6 @@ class SalesOrderService:
         
         target_acc = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
 
-        # ✨ 强绑定订单和账户 ID
         self.db.add(FinanceRecord(
             date=complete_date, amount=actual_income, currency=order.currency,
             category=FinanceCategory.SALES_INCOME, 
@@ -248,12 +261,12 @@ class SalesOrderService:
 
         if is_returned and returned_items and order.status in [OrderStatus.SHIPPED, OrderStatus.COMPLETED, OrderStatus.AFTER_SALES]:
             for item in returned_items:
-                # ✨ 强绑定订单 ID
+                # ✨ 退货入库时，将其原路返回到原来的出货仓库
                 self.db.add(InventoryLog(
                     product_name=item["product_name"], variant=item["variant"], change_amount=item["quantity"],
                     reason="退货入库", date=refund_date, note=f"订单退货: {order.order_no} - {refund_reason}",
                     is_sold=True, sale_amount=-refund_amount, currency=order.currency, platform=order.platform,
-                    order_id=order.id
+                    order_id=order.id, warehouse_id=item.get("warehouse_id")
                 ))
                 product = self.db.query(Product).filter(Product.name == item["product_name"]).first()
                 if product: product_ids_to_sync.add(product.id)
@@ -277,7 +290,6 @@ class SalesOrderService:
             self._update_asset_by_name(asset_name, -refund_amount, category="asset", currency=order.currency)
             target_acc = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
             
-            # ✨ 强绑定订单和账户 ID
             self.db.add(FinanceRecord(
                 date=refund_date, amount=-refund_amount, currency=order.currency,
                 category=FinanceCategory.SALES_INCOME, 
@@ -364,7 +376,6 @@ class SalesOrderService:
                 self.db.delete(cost_item)
 
         if refund.is_returned:
-            # ✨ 使用 order_id 和正则 fallback 获取日志
             logs = self.db.query(InventoryLog).filter(
                 or_(InventoryLog.order_id == order.id, InventoryLog.note.like(f"%{order.order_no}%")),
                 InventoryLog.reason == "退货入库"
@@ -379,7 +390,6 @@ class SalesOrderService:
             asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"
             self._update_asset_by_name(asset_name, refund_amount, category="asset", currency=order.currency)
             
-            # ✨ 使用 order_id 和正则 fallback 回滚财务流水
             finances = self.db.query(FinanceRecord).filter(
                 or_(FinanceRecord.order_id == order.id, FinanceRecord.description.like(f"%{order.order_no}%")),
                 FinanceRecord.amount == -refund_amount
@@ -415,7 +425,6 @@ class SalesOrderService:
         product_ids_to_sync = set()
 
         if order.status in [OrderStatus.SHIPPED, OrderStatus.COMPLETED, OrderStatus.AFTER_SALES]:
-            # ✨ 彻底使用外键及正则 fallback 进行级联清理
             logs = self.db.query(InventoryLog).filter(
                 or_(InventoryLog.order_id == order_id, InventoryLog.note.like(f"%{order.order_no}%"))
             ).all()
@@ -434,10 +443,8 @@ class SalesOrderService:
 
         if order.status == OrderStatus.COMPLETED:
             asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"
-            # 资产还原
             self._update_asset_by_name(asset_name, -order.total_amount, category="asset", currency=order.currency)
 
-            # ✨ 彻底使用外键及正则 fallback 进行级联清理
             finances = self.db.query(FinanceRecord).filter(
                 or_(FinanceRecord.order_id == order_id, FinanceRecord.description.like(f"%{order.order_no}%"))
             ).all()
@@ -457,9 +464,10 @@ class SalesOrderService:
         self.db.commit()
         return f"订单 {order.order_no} 已删除，所有数据已回滚"
 
-    # ================= 6. 批量导入功能 =================
+    # ================= 6. 批量导入功能 (适配分仓) =================
     def validate_and_parse_import_data(self, df):
-        required_cols = ['订单号', '商品名', '商品型号', '数量', '销售平台', '订单总额', '币种']
+        # ✨ 新增第 8 列校验：出货仓库
+        required_cols = ['订单号', '商品名', '商品型号', '数量', '销售平台', '订单总额', '币种', '出货仓库']
         missing_cols = [c for c in required_cols if c not in df.columns]
         if missing_cols: return None, f"缺少必要列: {', '.join(missing_cols)}"
 
@@ -472,10 +480,15 @@ class SalesOrderService:
         valid_products = {}
         for p in self.db.query(Product).all():
             valid_products[p.name] = [c.color_name for c in p.colors]
+            
+        warehouses = self.db.query(Warehouse).all()
+        warehouse_map = {w.name: w.id for w in warehouses}
 
         errors = []
         parsed_orders = []
         consumed_stock_in_excel = {}
+
+        valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动"]
 
         for index, row in df.iterrows():
             order_no = row['订单号']
@@ -496,9 +509,11 @@ class SalesOrderService:
 
             var_str = str(row['商品型号']).replace('；', ';')
             qty_str = str(row['数量']).replace('；', ';')
+            wh_name_str = str(row.get('出货仓库', '')).replace('；', ';')
             
             variants = [v.strip() for v in var_str.split(';') if v.strip()]
             qtys_str = [q.strip() for q in qty_str.split(';') if q.strip()]
+            wh_names = [w.strip() for w in wh_name_str.split(';') if w.strip()]
 
             if len(variants) != len(qtys_str):
                 errors.append(f"订单号 {order_no}: 商品型号数量 ({len(variants)}) 与 数量个数 ({len(qtys_str)}) 不一致！")
@@ -507,12 +522,19 @@ class SalesOrderService:
             if len(variants) == 0:
                 errors.append(f"订单号 {order_no}: 未读取到商品型号")
                 continue
+                
+            # ✨ 智能分发逻辑：如果用户只写了一个仓库，但有多个型号，自动把该仓库应用给所有型号
+            if len(wh_names) == 1 and len(variants) > 1:
+                wh_names = wh_names * len(variants)
+            elif len(wh_names) != len(variants):
+                errors.append(f"订单号 {order_no}: 填写的出货仓库数量 ({len(wh_names)}) 与 型号数量 ({len(variants)}) 不一致！如果所有商品都在同一个仓出库，只写一次仓库名即可。")
+                continue
 
             items_data = []
             total_qty = 0
             has_item_error = False
             
-            for v_name, q_str in zip(variants, qtys_str):
+            for v_name, q_str, wh_name in zip(variants, qtys_str, wh_names):
                 try:
                     qty = int(q_str)
                     if qty <= 0:
@@ -522,6 +544,11 @@ class SalesOrderService:
                     errors.append(f"订单号 {order_no}: 数量格式无效 ({q_str})")
                     has_item_error = True; break
                     
+                wh_id = warehouse_map.get(wh_name)
+                if wh_name != "未分配" and wh_id is None:
+                    errors.append(f"订单号 {order_no}: 找不到名为 '{wh_name}' 的仓库！(如果不想分配请填写'未分配')")
+                    has_item_error = True; break
+                    
                 if p_name not in valid_products:
                     errors.append(f"订单号 {order_no}: 数据库中不存在商品 '{p_name}'")
                     has_item_error = True; break
@@ -529,21 +556,28 @@ class SalesOrderService:
                     errors.append(f"订单号 {order_no}: 商品 '{p_name}' 不存在型号 '{v_name}'")
                     has_item_error = True; break
                 else:
-                    stock_key = f"{p_name}_{v_name}"
+                    stock_key = f"{p_name}_{v_name}_{wh_id}"
                     current_consumed = consumed_stock_in_excel.get(stock_key, 0)
                     
-                    current_stock = self.db.query(func.sum(InventoryLog.change_amount)).filter(
+                    # ✨ 针对特定仓库校验库存
+                    stock_query = self.db.query(func.sum(InventoryLog.change_amount)).filter(
                         InventoryLog.product_name == p_name,
                         InventoryLog.variant == v_name,
-                        InventoryLog.reason.in_(["入库", "出库", "退货入库", "发货撤销"])
-                    ).scalar() or 0
+                        InventoryLog.reason.in_(valid_reasons)
+                    )
+                    if wh_id is not None:
+                        stock_query = stock_query.filter(InventoryLog.warehouse_id == wh_id)
+                    else:
+                        stock_query = stock_query.filter(InventoryLog.warehouse_id == None)
+                        
+                    current_stock = stock_query.scalar() or 0
                     
                     if current_stock < current_consumed + qty:
-                        errors.append(f"订单号 {order_no}: '{p_name}-{v_name}' 库存不足 (当前可用库存:{current_stock}, 表格内累计需要:{current_consumed + qty})")
+                        errors.append(f"订单号 {order_no}: '{p_name}-{v_name}' 在【{wh_name}】库存不足 (当前可用:{current_stock}, 表格内已占用:{current_consumed + qty})")
                         has_item_error = True; break
                     
                     consumed_stock_in_excel[stock_key] = current_consumed + qty
-                    items_data.append({"product_name": p_name, "variant": v_name, "quantity": qty})
+                    items_data.append({"product_name": p_name, "variant": v_name, "quantity": qty, "warehouse_id": wh_id})
                     total_qty += qty
                     
             if has_item_error: continue
@@ -555,29 +589,24 @@ class SalesOrderService:
             if "booth" in platform_lower:
                 preset_item_total = 0.0
                 for item in items_data:
-                    # 抓取系统中该商品在 Booth 平台的预设售价
                     target_p = self.db.query(Product).filter(Product.name == item["product_name"]).first()
                     if target_p:
                         target_c = next((c for c in target_p.colors if c.color_name == item["variant"]), None)
                         if target_c:
-                            # ✨ 修复点：统一转为小写匹配
                             target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
                             preset_item_total += target_price * item["quantity"]
                 
-                # ✨ 增加安全防御
                 if preset_item_total > 0:
                     shipping_and_other = max(0.0, gross_price - preset_item_total)
                 else:
                     shipping_and_other = 0.0
                 
-                # Booth 最新费率：5.6% + 45 JPY (非日元时折算约 2.16 CNY)
                 base_fixed_fee = 45 if currency == "JPY" else 2.16
                 fee = gross_price * 0.056 + base_fixed_fee
                 
             elif "微店" in platform_lower:
                 fee = gross_price * 0.006
                 
-            # 核心：真正的商品净收必须剥离邮费与手续费
             net_price = gross_price - fee - shipping_and_other
             
             if net_price <= 0:
