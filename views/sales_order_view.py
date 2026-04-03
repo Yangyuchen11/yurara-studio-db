@@ -64,27 +64,6 @@ def show_sales_order_page(db):
     service = SalesOrderService(db)
     all_products = db.query(Product).all()
 
-    # ================= 0. 数据筛选 =================
-    product_options = ["全部商品"] + [p.name for p in all_products]
-    selected_product = st.selectbox(
-        "🔍 选择商品以筛选下方表格与统计数据",
-        product_options,
-        key="sales_order_product_filter"
-    )
-    product_filter = None if selected_product == "全部商品" else selected_product
-    st.divider()
-
-    # ================= 1. 订单统计概览 (秒开) =================
-    stats = get_cached_order_stats(product_filter, test_mode)
-    with st.container(border=True):
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("总订单数", stats["total"])
-        c2.metric("待发货", stats["pending"], delta_color="off")
-        c3.metric("已发货", stats["shipped"], delta_color="off")
-        c4.metric("已完成", stats["completed"], delta_color="off")
-        c5.metric("售后中", stats["after_sales"], delta_color="inverse")
-    st.divider()
-
     # ================= 2. 创建订单 (购物车模式) =================
     # 初始化购物车
     if "order_cart" not in st.session_state:
@@ -340,6 +319,27 @@ def show_sales_order_page(db):
                 st.error(f"读取或处理 Excel 文件失败: {e}")
                 st.caption("提示：请确保安装了 openpyxl 库。")
 
+    st.divider()
+
+    # ================= 数据筛选 =================
+    product_options = ["全部商品"] + [p.name for p in all_products]
+    selected_product = st.selectbox(
+        "🔍 选择商品以筛选下方表格与统计数据",
+        product_options,
+        key="sales_order_product_filter"
+    )
+    product_filter = None if selected_product == "全部商品" else selected_product
+    st.divider()
+
+    # ================= 1. 订单统计概览 (秒开) =================
+    stats = get_cached_order_stats(product_filter, test_mode)
+    with st.container(border=True):
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("总订单数", stats["total"])
+        c2.metric("待发货", stats["pending"], delta_color="off")
+        c3.metric("已发货", stats["shipped"], delta_color="off")
+        c4.metric("已完成", stats["completed"], delta_color="off")
+        c5.metric("售后中", stats["after_sales"], delta_color="inverse")
     st.divider()
 
     # ================= 3. 订单列表 =================

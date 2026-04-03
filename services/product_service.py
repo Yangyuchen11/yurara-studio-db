@@ -71,7 +71,8 @@ class ProductService:
             new_color = ProductColor(
                 product_id=new_prod.id, 
                 color_name=item['name'],
-                quantity=item['qty']
+                quantity=item['qty'],
+                image_data=item.get('image_data')
             )
             self.db.add(new_color)
             self.db.flush() # 获取 Color ID
@@ -96,7 +97,7 @@ class ProductService:
         self.db.commit()
         return new_prod
 
-    def update_product(self, product_id, name, platform, color_matrix_data, parts_df=None):
+    def update_product(self, product_id, name, platform, color_matrix_data, parts_df=None, image_map=None):
         """更新产品信息"""
         target_prod = self.get_product_by_id(product_id)
         if not target_prod:
@@ -107,19 +108,21 @@ class ProductService:
         target_prod.target_platform = platform
         
         # 2. 更新颜色规格
-        # 策略：删除旧的颜色 (级联删除价格和部件) -> 重新创建
+        # 删除旧颜色前，如果没传入新图片，可以考虑保留原图片逻辑（此处简化为覆盖）
         self.db.query(ProductColor).filter(ProductColor.product_id == target_prod.id).delete()
-        
         new_total_qty = 0
         for index, row in color_matrix_data.iterrows():
             c_name = row.get("颜色名称")
+            # ✨ 从传入的 map 中获取该颜色对应的图片
+            img_data = image_map.get(c_name) if image_map else None
             c_qty = int(row.get("库存/预计数量", 0))
             
             if c_name: 
                 new_color = ProductColor(
                     product_id=target_prod.id, 
                     color_name=str(c_name), 
-                    quantity=c_qty
+                    quantity=c_qty,
+                    image_data=img_data
                 )
                 self.db.add(new_color)
                 self.db.flush() # 获取 Color ID

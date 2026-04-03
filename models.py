@@ -23,6 +23,7 @@ class ProductColor(Base):
     color_name = Column(String)
     quantity = Column(Integer)
     produced_quantity = Column(Integer, default=0)
+    image_data = Column(String, nullable=True)
     product = relationship("Product", back_populates="colors")
     prices = relationship("ProductPrice", back_populates="color", cascade="all, delete-orphan")
     parts = relationship("ProductPart", back_populates="color", cascade="all, delete-orphan")
