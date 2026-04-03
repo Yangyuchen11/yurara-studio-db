@@ -134,6 +134,13 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
     div[data-testid="column"]:nth-child(2) div[data-testid="stVerticalBlock"] > div:nth-child(2) {{
         margin-top: 26px !important; 
     }}
+    
+    /* ====== ✨ 修复：动态匹配屏幕高度的购物车列表 ====== */
+    div[data-testid="stElementContainer"]:has(.cart-list-marker) + div[data-testid="stVerticalBlockBorderWrapper"] {{
+        /* 100vh代表100%屏幕高度，减去的 430px 留给顶部标题、底部按钮和间距 */
+        height: calc(100vh - 430px) !important; 
+        min-height: 150px !important; /* 极限情况下的最小高度保障 */
+    }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -232,8 +239,9 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
             cart_items = list(st.session_state.offline_cart.values())
             total_amount = sum(ci["qty"] * ci["unit_price"] for ci in cart_items)
             
-            # 【修复】使用定高容器，让商品列表自己滚动，把底下的结账按钮永远卡在最底下
-            with st.container(height=350, border=False):
+            st.markdown('<div class="cart-list-marker"></div>', unsafe_allow_html=True)
+            
+            with st.container(height=240, border=False):
                 if not cart_items: 
                     st.caption("购物车为空")
                 else:
@@ -256,7 +264,7 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                             if st.session_state.offline_cart[cart_key]["qty"] <= 0:
                                 del st.session_state.offline_cart[cart_key]
                             st.rerun()
-                # ===============================================================
+                    # ===============================================================
 
             st.divider()
             
@@ -268,14 +276,32 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                 st.session_state.pos_pay_method = "PayPay"; st.rerun()
                 
             fee = total_amount * 0.0198 if st.session_state.pos_pay_method == "PayPay" else 0.0
-            st.markdown(f"**总计: <span style='color:red; font-size:22px;'>{total_amount:,.2f}</span>**", unsafe_allow_html=True)
+            
+            # 【修复2】补回 PayPay 手续费的直观显示
+            if st.session_state.pos_pay_method == "PayPay":
+                st.markdown(f"**总计: <span style='color:red; font-size:22px;'>{total_amount:,.2f}</span>** <br><span style='color:gray; font-size:12px;'>(结算时将自动扣除 1.98% 手续费: ¥ {fee:,.2f})</span>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"**总计: <span style='color:red; font-size:22px;'>{total_amount:,.2f}</span>**", unsafe_allow_html=True)
             
             # 收款账户
             valid_accs = [a for a in all_cash_assets if a.currency == template.currency]
             acc_opts = {a.name: a.id for a in valid_accs}
             target_acc_id = None
             if acc_opts:
-                sel_acc = st.selectbox("收款账户", list(acc_opts.keys()), label_visibility="collapsed")
+                acc_names = list(acc_opts.keys())
+                default_idx = 0
+                
+                # 【修复3】补回根据支付方式自动选择默认收款账户的逻辑
+                pay_method = st.session_state.pos_pay_method
+                for i, name in enumerate(acc_names):
+                    if pay_method == "PayPay" and "paypay" in name.lower():
+                        default_idx = i
+                        break
+                    elif pay_method == "现金" and ("现金" in name or "cash" in name.lower()):
+                        default_idx = i
+                        break
+
+                sel_acc = st.selectbox("收款账户", acc_names, index=default_idx, label_visibility="collapsed")
                 target_acc_id = acc_opts[sel_acc]
 
             # 巨大化结账按钮
@@ -291,7 +317,6 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                     sync_all_caches()
                     st.rerun()
                 except Exception as e: st.error(f"失败: {e}")
-
     # ================= 恢复：非全屏模式下的原版底部历史记录 =================
     if not st.session_state.pos_fullscreen:
         st.divider()
