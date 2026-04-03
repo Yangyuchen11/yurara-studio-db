@@ -53,29 +53,6 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
         """
         <script>
         const parentDoc = window.parent.document;
-        // 全屏逻辑处理
-        if (!parentDoc.getElementById('pos-fs-listener')) {
-            const s = parentDoc.createElement('script');
-            s.id = 'pos-fs-listener';
-            s.innerHTML = `
-                document.addEventListener('click', function(e) {
-                    let t = e.target;
-                    while (t && t.tagName !== 'BUTTON') { t = t.parentElement; }
-                    if (t && t.tagName === 'BUTTON') {
-                        if (t.innerText.includes('全屏模式')) {
-                            let docElm = document.documentElement;
-                            if (docElm.requestFullscreen) { docElm.requestFullscreen(); }
-                            else if (docElm.webkitRequestFullscreen) { docElm.webkitRequestFullscreen(); }
-                        } else if (t.innerText.includes('退出全屏')) {
-                            if (document.exitFullscreen) { document.exitFullscreen(); }
-                            else if (document.webkitExitFullscreen) { document.webkitExitFullscreen(); }
-                        }
-                    }
-                });
-            `;
-            parentDoc.head.appendChild(s);
-        }
-        // 局部滚动处理
         setInterval(() => {
             const markers = parentDoc.querySelectorAll('.pos-scroll-marker');
             markers.forEach(marker => {
@@ -93,53 +70,50 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
         height=0, width=0
     )
 
-    # 3. 样式注入
+    # 3. 样式注入：【修改】使用 Flexbox 实现自适应高度布局
     fullscreen_style = ""
     if st.session_state.pos_fullscreen:
         fullscreen_style = """
         [data-testid="stSidebar"] {display: none !important;}
         header {display: none !important;}
         [data-testid="stTabs"] [data-baseweb="tab-list"] {display: none !important;}
+        
         html, body, [data-testid="stAppViewContainer"], .main {
             overflow: hidden !important;
             height: 100vh !important;
-            overscroll-behavior: none !important;
         }
         .block-container {
-            padding-top: 0rem !important; 
-            padding-bottom: 0rem !important; 
+            padding: 0.5rem 1.5rem !important; /* 给左右边缘留出 1.5rem 空间 */
             max-width: 100% !important;
             height: 100vh !important;
             overflow: hidden !important;
+        }
+        
+        /* 强制对齐：移除左侧标题顶部间距，调整右侧列位移 */
+        div[data-testid="column"]:nth-child(1) h3 {
+            margin-top: 0 !important;
+            padding-top: 5px !important;
+        }
+        div[data-testid="column"]:nth-child(2) div[data-testid="stVerticalBlock"] > div:nth-child(2) {
+            margin-top: 0px !important; /* 修正上边框对齐 */
+        }
+
+        /* 购物车列表高度自适应：100%屏幕减去顶部按钮和底部结算区高度 */
+        div[data-testid="stElementContainer"]:has(.cart-list-marker) + div[data-testid="stVerticalBlockBorderWrapper"] {
+            height: calc(100vh - 440px) !important; 
+            min-height: 150px !important;
         }
         """
 
     st.markdown(f"""
     <style>
     {fullscreen_style}
-    /* 隐藏滚动条 */
     ::-webkit-scrollbar {{ display: none !important; }}
     
-    /* 结账按钮样式优化 */
+    /* 结账按钮保持巨大化 */
     div[data-testid="stElementContainer"]:has(.checkout-btn-marker) + div[data-testid="stElementContainer"] button {{
-        height: 80px !important;
+        height: 70px !important;
         border-radius: 12px !important;
-    }}
-    div[data-testid="stElementContainer"]:has(.checkout-btn-marker) + div[data-testid="stElementContainer"] button p {{
-        font-size: 24px !important;
-        font-weight: bold !important;
-    }}
-    
-    /* 强制调整右侧列的第一个容器(结账单)，使其与左侧商品列表框对齐 */
-    div[data-testid="column"]:nth-child(2) div[data-testid="stVerticalBlock"] > div:nth-child(2) {{
-        margin-top: 26px !important; 
-    }}
-    
-    /* ====== ✨ 修复：动态匹配屏幕高度的购物车列表 ====== */
-    div[data-testid="stElementContainer"]:has(.cart-list-marker) + div[data-testid="stVerticalBlockBorderWrapper"] {{
-        /* 100vh代表100%屏幕高度，减去的 430px 留给顶部标题、底部按钮和间距 */
-        height: calc(100vh - 430px) !important; 
-        min-height: 150px !important; /* 极限情况下的最小高度保障 */
     }}
     </style>
     """, unsafe_allow_html=True)
@@ -241,7 +215,7 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
             
             st.markdown('<div class="cart-list-marker"></div>', unsafe_allow_html=True)
             
-            with st.container(height=240, border=False):
+            with st.container():
                 if not cart_items: 
                     st.caption("购物车为空")
                 else:
@@ -276,13 +250,9 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                 st.session_state.pos_pay_method = "PayPay"; st.rerun()
                 
             fee = total_amount * 0.0198 if st.session_state.pos_pay_method == "PayPay" else 0.0
-            
-            # 【修复2】补回 PayPay 手续费的直观显示
+            st.markdown(f"**总计: <span style='color:red; font-size:22px;'>{total_amount:,.2f}</span>**", unsafe_allow_html=True)
             if st.session_state.pos_pay_method == "PayPay":
-                st.markdown(f"**总计: <span style='color:red; font-size:22px;'>{total_amount:,.2f}</span>** <br><span style='color:gray; font-size:12px;'>(结算时将自动扣除 1.98% 手续费: ¥ {fee:,.2f})</span>", unsafe_allow_html=True)
-            else:
-                st.markdown(f"**总计: <span style='color:red; font-size:22px;'>{total_amount:,.2f}</span>**", unsafe_allow_html=True)
-            
+                st.caption(f"手续费(1.98%): ¥ {fee:,.2f} | 预估实收: ¥ {total_amount - fee:,.2f}")
             # 收款账户
             valid_accs = [a for a in all_cash_assets if a.currency == template.currency]
             acc_opts = {a.name: a.id for a in valid_accs}
