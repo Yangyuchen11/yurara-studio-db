@@ -5,6 +5,98 @@ from services.inventory_service import InventoryService
 from cache_manager import sync_all_caches
 from constants import PRODUCT_COST_CATEGORIES, StockLogReason
 
+if hasattr(st, "fragment"):
+    fragment_decorator = st.fragment
+else:
+    fragment_decorator = st.experimental_fragment
+
+# ================= 新增：独立的局部刷新变动录入面板 =================
+@fragment_decorator
+def render_inventory_movement_panel(db, service, selected_product_id, p_name, colors, wh_options):
+    st.subheader("📝 库存变动录入")
+    if not wh_options:
+        st.warning("⚠️ 请先到【仓库管理】标签页中添加至少一个仓库！")
+        return
+        
+    with st.container(border=True):
+        c_date, c_type = st.columns(2)
+        input_date = c_date.date_input("日期", value=date.today())
+        move_type = c_type.selectbox("变动类型", [
+            StockLogReason.IN_INSPECT, StockLogReason.INSPECT_COMPLETED, 
+            StockLogReason.OTHER_IN, StockLogReason.OUT_STOCK, StockLogReason.TRANSFER
+        ])
+        
+        selected_to_wh_id = None
+        if move_type == StockLogReason.TRANSFER:
+            c_wh_from, c_wh_to = st.columns(2)
+            wh_options_from = {"未分配仓库 (旧数据)": None}
+            wh_options_from.update(wh_options)
+            wh_from_label = c_wh_from.selectbox("移出仓库", list(wh_options_from.keys()))
+            default_to_idx = 1 if len(wh_options) > 1 else 0
+            wh_to_label = c_wh_to.selectbox("移入仓库", list(wh_options.keys()), index=default_to_idx)
+            selected_wh_id = wh_options_from[wh_from_label]
+            selected_to_wh_id = wh_options[wh_to_label]
+        else:
+            wh_label = st.selectbox("目标操作仓库", list(wh_options.keys()))
+            selected_wh_id = wh_options[wh_label]
+        
+        color_options = [c.color_name for c in colors] if selected_product_id and colors else ["通用"]
+        
+        c_var, c_set, c_pt, c_qty = st.columns([1.2, 0.8, 1, 1], vertical_alignment="bottom")
+        p_var = c_var.selectbox("款式", color_options)
+        
+        current_parts = []
+        if selected_product_id:
+            target_c = next((c for c in colors if c.color_name == p_var), None)
+            if target_c and target_c.parts:
+                current_parts = [p.part_name for p in target_c.parts]
+        
+        if current_parts:
+            is_set = c_set.checkbox("整套操作", value=True, help="该款式所有部件同比例增减，并记账。")
+        else:
+            is_set = True
+            c_set.checkbox("整套操作", value=True, disabled=True, help="该款式未拆分部件，默认整套。")
+        
+        p_part = None
+        if not is_set and current_parts:
+            p_part = c_pt.selectbox("具体部件", current_parts)
+        else:
+            c_pt.selectbox("具体部件", ["-"], disabled=True)
+            
+        input_qty = c_qty.number_input("数量", min_value=1, step=1)
+        
+        out_type = "其他"
+        cons_cat = "其他成本"
+        cons_content = ""
+        p_remark = st.text_input("备注", placeholder="选填备注")
+
+        if move_type == StockLogReason.OUT_STOCK:
+            out_type = st.radio("出库类型", ["消耗", "其他"], horizontal=True)
+            if out_type == "消耗":
+                c_cons1, c_cons2 = st.columns([1, 2])
+                cons_cat = c_cons1.selectbox("计入成本分类", service.COST_CATEGORIES)
+                cons_content = c_cons2.text_input("消耗内容 (必填)", placeholder="如：宣发样衣")
+        
+        if st.button("🚀 提交变动", type="primary", use_container_width=True):
+            if move_type == StockLogReason.OUT_STOCK and out_type == "消耗" and not cons_content.strip():
+                st.error("❌ 请填写【消耗内容】。")
+            else:
+                try:
+                    msg = service.add_inventory_movement(
+                        product_id=selected_product_id, product_name=p_name, variant=p_var,
+                        quantity=input_qty, move_type=move_type, date_obj=input_date,
+                        remark=p_remark, warehouse_id=selected_wh_id, to_warehouse_id=selected_to_wh_id,
+                        is_set=is_set, part_name=p_part,
+                        out_type=out_type, cons_cat=cons_cat, cons_content=cons_content
+                    )
+                    service.commit()
+                    st.toast(msg, icon="✅")
+                    # 提交变动后，强制刷新全局，以便外面的表格能看到最新数据
+                    st.rerun() 
+                except Exception as e:
+                    service.db.rollback()
+                    st.error(f"操作失败: {e}")
+
 def show_inventory_page(db):
     st.header("📦 库存管理系统")
     
@@ -93,86 +185,8 @@ def show_inventory_page(db):
         st.divider()
 
         st.subheader("📝 库存变动录入")
-        if not wh_options:
-            st.warning("⚠️ 请先到【仓库管理】标签页中添加至少一个仓库！")
-        else:
-            with st.container(border=True):
-                c_date, c_type = st.columns(2)
-                input_date = c_date.date_input("日期", value=date.today())
-                move_type = c_type.selectbox("变动类型", [
-                    StockLogReason.IN_INSPECT, StockLogReason.INSPECT_COMPLETED, 
-                    StockLogReason.OTHER_IN, StockLogReason.OUT_STOCK, StockLogReason.TRANSFER
-                ])
-                
-                selected_to_wh_id = None
-                if move_type == StockLogReason.TRANSFER:
-                    c_wh_from, c_wh_to = st.columns(2)
-                    wh_options_from = {"未分配仓库 (旧数据)": None}
-                    wh_options_from.update(wh_options)
-                    wh_from_label = c_wh_from.selectbox("移出仓库", list(wh_options_from.keys()))
-                    default_to_idx = 1 if len(wh_options) > 1 else 0
-                    wh_to_label = c_wh_to.selectbox("移入仓库", list(wh_options.keys()), index=default_to_idx)
-                    selected_wh_id = wh_options_from[wh_from_label]
-                    selected_to_wh_id = wh_options[wh_to_label]
-                else:
-                    wh_label = st.selectbox("目标操作仓库", list(wh_options.keys()))
-                    selected_wh_id = wh_options[wh_label]
-                
-                color_options = [c.color_name for c in colors] if selected_product_id and colors else ["通用"]
-                
-                c_var, c_set, c_pt, c_qty = st.columns([1.2, 0.8, 1, 1], vertical_alignment="bottom")
-                p_var = c_var.selectbox("款式", color_options)
-                
-                current_parts = []
-                if selected_product_id:
-                    target_c = next((c for c in colors if c.color_name == p_var), None)
-                    if target_c and target_c.parts:
-                        current_parts = [p.part_name for p in target_c.parts]
-                
-                if current_parts:
-                    is_set = c_set.checkbox("整套操作", value=True, help="该款式所有部件同比例增减，并记账。")
-                else:
-                    is_set = True
-                    c_set.checkbox("整套操作", value=True, disabled=True, help="该款式未拆分部件，默认整套。")
-                
-                p_part = None
-                if not is_set and current_parts:
-                    p_part = c_pt.selectbox("具体部件", current_parts)
-                else:
-                    c_pt.selectbox("具体部件", ["-"], disabled=True)
-                    
-                input_qty = c_qty.number_input("数量", min_value=1, step=1)
-                
-                out_type = "其他"
-                cons_cat = "其他成本"
-                cons_content = ""
-                p_remark = st.text_input("备注", placeholder="选填备注")
 
-                if move_type == StockLogReason.OUT_STOCK:
-                    out_type = st.radio("出库类型", ["消耗", "其他"], horizontal=True)
-                    if out_type == "消耗":
-                        c_cons1, c_cons2 = st.columns([1, 2])
-                        cons_cat = c_cons1.selectbox("计入成本分类", service.COST_CATEGORIES)
-                        cons_content = c_cons2.text_input("消耗内容 (必填)", placeholder="如：宣发样衣")
-                
-                if st.button("🚀 提交变动", type="primary", use_container_width=True):
-                    if move_type == StockLogReason.OUT_STOCK and out_type == "消耗" and not cons_content.strip():
-                        st.error("❌ 请填写【消耗内容】。")
-                    else:
-                        try:
-                            msg = service.add_inventory_movement(
-                                product_id=selected_product_id, product_name=p_name, variant=p_var,
-                                quantity=input_qty, move_type=move_type, date_obj=input_date,
-                                remark=p_remark, warehouse_id=selected_wh_id, to_warehouse_id=selected_to_wh_id,
-                                is_set=is_set, part_name=p_part,
-                                out_type=out_type, cons_cat=cons_cat, cons_content=cons_content
-                            )
-                            service.commit()
-                            st.toast(msg, icon="✅")
-                            st.rerun()
-                        except Exception as e:
-                            service.db.rollback()
-                            st.error(f"操作失败: {e}")
+        render_inventory_movement_panel(db, service, selected_product_id, p_name, colors, wh_options)
 
         st.subheader("📜 变动历史记录")
         logs = service.get_recent_logs(p_name)
@@ -206,7 +220,7 @@ def show_inventory_page(db):
 
             with st.popover("🗑️ 删除记录 (级联回滚)", width="stretch"):
                 st.warning("⚠️ 删除操作将自动回滚：库存与资产价值。库存移动记录删除时需将进出两笔记录分别进行删除。")
-                del_opts = {f"{l.date} | {l.variant} ({part_display}) | {l.reason} {l.change_amount}": l.id for idx, l in enumerate(logs)}
+                del_opts = {f"[ID:{l.id}] {l.date} | {l.variant} ({l.part_name if l.part_name else '[成套]'}) | {l.reason} {l.change_amount}": l.id for l in logs}
                 selected_del = st.selectbox("选择要删除的记录", list(del_opts.keys()))
                 if st.button("🔴 确认删除并回滚"):
                     try:

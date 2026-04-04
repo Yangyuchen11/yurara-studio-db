@@ -48,6 +48,29 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
     if "show_history_only" not in st.session_state:
         st.session_state.show_history_only = False
 
+    def add_to_cart_cb(p_name, v_name, price, max_qty):
+        cart_key = f"{p_name}_{v_name}"
+        if cart_key in st.session_state.offline_cart:
+            if st.session_state.offline_cart[cart_key]["qty"] < max_qty:
+                st.session_state.offline_cart[cart_key]["qty"] += 1
+            else:
+                st.toast("已达模板最大分配限额！", icon="⚠️")
+        else:
+            st.session_state.offline_cart[cart_key] = {
+                "product_name": p_name, "variant": v_name,
+                "unit_price": price, "qty": 1
+            }
+
+    def remove_from_cart_cb(p_name, v_name):
+        cart_key = f"{p_name}_{v_name}"
+        if cart_key in st.session_state.offline_cart:
+            st.session_state.offline_cart[cart_key]["qty"] -= 1
+            if st.session_state.offline_cart[cart_key]["qty"] <= 0:
+                del st.session_state.offline_cart[cart_key]
+
+    def set_pay_method_cb(method):
+        st.session_state.pos_pay_method = method
+
     # 2. 注入全屏与滚动控制脚本
     components.html(
         """
@@ -182,18 +205,13 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                         else:
                             st.markdown(f"<div style='font-size:12px; color:#4caf50; text-align:center; margin-bottom:4px; font-weight:bold;'>📦 余量: {item.remaining_quantity}</div>", unsafe_allow_html=True)
                             btn_label = f"{item.product_name}\n{item.variant}\n¥ {item.preset_price:.2f} ➕"
-                            if st.button(btn_label, key=f"pos_btn_{item.id}", use_container_width=True):
-                                if cart_key in st.session_state.offline_cart:
-                                    if st.session_state.offline_cart[cart_key]["qty"] < item.remaining_quantity:
-                                        st.session_state.offline_cart[cart_key]["qty"] += 1
-                                    else:
-                                        st.toast("已达模板最大分配限额！", icon="⚠️")
-                                else:
-                                    st.session_state.offline_cart[cart_key] = {
-                                        "product_name": item.product_name, "variant": item.variant,
-                                        "unit_price": item.preset_price, "qty": 1
-                                    }
-                                st.rerun()
+                            st.button(
+                                btn_label, 
+                                key=f"pos_btn_{item.id}", 
+                                use_container_width=True,
+                                on_click=add_to_cart_cb,  # 点击时去执行上面的函数
+                                args=(item.product_name, item.variant, item.preset_price, item.remaining_quantity) # 把这四个变量传给函数
+                            )
 
     with c_cart:
         # 1. 顶部控制按钮组
@@ -231,22 +249,31 @@ def render_pos_machine(db, template, all_cash_assets, image_lookup):
                         r_c1.markdown(f"<span style='font-size:13px; font-weight:bold;'>{ci['product_name']}</span><br><span style='font-size:11px; color:gray;'>{ci['variant']}</span>", unsafe_allow_html=True)
                         r_c2.markdown(f"**x {ci['qty']}**")
                         
-                        if r_c3.button("❌", key=f"rem_{idx}", help="移除一项"):
-                            cart_key = f"{ci['product_name']}_{ci['variant']}"
-                            st.session_state.offline_cart[cart_key]["qty"] -= 1
-                            if st.session_state.offline_cart[cart_key]["qty"] <= 0:
-                                del st.session_state.offline_cart[cart_key]
-                            st.rerun()
+                    st.button(
+                        "❌", 
+                        key=f"rem_{idx}", 
+                        help="移除一项",
+                        on_click=remove_from_cart_cb, # 绑定回调函数
+                        args=(ci['product_name'], ci['variant']) # 传入参数
+                    )
                     # ===============================================================
 
             st.divider()
             
             # 支付选择
             c_pay1, c_pay2 = st.columns(2)
-            if c_pay1.button("💵 现金", type="primary" if st.session_state.pos_pay_method == "现金" else "secondary", use_container_width=True):
-                st.session_state.pos_pay_method = "现金"; st.rerun()
-            if c_pay2.button("📱 PayPay", type="primary" if st.session_state.pos_pay_method == "PayPay" else "secondary", use_container_width=True):
-                st.session_state.pos_pay_method = "PayPay"; st.rerun()
+            c_pay1.button(
+                "💵 现金", 
+                type="primary" if st.session_state.pos_pay_method == "现金" else "secondary", 
+                use_container_width=True,
+                on_click=set_pay_method_cb, args=("现金",)
+            )
+            c_pay2.button(
+                "📱 PayPay", 
+                type="primary" if st.session_state.pos_pay_method == "PayPay" else "secondary", 
+                use_container_width=True,
+                on_click=set_pay_method_cb, args=("PayPay",)
+            )
                 
             fee = total_amount * 0.0198 if st.session_state.pos_pay_method == "PayPay" else 0.0
             st.markdown(f"**总计: <span style='color:red; font-size:22px;'>{total_amount:,.2f}</span>**", unsafe_allow_html=True)

@@ -291,7 +291,19 @@ def render_add_transaction_form(exchange_rate):
                         st.warning(f"该币种 ({batch_config['currency']}) 暂无现金账户。")
                         batch_config["account_id"] = None
                     else:
-                        sel_acc = st.selectbox("操作账户", list(acc_opts.keys()))
+                        acc_names = list(acc_opts.keys())
+                        default_idx = 0
+                        
+                        # 批量录入肯定是支出，直接根据币种匹配关键词
+                        for i, name in enumerate(acc_names):
+                            if batch_config["currency"] == "CNY" and "支付宝" in name:
+                                default_idx = i
+                                break
+                            elif batch_config["currency"] == "JPY" and "日元银行" in name:
+                                default_idx = i
+                                break
+                                
+                        sel_acc = st.selectbox("操作账户", acc_names, index=default_idx)
                         batch_config["account_id"] = acc_opts.get(sel_acc)
 
                     # ================= 逻辑分流：是否匹配了预算？ =================
@@ -515,7 +527,20 @@ def render_add_transaction_form(exchange_rate):
                         st.warning(f"该币种 ({base_data['currency']}) 暂无现金账户，系统将自动创建默认账户。")
                         base_data["account_id"] = None
                     else:
-                        sel_acc = st.selectbox("入账账户" if rec_type == "收入" else "操作账户", list(acc_opts.keys()))
+                        acc_names = list(acc_opts.keys())
+                        default_idx = 0
+                        
+                        # 判断如果是支出，再去匹配关键词
+                        if rec_type == "支出":
+                            for i, name in enumerate(acc_names):
+                                if base_data["currency"] == "CNY" and "支付宝" in name:
+                                    default_idx = i
+                                    break
+                                elif base_data["currency"] == "JPY" and "日元银行" in name:
+                                    default_idx = i
+                                    break
+                                    
+                        sel_acc = st.selectbox("入账账户" if rec_type == "收入" else "操作账户", acc_names, index=default_idx)
                         base_data["account_id"] = acc_opts.get(sel_acc)
 
                     # --- 4. 附加信息 ---
