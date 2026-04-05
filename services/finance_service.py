@@ -626,6 +626,13 @@ class FinanceService:
             target_cost = db.query(CostItem).filter(CostItem.id == rec.related_item_id).first()
             if target_cost:
                 target_cost.actual_cost = target_cost.actual_cost - abs(rec.amount) + updates['amount_abs']
+                
+                # 👇 新增：必须同步更新 original_amount 字段才能让前端表格显示正常
+                if target_cost.original_amount is not None:
+                    target_cost.original_amount = target_cost.original_amount - abs(rec.amount) + updates['amount_abs']
+                else:
+                    target_cost.original_amount = updates['amount_abs']
+                    
                 target_cost.remarks = f"{updates['desc']} (已修)"
                 product_id_to_sync = target_cost.product_id 
         else:
@@ -634,6 +641,9 @@ class FinanceService:
             for cost in all_costs:
                 if len(all_costs) == 1:
                     cost.actual_cost = updates['amount_abs']
+                    # 👇 新增：同样同步更新 original_amount 字段
+                    cost.original_amount = updates['amount_abs']
+                    
                 cost.remarks = f"{updates['desc']} (已修)"
                 product_id_to_sync = cost.product_id
             
