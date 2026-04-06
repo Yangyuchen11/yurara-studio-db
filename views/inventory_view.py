@@ -184,8 +184,6 @@ def show_inventory_page(db):
                 
         st.divider()
 
-        st.subheader("📝 库存变动录入")
-
         render_inventory_movement_panel(db, service, selected_product_id, p_name, colors, wh_options)
 
         st.subheader("📜 变动历史记录")

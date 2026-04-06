@@ -265,7 +265,7 @@ class SalesOrderService:
                 self.db.add(InventoryLog(
                     product_name=item["product_name"], variant=item["variant"], change_amount=item["quantity"],
                     reason="退货入库", date=refund_date, note=f"订单退货: {order.order_no} - {refund_reason}",
-                    is_sold=True, sale_amount=-refund_amount, currency=order.currency, platform=order.platform,
+                    is_sold=True, sale_amount=0, currency=order.currency, platform=order.platform,
                     order_id=order.id, warehouse_id=item.get("warehouse_id")
                 ))
                 product = self.db.query(Product).filter(Product.name == item["product_name"]).first()
