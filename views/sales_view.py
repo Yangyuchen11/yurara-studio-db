@@ -13,7 +13,7 @@ def fragment_if_available(func):
 
 # --- 分别缓存 V1 和 V2 数据 ---
 @st.cache_data(ttl=300, show_spinner=False)
-def get_cached_sales_df_v1(test_mode_flag):
+def get_cached_sales_df_v1(test_mode_flag, cache_version): # ✨ 加入版本参数
     db_cache = st.session_state.get_dynamic_session()
     try:
         raw_logs = SalesService.get_raw_sales_logs_v1(db_cache)
@@ -23,7 +23,7 @@ def get_cached_sales_df_v1(test_mode_flag):
         db_cache.close()
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_cached_sales_df_v2(test_mode_flag):
+def get_cached_sales_df_v2(test_mode_flag, cache_version): # ✨ 加入版本参数
     db_cache = st.session_state.get_dynamic_session()
     try:
         df = SalesService.process_sales_data_v2(db_cache)
@@ -177,6 +177,7 @@ def show_sales_page(db, exchange_rate):
     st.header("📈 销售数据透视")
 
     test_mode = st.session_state.get("test_mode", False)
+    cache_version = st.session_state.get("global_cache_version", 0) # ✨ 提取版本参数
     
     # 两个 Tab 分页
     tab_v2, tab_v1 = st.tabs(["🚀 V2.0 订单系统版 (精准)", "🕰️ V1.0 历史数据版 (兼容)"])
@@ -184,11 +185,11 @@ def show_sales_page(db, exchange_rate):
     with tab_v2:
         st.info("💡 **系统版本 V2.0**：数据源完全解耦，仅从「销售订单」和「售后管理」抓取。彻底消除冗余翻倍、负数异常、并能完美兼容“仅退款”操作。(**推荐使用**)")
         with st.spinner("正在加载 V2.0 销售大数据..."):
-            df_v2 = get_cached_sales_df_v2(test_mode)
+            df_v2 = get_cached_sales_df_v2(test_mode, cache_version) # ✨ 传入版本
         render_sales_dashboard(df_v2, exchange_rate, "v2")
         
     with tab_v1:
         st.warning("⚠️ **系统版本 V1.0**：数据通过抓取底层「物理库存日志」强行反推。包含早期无订单记录的历史老数据，但受限于旧逻辑存在少量数据翻倍、负数等异常。(仅供历史对账参考)")
         with st.spinner("正在加载 V1.0 销售大数据..."):
-            df_v1 = get_cached_sales_df_v1(test_mode)
+            df_v1 = get_cached_sales_df_v1(test_mode, cache_version) # ✨ 传入版本
         render_sales_dashboard(df_v1, exchange_rate, "v1")

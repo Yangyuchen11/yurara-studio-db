@@ -1,3 +1,4 @@
+# views/sales_order_view.py
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -9,7 +10,7 @@ from constants import OrderStatus, PLATFORM_CODES
 # ------------------ 🚀 性能优化：独立数据层缓存 ------------------
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_cached_order_stats(product_filter, test_mode_flag):
+def get_cached_order_stats(product_filter, test_mode_flag, cache_version): # ✨ 加入版本参数
     db_cache = st.session_state.get_dynamic_session()
     try:
         service = SalesOrderService(db_cache)
@@ -18,7 +19,7 @@ def get_cached_order_stats(product_filter, test_mode_flag):
         db_cache.close()
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_cached_orders_df(status_filter, product_filter, test_mode_flag):
+def get_cached_orders_df(status_filter, product_filter, test_mode_flag, cache_version): # ✨ 加入版本参数
     db_cache = st.session_state.get_dynamic_session()
     try:
         service = SalesOrderService(db_cache)
@@ -61,6 +62,8 @@ def show_sales_order_page(db):
     st.header("🛒 销售订单管理")
 
     test_mode = st.session_state.get("test_mode", False)
+    cache_version = st.session_state.get("global_cache_version", 0) # ✨ 获取全局缓存版本
+    
     service = SalesOrderService(db)
     all_products = db.query(Product).all()
     
@@ -342,7 +345,7 @@ def show_sales_order_page(db):
     st.divider()
 
     # ================= 1. 订单统计概览 (秒开) =================
-    stats = get_cached_order_stats(product_filter, test_mode)
+    stats = get_cached_order_stats(product_filter, test_mode, cache_version) # ✨ 传版本
     with st.container(border=True):
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("总订单数", stats["total"])
@@ -368,7 +371,7 @@ def show_sales_order_page(db):
             st.session_state[select_all_key] = False
 
         with st.spinner("加载数据中..."):
-            df = get_cached_orders_df(status_filter, product_filter, test_mode).copy()
+            df = get_cached_orders_df(status_filter, product_filter, test_mode, cache_version).copy() # ✨ 传版本
 
         if df.empty:
             st.info("暂无订单")

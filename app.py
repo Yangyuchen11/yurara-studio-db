@@ -162,7 +162,13 @@ TABLES_MAP = [
 ]
 
 # 初始化表结构 (会自动建在当前绑定的引擎上)
-Base.metadata.create_all(bind=engine)
+@st.cache_resource
+def init_database(_engine):
+    """只在应用启动时执行一次表结构同步"""
+    Base.metadata.create_all(bind=_engine)
+    return True
+
+init_database(engine)
 
 # === 辅助函数：获取/保存系统设置 ===
 def get_system_setting(db, key, default_value=""):

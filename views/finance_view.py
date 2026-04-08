@@ -1,7 +1,7 @@
 # views/finance_view.py
 import streamlit as st
 import pandas as pd
-import math  # 新增用于分页计算
+import math  
 from datetime import date
 from services.finance_service import FinanceService
 from cache_manager import sync_all_caches
@@ -21,18 +21,21 @@ def fragment_if_available(func):
 
 # ================= 🚀 性能优化 2：数据与表格渲染缓存 =================
 @st.cache_data(ttl=300, show_spinner=False)
-def get_cached_finance_data(test_mode_flag):
-    """缓存流水明细和余额，避免每次刷新重算全表。传入_test_mode_flag隔离真假环境的缓存"""
+def get_cached_finance_data(test_mode_flag, page, cache_version):
+    """
+    增加了 cache_version 参数。
+    只要发生增删改，cache_version 会变化，Streamlit 就会自动重新执行此函数。
+    """
     db_cache = st.session_state.get_dynamic_session()
     try:
-        df_display = FinanceService.get_finance_records_with_balance(db_cache)
+        # 调用新的真分页方法 (已内置窗口函数计算行余额)
+        df_display, total_count = FinanceService.get_finance_records_page(db_cache, page=page, page_size=100)
         
-        # 🚀 性能优化 3：使用向量化的 map 替代低效的 apply，速度飙升
         if not df_display.empty:
             df_display['收支'] = df_display['收支'].map({"收入": "🟢 收入", "支出": "🔴 支出"}).fillna(df_display['收支'])
             
         cur_cny, cur_jpy = FinanceService.get_current_balances(db_cache)
-        return df_display, cur_cny, cur_jpy
+        return df_display, total_count, cur_cny, cur_jpy
     finally:
         db_cache.close()
 
@@ -632,6 +635,7 @@ def render_add_transaction_form(exchange_rate):
                                     st.error(f"移动失败: {e}")
     finally:
         db_frag.close()
+
 # ================= 局部组件：编辑与删除 =================
 @fragment_if_available
 def render_edit_delete_panel(df_render):
@@ -707,7 +711,7 @@ def render_edit_delete_panel(df_render):
                                     msg = FinanceService.delete_record(db_frag, sel['ID'])
                                     if msg is not False:
                                         st.toast(f"已删除，关联数据回滚: {msg}", icon="🗑️")
-                                        sync_all_caches() # 确保这里用的是我们刚改好的全局缓存清理
+                                        sync_all_caches() 
                                         st.rerun()
                                 except Exception as e:
                                     st.error(f"删除失败: {e}")
@@ -721,10 +725,19 @@ def show_finance_page(db, exchange_rate):
     # --- 1. 独立渲染的表单，隔离打字卡顿 ---
     render_add_transaction_form(exchange_rate)
     
-    # --- 2. 获取缓存的表格数据 (秒开) ---
+    # 获取缓存版本号
+    cache_version = st.session_state.get("global_cache_version", 0)
     test_mode = st.session_state.get("test_mode", False)
+
+    # === 初始化当前页码 ===
+    if "finance_page" not in st.session_state:
+        st.session_state.finance_page = 1
+    current_page = st.session_state.finance_page
+    
+    # --- 2. 获取缓存的当页表格数据 (秒开) ---
     with st.spinner("加载流水历史中..."):
-        df_display, cur_cny, cur_jpy = get_cached_finance_data(test_mode)
+        # 每次翻页，或者 cache_version 更新，这里都会秒级拉取
+        df_render, total_rows, cur_cny, cur_jpy = get_cached_finance_data(test_mode, current_page, cache_version)
 
     st.divider()
     m1, m2, m3, m4 = st.columns(4)
@@ -733,32 +746,21 @@ def show_finance_page(db, exchange_rate):
     m3.metric("JPY 折合 CNY", f"¥ {cur_jpy * exchange_rate:,.2f}", help=f"实时汇率设置: {exchange_rate*100:.1f}")
     m4.metric("账户总余额 (CNY)", f"¥ {(cur_cny + cur_jpy * exchange_rate):,.2f}")
 
-    # --- 3. 渲染原生表格 (附带分页功能) ---
-    if not df_display.empty:
+    # --- 3. 渲染原生表格 ---
+    if not df_render.empty:
         st.subheader("📜 流水明细")
         
-        # === 分页逻辑核心 ===
-        if "finance_page" not in st.session_state:
-            st.session_state.finance_page = 1
-
         PAGE_SIZE = 100
-        total_rows = len(df_display)
         total_pages = math.ceil(total_rows / PAGE_SIZE)
 
-        # 容错边界：如果数据被删除导致当前页超出总页数，自动跳回最后一页
+        # 容错：如果删除了数据导致总页数变少，自动跳回
         if st.session_state.finance_page > total_pages and total_pages > 0:
             st.session_state.finance_page = total_pages
+            st.rerun()
 
-        current_page = st.session_state.finance_page
+        st.caption(f"共计 **{total_rows}** 条记录。")
 
-        # 执行数据切片
-        start_idx = (current_page - 1) * PAGE_SIZE
-        end_idx = current_page * PAGE_SIZE
-        df_render = df_display.iloc[start_idx:end_idx]
-
-        st.caption(f"共计 **{total_rows}** 条记录，当前显示第 **{start_idx + 1}** 到 **{min(end_idx, total_rows)}** 条。")
-
-        # 渲染截取后的当页表格
+        # 渲染截取后的当页表格 (这里保留了“当前CNY余额”和“当前JPY余额”列)
         st.dataframe(
             df_render, 
             width="stretch", 
@@ -791,7 +793,7 @@ def show_finance_page(db, exchange_rate):
 
         st.divider()
         # --- 4. 独立渲染的编辑删除模块 ---
-        # 传入当前页截取的 df_render，下拉框只显示当前这 100 条记录
+        # df_render 已经是当页的数据了，直接传入即可
         render_edit_delete_panel(df_render)
     else:
         st.info("暂无记录")

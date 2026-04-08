@@ -1,5 +1,5 @@
 # services/finance_service.py
-from sqlalchemy import or_
+from sqlalchemy import or_, func, case
 from datetime import date
 import pandas as pd
 import re
@@ -56,17 +56,30 @@ class FinanceService:
         return db.query(ConsumableItem).all()
 
     @staticmethod
-    def get_finance_records_with_balance(db):
-        records = db.query(FinanceRecord).order_by(FinanceRecord.date.asc(), FinanceRecord.id.asc()).all()
+    def get_finance_records_page(db, page=1, page_size=100):
+        """
+        🚀 真正的数据库级分页查询：只抓取当前页所需数据。
+        通过 SQL 窗口函数在数据库层计算当前行余额，避免拉取全表到 Python 内存。
+        """
+        total_count = db.query(func.count(FinanceRecord.id)).scalar()
+
+        # 使用 SQL 窗口函数计算累计余额
+        cny_case = case((FinanceRecord.currency == 'CNY', FinanceRecord.amount), else_=0)
+        jpy_case = case((FinanceRecord.currency == 'JPY', FinanceRecord.amount), else_=0)
+
+        cny_sum = func.sum(cny_case).over(order_by=(FinanceRecord.date.asc(), FinanceRecord.id.asc())).label('cny_bal')
+        jpy_sum = func.sum(jpy_case).over(order_by=(FinanceRecord.date.asc(), FinanceRecord.id.asc())).label('jpy_bal')
+
+        # 分页查询
+        records_with_bal = db.query(FinanceRecord, cny_sum, jpy_sum)\
+            .order_by(FinanceRecord.date.desc(), FinanceRecord.id.desc())\
+            .offset((page - 1) * page_size)\
+            .limit(page_size)\
+            .all()
+
         processed_data = []
-        running_cny = 0.0
-        running_jpy = 0.0
-        
-        if records:
-            for r in records:
-                if r.currency == "CNY": running_cny += r.amount
-                elif r.currency == "JPY": running_jpy += r.amount
-                
+        if records_with_bal:
+            for r, c_bal, j_bal in records_with_bal:
                 url_str = r.url.strip() if r.url else ""
                 if url_str and not url_str.startswith(("http://", "https://")):
                     url_str = "https://" + url_str
@@ -79,12 +92,11 @@ class FinanceService:
                     "金额": abs(r.amount),
                     "分类": r.category, 
                     "备注": r.description or "",
-                    "网址": r.url or "", 
-                    "当前CNY余额": running_cny, 
-                    "当前JPY余额": running_jpy
+                    "网址": url_str,
+                    "当前CNY余额": c_bal,
+                    "当前JPY余额": j_bal
                 })
-            return pd.DataFrame(processed_data).sort_values(by=["日期", "ID"], ascending=[False, False]).reset_index(drop=True)
-        return pd.DataFrame()
+        return pd.DataFrame(processed_data), total_count
 
     @staticmethod
     def get_current_balances(db):
