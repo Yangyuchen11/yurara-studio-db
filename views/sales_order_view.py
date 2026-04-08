@@ -82,10 +82,36 @@ def show_sales_order_page(db):
         order_no = col_r1_1.text_input("订单号", placeholder="输入订单号（必填）", key="order_no_input")
         order_date = col_r1_2.date_input("订单日期", value=date.today())
 
+        # --- プラットフォームと通貨の連動設定 ---
+        def update_currency():
+            platform_to_currency = {
+                "Booth": "JPY",
+                "日本线下": "JPY",
+                "Instagram": "JPY",
+                "国内线下": "CNY",
+                "微店": "CNY",
+                "其他(CNY)": "CNY",
+                "其他(JPY)": "JPY"
+            }
+            selected_platform = st.session_state["platform"]
+            st.session_state["currency"] = platform_to_currency.get(selected_platform, "CNY")
+
+        # プラットフォーム選択ボックス
         col_r2_1, col_r2_2, col_r2_3 = st.columns([1, 1, 2])
-        platform = col_r2_1.selectbox("销售平台", list(PLATFORM_CODES.values()))
-        currency = col_r2_2.selectbox("币种", ["CNY", "JPY"])
-        
+        platform = col_r2_1.selectbox(
+            "销售平台",
+            list(PLATFORM_CODES.values()),
+            key="platform",
+            on_change=update_currency
+        )
+
+        # 通貨選択ボックス
+        currency = col_r2_2.selectbox(
+            "币种",
+            ["CNY", "JPY"],
+            key="currency"
+        )
+
         # --- 获取并筛选现金账户 ---
         cash_items = db.query(CompanyBalanceItem).filter(
             CompanyBalanceItem.category == "asset",
