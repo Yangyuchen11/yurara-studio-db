@@ -435,11 +435,11 @@ with st.sidebar:
 if selected == "商品管理":
     show_product_page(db)
 elif selected == "商品成本核算":
-    show_cost_page(db)
+    show_cost_page(db, exchange_rate)
 elif selected == "仓库库存管理":
     show_inventory_page(db)
 elif selected == "销售订单管理":
-    show_sales_order_page(db)
+    show_sales_order_page(db, exchange_rate)
 elif selected == "销售额一览":
     show_sales_page(db, exchange_rate)
 elif selected == "财务流水录入":

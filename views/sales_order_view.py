@@ -1,6 +1,7 @@
 # views/sales_order_view.py
 import streamlit as st
 import pandas as pd
+import math
 from datetime import date
 from services.sales_order_service import SalesOrderService
 from cache_manager import sync_all_caches
@@ -58,7 +59,7 @@ def get_cached_orders_df(status_filter, product_filter, test_mode_flag, cache_ve
 
 # ------------------ 主页面逻辑 ------------------
 
-def show_sales_order_page(db):
+def show_sales_order_page(db, exchange_rate):
     st.header("🛒 销售订单管理")
 
     test_mode = st.session_state.get("test_mode", False)
@@ -238,9 +239,7 @@ def show_sales_order_page(db):
             if platform == "微店": 
                 fee = gross_price * 0.006
             elif platform == "Booth": 
-                exchange_rate = st.session_state.get("global_rate_input", 4.8) / 100.0
-                base_fixed_fee = 45 if currency == "JPY" else (45 * exchange_rate)
-                fee = gross_price * 0.056 + base_fixed_fee
+                fee = math.ceil(gross_price * 0.056 + 45)
             
         net_price = gross_price - fee - shipping_and_other
 

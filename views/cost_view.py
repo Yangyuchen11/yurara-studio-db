@@ -1,16 +1,17 @@
 import streamlit as st
 import pandas as pd
+import math
 from services.cost_service import CostService
 from constants import PRODUCT_COST_CATEGORIES
 from cache_manager import sync_all_caches
 
-def show_cost_page(db):
+def show_cost_page(db, exchange_rate):
     st.header("🧵 商品成本核算")
     
     service = CostService(db)
     
-    exchange_rate_input = st.session_state.get("global_rate_input", 4.8)
-    exchange_rate = exchange_rate_input / 100.0
+    # exchange_rate_input = st.session_state.get("global_rate_input", 4.8)
+    # exchange_rate = exchange_rate_input / 100.0
 
     products = service.get_all_products()
     if not products:
@@ -283,7 +284,7 @@ def show_cost_page(db):
                                 has_price_for_this_color = True
                                 fee_val = 0.0
                                 if pf_key == "weidian": fee_val = price_val * 0.006 
-                                elif pf_key == "booth": fee_val = price_val * 0.056 + 22 
+                                elif pf_key == "booth": fee_val = math.ceil(price_val * 0.056 + 22) 
                                     
                                 price_cny = price_val * exchange_rate if is_jpy else price_val
                                 fee_cny = fee_val * exchange_rate if is_jpy else fee_val

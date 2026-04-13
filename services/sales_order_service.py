@@ -7,6 +7,7 @@ from models import (
     Product, InventoryLog, CompanyBalanceItem,
     CostItem, FinanceRecord, Warehouse
 )
+import math
 from constants import OrderStatus, FinanceCategory, AssetPrefix
 
 class SalesOrderService:
@@ -602,7 +603,7 @@ class SalesOrderService:
                     shipping_and_other = 0.0
                 
                 base_fixed_fee = 45 if currency == "JPY" else 2.16
-                fee = gross_price * 0.056 + base_fixed_fee
+                fee = math.ceil(gross_price * 0.056) + base_fixed_fee
                 
             elif "微店" in platform_lower:
                 fee = gross_price * 0.006

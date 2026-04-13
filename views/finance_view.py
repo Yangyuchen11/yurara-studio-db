@@ -55,7 +55,7 @@ def render_add_transaction_form(exchange_rate):
         
         with st.expander("➕ 新增收支 / 兑换 / 债务记录", expanded=True):
             
-            c_top1, c_top2 = st.columns(2)
+            c_top1, c_top2 = st.columns([1, 1])
             f_date = c_top1.date_input("日期", date.today())
             rec_type = c_top2.selectbox("业务大类", ["支出", "收入", "货币兑换", "债务", "资金移动"])
             
@@ -79,7 +79,7 @@ def render_add_transaction_form(exchange_rate):
                 st.info("💱 货币资金互转 (不影响净资产，只改变账户余额分布)")
                 
                 st.markdown("##### 2. 兑换账户与方向")
-                c_ex_dir1, c_ex_dir2 = st.columns(2)
+                c_ex_dir1, c_ex_dir2 = st.columns([1, 1])
                 
                 source_curr = c_ex_dir1.selectbox("源币种 (扣款侧)", ["CNY", "JPY"])
                 valid_src = [a for a in all_cash_assets if a.currency == source_curr]
@@ -92,15 +92,16 @@ def render_add_transaction_form(exchange_rate):
                     source_acc_id = src_opts.get(src_acc_label)
 
                 target_curr = "JPY" if source_curr == "CNY" else "CNY"
-                c_ex_dir2.info(f"➡️ 目标币种 (入账侧): **{target_curr}**")
-                valid_tgt = [a for a in all_cash_assets if a.currency == target_curr]
-                tgt_opts = {f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})": a.id for a in valid_tgt}
-                if not tgt_opts:
-                    st.warning(f"缺少 {target_curr} 现金账户，将自动创建默认账户。")
-                    target_acc_id = None
-                else:
-                    tgt_acc_label = c_ex_dir2.selectbox("入账账户", list(tgt_opts.keys()))
-                    target_acc_id = tgt_opts.get(tgt_acc_label)
+                with c_ex_dir2:
+                    st.selectbox("目标币种 (入账侧)", [target_curr], disabled=True)
+                    valid_tgt = [a for a in all_cash_assets if a.currency == target_curr]
+                    tgt_opts = {f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})": a.id for a in valid_tgt}
+                    if not tgt_opts:
+                        st.warning(f"缺少 {target_curr} 现金账户，将自动创建默认账户。")
+                        target_acc_id = None
+                    else:
+                        tgt_acc_label = st.selectbox("入账账户", list(tgt_opts.keys()))
+                        target_acc_id = tgt_opts.get(tgt_acc_label)
                 
                 st.markdown("##### 3. 交易金额")
                 c_ex1, c_ex2 = st.columns(2)
