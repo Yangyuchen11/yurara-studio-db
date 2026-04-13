@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit_cookies_controller import CookieController
 import streamlit.components.v1 as components
 import pandas as pd
 import io
@@ -33,15 +34,24 @@ from streamlit_option_menu import option_menu
 
 # === 1. 页面配置 (必须放在第一行) ===
 st.set_page_config(page_title="Yurara综合管理系统", layout="wide")
+cookie_controller = CookieController()
 
 # ==========================================
 # === 登录认证 ===
 # ==========================================
 
 def check_login():
+    # ✨ 1. 第一步：尝试从浏览器的 Cookie 中悄悄恢复登录状态
+    saved_user = cookie_controller.get("yurara_auth_user")
+    if saved_user:
+        st.session_state.authenticated = True
+        st.session_state.current_user_name = saved_user
+
+    # 2. 如果 session_state 里已经有认证标记了，直接放行
     if st.session_state.get("authenticated", False):
         return True
 
+    # 3. 如果没登录，显示常规的登录界面
     st.header("🔒 Yurara Studio 系统登录")
     
     with st.form("login_form"):
@@ -57,8 +67,14 @@ def check_login():
                 for key, cred_config in all_creds.items():
                     if "username" in cred_config and "password" in cred_config:
                         if user_input == cred_config["username"] and pwd_input == cred_config["password"]:
+                            # 验证通过
                             st.session_state.authenticated = True
                             st.session_state.current_user_name = cred_config["username"] 
+                            
+                            # ✨ 核心操作：登录成功后，把用户名写进浏览器的 Cookie！
+                            # max_age=604800 表示让这个 Cookie 存活 7 天 (7 * 24 * 3600 秒)
+                            cookie_controller.set("yurara_auth_user", cred_config["username"], max_age=604800)
+                            
                             st.success(f"欢迎回来，{user_input}！")
                             st.rerun()
                             found = True
@@ -218,6 +234,7 @@ with st.sidebar:
         
     if st.button("退出登录"):
         st.session_state.authenticated = False
+        cookie_controller.remove("yurara_auth_user")
         st.rerun()
 
     selected = option_menu(
