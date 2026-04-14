@@ -596,9 +596,8 @@ class FinanceService:
         # 只要关联了大于1个的成本明细或固定资产，就拦截金额或币种的修改
         if related_costs_count > 1 or related_fixed_assets_count > 1:
             # 如果仅仅是修改备注、网址或者日期，可以放行；但如果修改了核心的金额、币种、账户或分类，必须拦截
-            if updates.get('amount_abs') != abs(rec.amount) or updates.get('currency') != rec.currency:
+            if updates.get('amount_abs') != abs(rec.amount) or new_currency != rec.currency:
                 raise ValueError("⚠️ 保护机制触发：该流水包含批量录入的多个明细物品。为保证成本分摊数据的准确性，不支持直接修改总金额。请【删除】该流水后重新批量录入。")
-
         # 1. 精准回滚旧账户的资金
         old_cash_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == rec.account_id).first()
         if not old_cash_asset and rec.description: 
@@ -663,20 +662,20 @@ class FinanceService:
         for fa in all_fas:
             if len(all_fas) == 1 and fa.quantity > 0: 
                 fa.unit_price = updates['amount_abs'] / fa.quantity
-            fa.currency = updates['currency'] 
+            fa.currency = new_currency 
             fa.remarks = updates['desc'] # 同步更新备注
             
         for fa in db.query(FixedAsset).filter(FixedAsset.finance_record_id == record_id).all():
             if fa.quantity > 0: fa.unit_price = updates['amount_abs'] / fa.quantity
-            fa.currency = updates['currency'] 
+            fa.currency = new_currency 
             
         for ci in db.query(ConsumableItem).filter(ConsumableItem.finance_record_id == record_id).all():
             if ci.initial_quantity > 0: ci.unit_price = updates['amount_abs'] / ci.initial_quantity
-            ci.currency = updates['currency']
+            ci.currency = new_currency
             
         for bi in db.query(CompanyBalanceItem).filter(CompanyBalanceItem.finance_record_id == record_id).all():
             bi.amount = updates['amount_abs']
-            bi.currency = updates['currency']
+            bi.currency = new_currency
 
         db.flush()
         if product_id_to_sync:
