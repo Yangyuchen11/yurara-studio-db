@@ -309,7 +309,7 @@ def show_sales_order_page(db, exchange_rate):
         if uploaded_file is not None:
             try:
                 df_import = pd.read_excel(uploaded_file)
-                parsed_orders, errors = service.validate_and_parse_import_data(df_import)
+                parsed_orders, errors = service.validate_and_parse_import_data(df_import, exchange_rate)
                 
                 if errors:
                     st.error("❌ 数据校验失败，请修复 Excel 中的以下问题后重新上传：")

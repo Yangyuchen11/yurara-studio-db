@@ -466,7 +466,7 @@ class SalesOrderService:
         return f"订单 {order.order_no} 已删除，所有数据已回滚"
 
     # ================= 6. 批量导入功能 (适配分仓) =================
-    def validate_and_parse_import_data(self, df):
+    def validate_and_parse_import_data(self, df, exchange_rate):
         # ✨ 新增第 8 列校验：出货仓库
         required_cols = ['订单号', '商品名', '商品型号', '数量', '销售平台', '订单总额', '币种', '出货仓库']
         missing_cols = [c for c in required_cols if c not in df.columns]

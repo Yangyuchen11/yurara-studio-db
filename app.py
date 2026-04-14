@@ -1,3 +1,5 @@
+import hashlib
+import time
 import streamlit as st
 from streamlit_cookies_controller import CookieController
 import streamlit.components.v1 as components
@@ -36,6 +38,11 @@ from streamlit_option_menu import option_menu
 st.set_page_config(page_title="Yurara综合管理系统", layout="wide")
 cookie_controller = CookieController()
 
+def generate_secure_token(username, password):
+    """生成一个简单的安全签名"""
+    salt = "yurara_secret_salt_2024" # 混淆盐值
+    return hashlib.sha256(f"{username}{password}{salt}".encode()).hexdigest()
+
 # ==========================================
 # === 登录认证 ===
 # ==========================================
@@ -73,8 +80,10 @@ def check_login():
                             
                             # ✨ 核心操作：登录成功后，把用户名写进浏览器的 Cookie！
                             # max_age=604800 表示让这个 Cookie 存活 7 天 (7 * 24 * 3600 秒)
-                            cookie_controller.set("yurara_auth_user", cred_config["username"], max_age=604800)
-                            
+                            token = generate_secure_token(user_input, pwd_input)
+                            cookie_controller.set("yurara_auth_user", user_input, max_age=604800)
+                            cookie_controller.set("yurara_auth_token", token, max_age=604800)
+
                             st.success(f"欢迎回来，{user_input}！")
                             st.rerun()
                             found = True
@@ -235,6 +244,9 @@ with st.sidebar:
     if st.button("退出登录"):
         st.session_state.authenticated = False
         cookie_controller.remove("yurara_auth_user")
+        cookie_controller.remove("yurara_auth_token")
+
+        time.sleep(0.2)
         st.rerun()
 
     selected = option_menu(
@@ -286,6 +298,10 @@ with st.sidebar:
         format="%.2f",
         key="global_rate_widget" 
     )
+
+    if rate_input < 0.01:
+        rate_input = 0.01
+
     if abs(rate_input - float(db_rate_str)) > 0.001:
         set_system_setting(db, "exchange_rate", rate_input)
         st.toast(f"汇率已更新: {rate_input}", icon="💾")
