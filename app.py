@@ -48,6 +48,11 @@ def generate_secure_token(username, password):
 # ==========================================
 
 def check_login():
+    if "cookie_init_done" not in st.session_state:
+        st.session_state.cookie_init_done = True
+        import time
+        time.sleep(0.3)  # 暂停 0.3 秒，等待前端通过 WebSocket 将 Cookie 传过来
+        st.rerun()       
     # ✨ 1. 第一步：尝试从浏览器的 Cookie 中悄悄恢复登录状态
     saved_user = cookie_controller.get("yurara_auth_user")
     if saved_user:
@@ -81,8 +86,8 @@ def check_login():
                             # ✨ 核心操作：登录成功后，把用户名写进浏览器的 Cookie！
                             # max_age=604800 表示让这个 Cookie 存活 7 天 (7 * 24 * 3600 秒)
                             token = generate_secure_token(user_input, pwd_input)
-                            cookie_controller.set("yurara_auth_user", user_input, max_age=604800)
-                            cookie_controller.set("yurara_auth_token", token, max_age=604800)
+                            cookie_controller.set("yurara_auth_user", user_input, max_age=604800, path="/")
+                            cookie_controller.set("yurara_auth_token", token, max_age=604800, path="/")
 
                             st.success(f"欢迎回来，{user_input}！")
                             st.rerun()
