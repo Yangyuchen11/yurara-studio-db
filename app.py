@@ -49,17 +49,21 @@ def generate_secure_token(username, password):
 
 def check_login():
     all_cookies = cookie_controller.getAll()
-    if all_cookies is None:
-        with st.spinner("⏳ 正在验证登录状态..."):
-            import time
-            time.sleep(0.3)  # 给前端 0.3 秒的时间回传数据
-            st.rerun()       # 重新运行，下次 all_cookies 就是字典了
+    if all_cookies is None and "login_attempted" not in st.session_state:
+        st.session_state.login_attempted = True
+        with st.spinner("⏳ 正在安全同步登录状态..."):
+            time.sleep(0.8) # 云端网络环境建议给 0.8s
+            st.rerun()
             
-    # 走到这里，底层数据一定准备好了，绝对不会再报 NoneType 错误
-    saved_user = cookie_controller.get("yurara_auth_user")
-    if saved_user:
-        st.session_state.authenticated = True
-        st.session_state.current_user_name = saved_user
+    if all_cookies:
+        saved_user = all_cookies.get("yurara_auth_user")
+        # 建议同时校验 token 以防用户名伪造
+        saved_token = all_cookies.get("yurara_auth_token")
+        
+        if saved_user and saved_token:
+            # 这里可以根据需要增加 token 的比对逻辑
+            st.session_state.authenticated = True
+            st.session_state.current_user_name = saved_user
 
     # 2. 如果 session_state 里已经有认证标记了，直接放行
     if st.session_state.get("authenticated", False):
@@ -86,12 +90,20 @@ def check_login():
                             st.session_state.current_user_name = cred_config["username"] 
                             
                             # ✨ 核心操作：登录成功后，把用户名写进浏览器的 Cookie！
-                            # max_age=604800 表示让这个 Cookie 存活 7 天 (7 * 24 * 3600 秒)
+                            # Cookie 存活 7 天 (7 * 24 * 3600 秒)
                             token = generate_secure_token(user_input, pwd_input)
-                            cookie_controller.set("yurara_auth_user", user_input, max_age=604800, path="/")
-                            cookie_controller.set("yurara_auth_token", token, max_age=604800, path="/")
-
+                            cookie_controller.set(
+                                    "yurara_auth_user", user_input, 
+                                    max_age=604800, path="/", 
+                                    secure=True, same_site="Lax"
+                                )
+                            cookie_controller.set(
+                                "yurara_auth_token", token, 
+                                max_age=604800, path="/", 
+                                secure=True, same_site="Lax"
+                            )
                             st.success(f"欢迎回来，{user_input}！")
+                            time.sleep(0.5)
                             st.rerun()
                             found = True
                             break
