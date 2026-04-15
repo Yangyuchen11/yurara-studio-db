@@ -48,12 +48,14 @@ def generate_secure_token(username, password):
 # ==========================================
 
 def check_login():
-    if "cookie_init_done" not in st.session_state:
-        st.session_state.cookie_init_done = True
-        import time
-        time.sleep(0.3)  # 暂停 0.3 秒，等待前端通过 WebSocket 将 Cookie 传过来
-        st.rerun()       
-    # ✨ 1. 第一步：尝试从浏览器的 Cookie 中悄悄恢复登录状态
+    all_cookies = cookie_controller.getAll()
+    if all_cookies is None:
+        with st.spinner("⏳ 正在验证登录状态..."):
+            import time
+            time.sleep(0.3)  # 给前端 0.3 秒的时间回传数据
+            st.rerun()       # 重新运行，下次 all_cookies 就是字典了
+            
+    # 走到这里，底层数据一定准备好了，绝对不会再报 NoneType 错误
     saved_user = cookie_controller.get("yurara_auth_user")
     if saved_user:
         st.session_state.authenticated = True
