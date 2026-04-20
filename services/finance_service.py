@@ -692,7 +692,7 @@ class FinanceService:
         if not rec: return False
 
         if rec.category == FinanceCategory.SALES_INCOME:
-            raise ValueError("拒绝操作：销售收入流水受到系统保护，必须从【销售订单管理】模块发起撤销或删除。")
+            raise ValueError("拒绝操作：销售收入流水受到系统保护，必须从【线上销售管理】模块发起撤销或删除。")
 
         msg_list = []
 

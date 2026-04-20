@@ -704,7 +704,7 @@ def render_edit_delete_panel(df_render):
                     if sel:
                         # 如果是销售收入，则禁用删除按钮并给出提示
                         if sel.get('分类') == "销售收入":
-                            st.error("⚠️ 核心业务保护：【销售收入】类型的流水不可在此处直接删除。请前往【销售订单管理】界面撤销或删除对应的订单，系统会自动同步扣除此笔流水。")
+                            st.error("⚠️ 核心业务保护：【销售收入】类型的流水不可在此处直接删除。请前往【线上销售管理】界面撤销或删除对应的订单，系统会自动同步扣除此笔流水。")
                             st.button("确认删除", width="stretch", type="primary", disabled=True)
                         else:
                             if st.button("确认删除", width="stretch", type="primary"):

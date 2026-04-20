@@ -60,7 +60,7 @@ def get_cached_orders_df(status_filter, product_filter, test_mode_flag, cache_ve
 # ------------------ 主页面逻辑 ------------------
 
 def show_sales_order_page(db, exchange_rate):
-    st.header("🛒 销售订单管理")
+    st.header("🛒 线上销售管理")
 
     test_mode = st.session_state.get("test_mode", False)
     cache_version = st.session_state.get("global_cache_version", 0) # ✨ 获取全局缓存版本

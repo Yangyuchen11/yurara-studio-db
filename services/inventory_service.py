@@ -381,7 +381,7 @@ class InventoryService:
         if not log_to_del: raise ValueError("记录不存在")
 
         if getattr(log_to_del, 'order_id', None):
-            raise ValueError("拒绝操作：此库存变动由【销售订单】自动生成。为了保证数据一致性，请前往【销售订单管理】模块撤销发货或删除该订单。")
+            raise ValueError("拒绝操作：此库存变动由【销售订单】自动生成。为了保证数据一致性，请前往【线上销售管理】模块撤销发货或删除该订单。")
 
         msg_list = []
         target_prod = self.db.query(Product).filter(Product.name == log_to_del.product_name).first()

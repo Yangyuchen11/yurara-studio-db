@@ -52,7 +52,7 @@ def check_login():
     if all_cookies is None and "login_attempted" not in st.session_state:
         st.session_state.login_attempted = True
         with st.spinner("⏳ 正在安全同步登录状态..."):
-            time.sleep(0.8) # 云端网络环境建议给 0.8s
+            time.sleep(0.8) # 云端网络环境建议给 
             st.rerun()
             
     if all_cookies:
@@ -277,7 +277,7 @@ with st.sidebar:
             "财务报表与分析",
             "商品管理",
             "商品成本核算",
-            "销售订单管理",
+            "线上销售管理",
             "线下销售管理",
             "销售额一览",
             "仓库库存管理",
@@ -490,7 +490,7 @@ elif selected == "商品成本核算":
     show_cost_page(db, exchange_rate)
 elif selected == "仓库库存管理":
     show_inventory_page(db)
-elif selected == "销售订单管理":
+elif selected == "线上销售管理":
     show_sales_order_page(db, exchange_rate)
 elif selected == "销售额一览":
     show_sales_page(db, exchange_rate)

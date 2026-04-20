@@ -8,6 +8,7 @@ from models import (
     CostItem, FinanceRecord, Warehouse
 )
 import math
+import pandas as pd
 from constants import OrderStatus, FinanceCategory, AssetPrefix
 
 class SalesOrderService:
@@ -467,11 +468,11 @@ class SalesOrderService:
 
     # ================= 6. 批量导入功能 (适配分仓) =================
     def validate_and_parse_import_data(self, df, exchange_rate):
-        # ✨ 新增第 8 列校验：出货仓库
         required_cols = ['订单号', '商品名', '商品型号', '数量', '销售平台', '订单总额', '币种', '出货仓库']
         missing_cols = [c for c in required_cols if c not in df.columns]
         if missing_cols: return None, f"缺少必要列: {', '.join(missing_cols)}"
 
+        # 清除订单号尾部的 .0 (防止整数被读成浮点) 并去空
         df['订单号'] = df['订单号'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 
         if df['订单号'].duplicated().any():
@@ -491,27 +492,39 @@ class SalesOrderService:
 
         valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动"]
 
+        # 安全转换为字符串的辅助函数，防止 NaN 变成 "nan"
+        def safe_str(val):
+            return "" if pd.isna(val) else str(val).strip()
+
         for index, row in df.iterrows():
             order_no = row['订单号']
+            if not order_no or order_no == 'nan': 
+                continue # 跳过完全空行
             
             existing = self.db.query(SalesOrder).filter(SalesOrder.order_no == order_no).first()
             if existing:
                 errors.append(f"第 {index+2} 行 - 订单号已存在: {order_no}")
                 continue
 
-            platform = str(row['销售平台']).strip()
-            currency = str(row['币种']).strip()
-            p_name = str(row['商品名']).strip()
+            platform = safe_str(row['销售平台'])
+            currency = safe_str(row['币种'])
+            p_name = safe_str(row['商品名'])
             
-            try: gross_price = float(row['订单总额'])
-            except ValueError:
+            try: 
+                gross_price = float(row['订单总额'])
+            except (ValueError, TypeError):
                 errors.append(f"订单号 {order_no}: 总金额无效")
                 continue
 
-            var_str = str(row['商品型号']).replace('；', ';')
-            qty_str = str(row['数量']).replace('；', ';')
-            wh_name_str = str(row.get('出货仓库', '')).replace('；', ';')
+            # 🚨 修复Bug 1: 安全处理可能为空的字段
+            var_str = safe_str(row['商品型号']).replace('；', ';')
+            qty_str = safe_str(row['数量']).replace('；', ';')
+            wh_name_str = safe_str(row.get('出货仓库', '')).replace('；', ';')
             
+            # 如果仓库留空，自动赋值为 "未分配"
+            if not wh_name_str: 
+                wh_name_str = "未分配"
+
             variants = [v.strip() for v in var_str.split(';') if v.strip()]
             qtys_str = [q.strip() for q in qty_str.split(';') if q.strip()]
             wh_names = [w.strip() for w in wh_name_str.split(';') if w.strip()]
@@ -524,11 +537,10 @@ class SalesOrderService:
                 errors.append(f"订单号 {order_no}: 未读取到商品型号")
                 continue
                 
-            # ✨ 智能分发逻辑：如果用户只写了一个仓库，但有多个型号，自动把该仓库应用给所有型号
             if len(wh_names) == 1 and len(variants) > 1:
                 wh_names = wh_names * len(variants)
             elif len(wh_names) != len(variants):
-                errors.append(f"订单号 {order_no}: 填写的出货仓库数量 ({len(wh_names)}) 与 型号数量 ({len(variants)}) 不一致！如果所有商品都在同一个仓出库，只写一次仓库名即可。")
+                errors.append(f"订单号 {order_no}: 填写的出货仓库数量 ({len(wh_names)}) 与 型号数量 ({len(variants)}) 不一致！")
                 continue
 
             items_data = []
@@ -537,7 +549,8 @@ class SalesOrderService:
             
             for v_name, q_str, wh_name in zip(variants, qtys_str, wh_names):
                 try:
-                    qty = int(q_str)
+                    # 🚨 修复Bug 2: 处理类似 "1.0" 这样的浮点字符串
+                    qty = int(float(q_str))
                     if qty <= 0:
                         errors.append(f"订单号 {order_no}: 数量必须大于0 ({q_str})")
                         has_item_error = True; break
@@ -547,7 +560,7 @@ class SalesOrderService:
                     
                 wh_id = warehouse_map.get(wh_name)
                 if wh_name != "未分配" and wh_id is None:
-                    errors.append(f"订单号 {order_no}: 找不到名为 '{wh_name}' 的仓库！(如果不想分配请填写'未分配')")
+                    errors.append(f"订单号 {order_no}: 找不到名为 '{wh_name}' 的仓库！")
                     has_item_error = True; break
                     
                 if p_name not in valid_products:
@@ -560,7 +573,6 @@ class SalesOrderService:
                     stock_key = f"{p_name}_{v_name}_{wh_id}"
                     current_consumed = consumed_stock_in_excel.get(stock_key, 0)
                     
-                    # ✨ 针对特定仓库校验库存
                     stock_query = self.db.query(func.sum(InventoryLog.change_amount)).filter(
                         InventoryLog.product_name == p_name,
                         InventoryLog.variant == v_name,
@@ -583,6 +595,7 @@ class SalesOrderService:
                     
             if has_item_error: continue
 
+            # 下方手续费、剥离邮费和账户的逻辑不变...
             platform_lower = platform.lower()
             fee = 0.0
             shipping_and_other = 0.0
@@ -599,10 +612,9 @@ class SalesOrderService:
                 
                 if preset_item_total > 0:
                     shipping_and_other = max(0.0, gross_price - preset_item_total)
-                else:
-                    shipping_and_other = 0.0
                 
                 base_fixed_fee = 45 if currency == "JPY" else 2.16
+                import math
                 fee = math.ceil(gross_price * 0.056) + base_fixed_fee
                 
             elif "微店" in platform_lower:
