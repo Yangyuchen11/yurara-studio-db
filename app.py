@@ -32,6 +32,7 @@ from views.sales_view import show_sales_page
 from views.sales_order_view import show_sales_order_page
 from views.offline_sales_view import show_offline_sales_page
 from views.report_view import show_report_page
+from views.presale_order_view import show_presale_order_page
 from streamlit_option_menu import option_menu
 
 # === 1. 页面配置 (必须放在第一行) ===
@@ -278,6 +279,7 @@ with st.sidebar:
             "商品管理",
             "商品成本核算",
             "线上销售管理",
+            "预售销售管理",
             "线下销售管理",
             "销售额一览",
             "仓库库存管理",
@@ -291,6 +293,7 @@ with st.sidebar:
             "bag-heart",
             "calculator",
             "cart-check",
+            "basket3",
             "shop",
             "graph-up-arrow",
             "arrow-left-right",
@@ -506,3 +509,5 @@ elif selected == "财务报表与分析":
     show_report_page(db, exchange_rate)
 elif selected == "线下销售管理":
     show_offline_sales_page(db)
+elif selected == "预售销售管理":
+    show_presale_order_page(db, exchange_rate)

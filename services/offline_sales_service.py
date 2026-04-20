@@ -157,9 +157,18 @@ class OfflineSalesService:
 
         # 3. 创建订单
         order = SalesOrder(
-            order_no=order_no, status=OrderStatus.COMPLETED, total_amount=total_amount,
-            currency=tpl.currency, platform=tpl.platform, target_account_name=target_acc.name,
-            created_date=now.date(), shipped_date=now.date(), completed_date=now.date(),
+            order_no=order_no, 
+            status=OrderStatus.COMPLETED, 
+            total_amount=total_amount,
+            
+            order_type="线下", 
+            
+            currency=tpl.currency, 
+            platform=tpl.platform, 
+            target_account_name=target_acc.name,
+            created_date=now.date(), 
+            shipped_date=now.date(), 
+            completed_date=now.date(),
             notes=f"POS结账: {payment_method}" + (f" (扣除手续费 {fee:.2f})" if fee > 0 else "")
         )
         self.db.add(order)

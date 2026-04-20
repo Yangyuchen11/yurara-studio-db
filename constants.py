@@ -73,6 +73,8 @@ class OrderStatus:
     SHIPPED = "已发货"       # 已发货
     COMPLETED = "订单完成"   # 已收款，计入收入
     AFTER_SALES = "售后中"   # 有售后问题
+    PRESALE_PENDING_DEPOSIT = "待完成定金"
+    PRESALE_PENDING_FINAL = "待付尾款"
 
 class AssetPrefix:
     """自动生成的资产名称前缀 (用于 Logic Key 匹配)"""

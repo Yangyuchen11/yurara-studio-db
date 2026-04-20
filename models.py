@@ -173,13 +173,20 @@ class SystemSetting(Base):
     value = Column(String) # 存为字符串，使用时再转换类型
     description = Column(String, nullable=True)
 
-# --- K. 销售订单管理 ---
+# --- K. 线上销售管理 ---
 class SalesOrder(Base):
     __tablename__ = "sales_orders"
     id = Column(Integer, primary_key=True, index=True)
-    order_no = Column(String, unique=True, index=True) # 订单号
-    status = Column(String, default="待发货") # 状态: 待发货/已发货/订单完成/售后中
-    total_amount = Column(Float, default=0.0) # 订单总金额
+    order_no = Column(String, unique=True, index=True) # 订单号 (预售时为定金单号)
+    
+    # ✨ 为预售新增的四个核心字段
+    order_type = Column(String, default="线上") # 类型: 线上, 预售, 线下
+    final_order_no = Column(String, nullable=True, unique=True) # 尾款订单号
+    deposit_amount = Column(Float, default=0.0) # 定金金额
+    final_amount = Column(Float, default=0.0) # 尾款金额
+    
+    status = Column(String, default="待发货") # 状态扩展: 待发货/已发货/订单完成/售后中/待完成定金/待付尾款
+    total_amount = Column(Float, default=0.0) # 订单总金额 (预售时为 定金+尾款)
     currency = Column(String, default="CNY") # 币种
     platform = Column(String) # 销售平台
 
