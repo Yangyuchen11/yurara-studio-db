@@ -257,7 +257,7 @@ def render_add_transaction_form(exchange_rate):
                     cats = ["销售收入", "退款", "投资", "现有资产增加", "其他资产增加", "新资产增加", "其他现金收入"]
                     base_data["category"] = c_cat1.selectbox("收入细分类型", cats)
                 else:
-                    cats = ["商品成本", "固定资产购入", "其他资产购入", "撤资", "现有资产减少", "其他"]
+                    cats = ["商品成本", "固定资产购入", "其他资产购入", "撤资", "分红", "现有资产减少", "其他"]
                     base_data["category"] = c_cat1.selectbox("支出细分类型", cats)
 
                 cat = base_data["category"]
@@ -556,7 +556,7 @@ def render_add_transaction_form(exchange_rate):
                     base_data["url"] = st.text_input("相关页面网址", placeholder="选填", key=f"gen_url_{fv}")
                     
                     # 防空容错处理
-                    if not link_config.get("name") and cat in ["销售收入", "退款", "其他现金收入", "其他"]:
+                    if not link_config.get("name") and cat in ["销售收入", "退款", "其他现金收入", "其他", "分红"]:
                         link_config["name"] = base_data["desc"] or cat 
                         
                     st.write("")

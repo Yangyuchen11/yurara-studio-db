@@ -28,7 +28,7 @@ def show_report_page(db, exchange_rate):
 
     # --- 财务分类标准 ---
     PL_INCOME = ["销售收入", "其他现金收入"]
-    PL_EXPENSE = ["商品成本", "退款", "其他"] 
+    PL_EXPENSE = ["商品成本", "退款", "其他", "分红"]
     ASSET_ADD = ["固定资产购入", "其他资产购入", "现有资产增加", "新资产增加"]
     ASSET_SUB = ["现有资产减少"]
     LIAB_ADD = ["借入资金", "新增挂账资产"]
