@@ -317,7 +317,7 @@ class SalesOrderService:
     def complete_order(self, order_id, complete_date=None):
         order = self.db.query(SalesOrder).filter(SalesOrder.id == order_id).first()
         if not order: raise ValueError("订单不存在")
-        if order.status != OrderStatus.SHIPPED: raise ValueError(f"当前状态 {order.status} 不能完成")
+        if order.status not in [OrderStatus.SHIPPED, OrderStatus.AFTER_SALES]: raise ValueError(f"当前状态 {order.status} 不能完成")
 
         complete_date = complete_date or date.today()
         asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"

@@ -440,7 +440,7 @@ def show_sales_order_page(db, exchange_rate):
         selected_count = len(selected_ids)
 
         all_pending = selected_count > 0 and all(s == "📦 待发货" for s in selected_rows["状态"])
-        all_shipped = selected_count > 0 and all(s == "🚚 已发货" for s in selected_rows["状态"])
+        all_can_complete = selected_count > 0 and all(s in ["🚚 已发货", "🔧 售后"] for s in selected_rows["状态"])
         
         is_single_select = (selected_count == 1)
         target_order_id = selected_ids[0] if is_single_select else None
@@ -482,7 +482,7 @@ def show_sales_order_page(db, exchange_rate):
             if success_count > 0 or err_list:
                 st.rerun()
 
-        if action_col2.button(f"✅ 完成 ({selected_count})", key=f"btn_comp_{status_key_suffix}", type="primary", width="stretch", disabled=not all_shipped, help="仅当选中的所有订单均为【已发货】时可用"):
+        if action_col2.button(f"✅ 完成 ({selected_count})", key=f"btn_comp_{status_key_suffix}", type="primary", width="stretch", disabled=not all_can_complete, help="仅当选中的所有订单均为【已发货】或【售后】时可用"):
             success_count = 0
             err_list = [] 
             for o_id in selected_ids:
