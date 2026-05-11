@@ -196,6 +196,7 @@ class SalesOrder(Base):
     completed_date = Column(Date, nullable=True) # 完成日期
 
     notes = Column(String, default="") # 备注
+    discount_note = Column(String, default="") # 优惠备注
 
     # 关联
     items = relationship("SalesOrderItem", back_populates="order", cascade="all, delete-orphan")

@@ -1,4 +1,4 @@
-# 替换 services/sales_order_service.py 的完整代码
+# services/sales_order_service.py
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, or_
 from datetime import date
@@ -65,7 +65,7 @@ class SalesOrderService:
         query = self.db.query(SalesOrder).options(
             joinedload(SalesOrder.items).joinedload(SalesOrderItem.warehouse),
             joinedload(SalesOrder.refunds)
-        ).filter(SalesOrder.order_type == order_type) # ✨ 新增按类型过滤
+        ).filter(SalesOrder.order_type == order_type) 
         
         if status: query = query.filter(SalesOrder.status == status)
         if product_name:
@@ -79,6 +79,15 @@ class SalesOrderService:
         return self.db.query(SalesOrder).options(
             joinedload(SalesOrder.items).joinedload(SalesOrderItem.warehouse)
         ).filter(SalesOrder.id == order_id).first()
+
+    def get_order_by_no(self, order_no, order_type="预售"):
+        """根据订单号精确查找预售订单"""
+        return self.db.query(SalesOrder).options(
+            joinedload(SalesOrder.items).joinedload(SalesOrderItem.warehouse)
+        ).filter(
+            SalesOrder.order_no == order_no,
+            SalesOrder.order_type == order_type
+        ).first()
 
     def get_order_statistics(self, product_name=None, order_type="线上"):
         base_query = self.db.query(func.count(SalesOrder.id.distinct())).filter(SalesOrder.order_type == order_type)
@@ -159,8 +168,8 @@ class SalesOrderService:
 
     # ================= 预售专项方法 =================
     
-    def create_presale_deposit_order(self, items_data, platform, currency, notes="", order_date=None, order_no=None, target_account_name=None):
-        """1. 创建定金订单"""
+    def create_presale_deposit_order(self, items_data, platform, currency, notes="", order_date=None, order_no=None, target_account_name=None, discount_note=""):
+        """1. 创建定金订单，增加优惠字段"""
         if not items_data: return None, "订单明细不能为空"
         if not order_no or not order_no.strip(): return None, "定金订单号不能为空"
         order_no = order_no.strip()
@@ -169,14 +178,14 @@ class SalesOrderService:
         existing = self.db.query(SalesOrder).filter(SalesOrder.order_no == order_no).first()
         if existing: return None, f"订单号 {order_no} 已存在"
 
-        # 初始化时，总额仅等于定金
         deposit_amount = sum(item["quantity"] * item["unit_price"] for item in items_data)
 
         order = SalesOrder(
             order_no=order_no, order_type="预售", status=OrderStatus.PRESALE_PENDING_DEPOSIT, 
             total_amount=deposit_amount, deposit_amount=deposit_amount, final_amount=0.0,
             currency=currency, platform=platform, created_date=order_date, notes=notes,
-            target_account_name=target_account_name
+            target_account_name=target_account_name,
+            discount_note=discount_note
         )
         self.db.add(order)
         self.db.flush()
@@ -216,21 +225,6 @@ class SalesOrderService:
         self.db.commit()
         return f"定金订单 {order.order_no} 已完成，状态更新为待付尾款"
 
-    def match_presale_orders(self, items_data, platform):
-        """匹配符合尾款条件的预售主单"""
-        candidates = self.db.query(SalesOrder).filter(
-            SalesOrder.status == OrderStatus.PRESALE_PENDING_FINAL,
-            SalesOrder.platform == platform
-        ).all()
-        matched = []
-        for cand in candidates:
-            # 严格比对商品明细
-            cand_items = {(i.product_name, i.variant, i.quantity) for i in cand.items}
-            input_items = {(i["product_name"], i["variant"], i["quantity"]) for i in items_data}
-            if cand_items == input_items:
-                matched.append(cand)
-        return matched
-
     def bind_presale_final_order(self, deposit_order_id, final_order_no, final_net_amount, new_notes=""):
         """3. 绑定尾款并激活发货状态"""
         order = self.db.query(SalesOrder).filter(SalesOrder.id == deposit_order_id).first()
@@ -245,12 +239,11 @@ class SalesOrderService:
 
         order.final_order_no = final_order_no
         order.final_amount = final_net_amount
-        order.total_amount = order.deposit_amount + final_net_amount # ✨ 合并总额
+        order.total_amount = order.deposit_amount + final_net_amount # 合并总额
         order.status = OrderStatus.PENDING # 激活为待发货
         if new_notes:
             order.notes = f"{order.notes} | 尾款备注: {new_notes}" if order.notes else new_notes
 
-        # ✨ 核心：重新将合计总额摊派到每个子商品中，以便利润/成本报表准确无误
         total_qty = sum(item.quantity for item in order.items)
         if total_qty > 0:
             new_unit_price = order.total_amount / total_qty
@@ -322,9 +315,8 @@ class SalesOrderService:
         complete_date = complete_date or date.today()
         asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"
         
-        # ✨ 预售尾款入账与普通订单入账隔离
         if order.order_type == "预售":
-            self._distribute_pending_asset(order, -order.total_amount) # 冲销整体的待结算金额
+            self._distribute_pending_asset(order, -order.total_amount) 
             self._update_asset_by_name(asset_name, order.final_amount, category="asset", currency=order.currency)
             target_acc = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
             self.db.add(FinanceRecord(
@@ -353,12 +345,10 @@ class SalesOrderService:
         return msg
 
     # ================= 4. 售后处理 (自动兼容) =================
-    # 由于单行架构，退款逻辑无需大改，只需使用准确的 FinanceRecord 金额退回即可
     def add_refund(self, order_id, refund_amount, refund_reason, is_returned=False,
                    returned_quantity=0, returned_items=None, refund_date=None):
         order = self.db.query(SalesOrder).filter(SalesOrder.id == order_id).first()
         if not order: raise ValueError("订单不存在")
-        # 预售单在未绑定尾款前，如果有需求也可以售后。绑定后(>=待发货)同样可用。
         if order.status in [OrderStatus.PENDING, OrderStatus.PRESALE_PENDING_DEPOSIT]: 
             raise ValueError("当前状态不允许售后申请")
 
@@ -451,7 +441,6 @@ class SalesOrderService:
                     product_ids_to_sync.add(cost_item.product_id)
                     self.db.delete(cost_item)
 
-        # ✨ 智能回滚：无论是什么订单，找出当时记入的所有的属于这个订单的 FinanceRecord，把金额准确退回现金账户。
         finances = self.db.query(FinanceRecord).filter(
             or_(FinanceRecord.order_id == order_id, FinanceRecord.description.like(f"%{order.order_no}%"))
         ).all()
@@ -463,7 +452,6 @@ class SalesOrderService:
 
         for finance in finances: self.db.delete(finance)
                 
-        # 撤回代结算资产
         if order.status in [OrderStatus.SHIPPED, OrderStatus.AFTER_SALES]:
             self._distribute_pending_asset(order, -order.total_amount)
                 
@@ -478,6 +466,24 @@ class SalesOrderService:
         self.db.commit()
         return f"订单 {order.order_no} 已删除，相关资金流水与资产已回滚！"
 
+    def update_order_info(self, order_id, updates):
+        """✨ 新增：更新订单基础信息 (优惠记录、备注)"""
+        order = self.get_order_by_id(order_id)
+        if not order: raise ValueError("订单不存在")
+        
+        has_change = False
+        if "discount_note" in updates:
+            order.discount_note = updates["discount_note"]
+            has_change = True
+        if "notes" in updates:
+            order.notes = updates["notes"]
+            has_change = True
+            
+        if has_change:
+            self.db.commit()
+            return True
+        return False
+
     # ================= 预售专用：解绑/撤销尾款 =================
     def unbind_presale_final(self, order_id):
         order = self.db.query(SalesOrder).filter(SalesOrder.id == order_id).first()
@@ -486,7 +492,6 @@ class SalesOrderService:
 
         product_ids_to_sync = set()
 
-        # 1. 撤销发货扣减的库存（如果有）
         if order.status in [OrderStatus.SHIPPED, OrderStatus.COMPLETED, OrderStatus.AFTER_SALES]:
             logs = self.db.query(InventoryLog).filter(
                 InventoryLog.order_id == order.id,
@@ -497,23 +502,20 @@ class SalesOrderService:
                 if product: product_ids_to_sync.add(product.id)
                 self.db.delete(log)
                 
-            # 撤回代结算资产 (仅在已发货、售后中状态时存在)
             if order.status in [OrderStatus.SHIPPED, OrderStatus.AFTER_SALES]:
                 self._distribute_pending_asset(order, -order.total_amount)
 
-        # 2. 撤销尾款财务流水（如果已完成）
         if order.status == OrderStatus.COMPLETED:
             finance = self.db.query(FinanceRecord).filter(
                 FinanceRecord.order_id == order.id,
                 FinanceRecord.category == FinanceCategory.SALES_INCOME,
-                FinanceRecord.description.like(f"尾款收款%") # 精准狙击尾款流水
+                FinanceRecord.description.like(f"尾款收款%") 
             ).first()
             if finance:
                 asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"
                 self._update_asset_by_name(asset_name, -finance.amount, category="asset", currency=order.currency)
                 self.db.delete(finance)
 
-        # 3. 撤销售后记录（一旦退回待付尾款，原有的售后记录作废）
         refunds = self.db.query(OrderRefund).filter(OrderRefund.order_id == order.id).all()
         for refund in refunds:
             if refund.cost_item_id:
@@ -523,15 +525,13 @@ class SalesOrderService:
                     self.db.delete(cost)
             self.db.delete(refund)
 
-        # 4. 剥离尾款数据，重置为【待付尾款】状态
         order.final_order_no = None
-        order.total_amount = order.deposit_amount # 总价退回仅包含定金
+        order.total_amount = order.deposit_amount 
         order.final_amount = 0.0
         order.status = OrderStatus.PRESALE_PENDING_FINAL
         order.shipped_date = None
         order.completed_date = None
 
-        # 5. 重新核算子商品单价（仅剩定金）
         total_qty = sum(item.quantity for item in order.items)
         if total_qty > 0:
             new_unit_price = order.total_amount / total_qty
@@ -552,16 +552,18 @@ class SalesOrderService:
     def validate_and_parse_import_data(self, df, exchange_rate, presale_mode=None):
         required_cols = ['订单号', '商品名', '商品型号', '数量', '销售平台', '订单总额', '币种', '出货仓库']
         
-        # ✨ 针对尾款模式，增加“关联定金单号”列的硬性要求
         if presale_mode == "尾款":
             if '关联定金单号' not in df.columns:
                 return None, "尾款绑定模式下，Excel 必须包含【关联定金单号】列"
             required_cols.append('关联定金单号')
+        elif presale_mode == "定金":
+            if '优惠' not in df.columns:
+                return None, "批量导入定金单时，Excel 必须包含【优惠】列"
+            required_cols.append('优惠')
 
         missing_cols = [c for c in required_cols if c not in df.columns]
         if missing_cols: return None, f"缺少必要列: {', '.join(missing_cols)}"
 
-        # 清除订单号尾部的 .0 (防止整数被读成浮点) 并去空
         df['订单号'] = df['订单号'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
         if presale_mode == "尾款":
             df['关联定金单号'] = df['关联定金单号'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -583,16 +585,14 @@ class SalesOrderService:
 
         valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动"]
 
-        # 安全转换为字符串的辅助函数，防止 NaN 变成 "nan"
         def safe_str(val):
             return "" if pd.isna(val) else str(val).strip()
 
         for index, row in df.iterrows():
             order_no = row['订单号']
             if not order_no or order_no == 'nan': 
-                continue # 跳过完全空行
+                continue 
             
-            # 1. 校验预售/线上的特定主键冲突
             existing = self.db.query(SalesOrder).filter(
                 or_(SalesOrder.order_no == order_no, SalesOrder.final_order_no == order_no)
             ).first()
@@ -606,7 +606,8 @@ class SalesOrderService:
                     errors.append(f"第 {index+2} 行 - 主订单号已存在: {order_no}")
                     continue
             
-            # 2. ✨ 核心修改：匹配目标定金订单 (仅尾款模式)
+            discount_val = safe_str(row.get('优惠', '')) if presale_mode == "定金" else ""
+            
             matched_deposit_id = None
             if presale_mode == "尾款":
                 ref_deposit_no = safe_str(row['关联定金单号'])
@@ -614,7 +615,6 @@ class SalesOrderService:
                     errors.append(f"第 {index+2} 行: 关联定金单号不能为空")
                     continue
                     
-                # 直接通过定金单号查询对应的预售定金单
                 deposit_order = self.db.query(SalesOrder).filter(
                     SalesOrder.order_no == ref_deposit_no,
                     SalesOrder.order_type == "预售"
@@ -628,8 +628,59 @@ class SalesOrderService:
                     continue
                 
                 matched_deposit_id = deposit_order.id
+                
+                try: 
+                    gross_price = float(row['订单总额'])
+                except (ValueError, TypeError):
+                    errors.append(f"订单号 {order_no}: 总金额无效")
+                    continue
+                    
+                platform = safe_str(row['销售平台'])
+                currency = safe_str(row['币种'])
+                platform_lower = platform.lower()
+                fee = 0.0
+                shipping_and_other = 0.0
+                
+                if "booth" in platform_lower:
+                    preset_item_total = 0.0
+                    for item in deposit_order.items:
+                        target_p = self.db.query(Product).filter(Product.name == item.product_name).first()
+                        if target_p:
+                            target_c = next((c for c in target_p.colors if c.color_name == item.variant), None)
+                            if target_c:
+                                target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
+                                preset_item_total += target_price * item.quantity
+                    if preset_item_total > 0:
+                        shipping_and_other = max(0.0, gross_price - preset_item_total)
+                    base_fixed_fee = 45 if currency == "JPY" else 2.16
+                    fee = math.ceil(gross_price * 0.056) + base_fixed_fee
+                    
+                elif "微店" in platform_lower:
+                    fee = gross_price * 0.006
+                    
+                net_price = gross_price - fee - shipping_and_other
+                
+                if net_price <= 0:
+                    errors.append(f"订单号 {order_no}: 扣除手续费后的净金额({net_price:.2f}) 小于等于 0")
+                    continue
+                
+                if "微店" in platform_lower: target_acc = "流动资金-微店账户"
+                elif "booth" in platform_lower: target_acc = "流动资金-booth账户"
+                elif currency == "JPY": target_acc = "流动资金-日元临时账户"
+                else: target_acc = "流动资金-支付宝账户"
+                
+                fake_items = [{"product_name": i.product_name, "variant": i.variant, "quantity": i.quantity, "warehouse_id": i.warehouse_id} for i in deposit_order.items]
 
-            # 3. 基础信息解析
+                parsed_orders.append({
+                    "order_no": order_no, "platform": platform, "currency": currency,
+                    "gross_price": gross_price, "fee": fee, "net_price": net_price,
+                    "total_qty": sum(i.quantity for i in deposit_order.items), "items": fake_items,
+                    "target_account": target_acc,
+                    "matched_deposit_id": matched_deposit_id,
+                    "discount_note": discount_val 
+                })
+                continue 
+            
             platform = safe_str(row['销售平台'])
             currency = safe_str(row['币种'])
             p_name = safe_str(row['商品名'])
@@ -640,7 +691,6 @@ class SalesOrderService:
                 errors.append(f"订单号 {order_no}: 总金额无效")
                 continue
 
-            # 处理多款式、多数量、多仓库的拆分
             var_str = safe_str(row['商品型号']).replace('；', ';')
             qty_str = safe_str(row['数量']).replace('；', ';')
             wh_name_str = safe_str(row.get('出货仓库', '')).replace('；', ';')
@@ -692,7 +742,6 @@ class SalesOrderService:
                     errors.append(f"订单号 {order_no}: 商品 '{p_name}' 不存在型号 '{v_name}'")
                     has_item_error = True; break
                 else:
-                    # 4. 库存校验 (预售定金模式不校验库存，其他模式均需校验)
                     if presale_mode != "定金":
                         stock_key = f"{p_name}_{v_name}_{wh_id}"
                         current_consumed = consumed_stock_in_excel.get(stock_key, 0)
@@ -720,7 +769,6 @@ class SalesOrderService:
                     
             if has_item_error: continue
 
-            # 5. 平台手续费与邮费计算
             platform_lower = platform.lower()
             fee = 0.0
             shipping_and_other = 0.0
@@ -739,7 +787,6 @@ class SalesOrderService:
                     shipping_and_other = max(0.0, gross_price - preset_item_total)
                 
                 base_fixed_fee = 45 if currency == "JPY" else 2.16
-                import math
                 fee = math.ceil(gross_price * 0.056) + base_fixed_fee
                 
             elif "微店" in platform_lower:
@@ -766,7 +813,8 @@ class SalesOrderService:
                 "gross_price": gross_price, "fee": fee, "net_price": net_price,
                 "total_qty": total_qty, "items": items_data,
                 "target_account": target_acc,
-                "matched_deposit_id": matched_deposit_id # ✨ 针对批量尾款导入使用，存入已匹配好的定金单ID
+                "matched_deposit_id": matched_deposit_id,
+                "discount_note": discount_val
             })
 
         return parsed_orders, errors
@@ -777,11 +825,11 @@ class SalesOrderService:
             if presale_mode == "定金":
                 order, err = self.create_presale_deposit_order(
                     items_data=data["items"], platform=data["platform"], currency=data["currency"], 
-                    notes="批量导入定金单", order_no=data["order_no"], target_account_name=data["target_account"]
+                    notes="批量导入定金单", order_no=data["order_no"], target_account_name=data["target_account"],
+                    discount_note=data.get("discount_note", "")
                 )
                 if not err: created_count += 1
             elif presale_mode == "尾款":
-                # 尾款实际上是执行更新绑定
                 try:
                     self.bind_presale_final_order(data["matched_deposit_id"], data["order_no"], data["net_price"], new_notes="批量绑定尾款")
                     created_count += 1
@@ -794,6 +842,5 @@ class SalesOrderService:
                 if not err: created_count += 1
         return created_count
 
-    # ====== 确保提交 ======
     def commit(self):
         self.db.commit()
