@@ -10,11 +10,12 @@ from models import (
 import math
 import pandas as pd
 from constants import OrderStatus, FinanceCategory, AssetPrefix
+from services.inventory_service import InventoryService
 
 class SalesOrderService:
     def __init__(self, db: Session):
         self.db = db
-
+        self.inventory_service = InventoryService(db)
     def _update_asset_by_name(self, name, delta, category="asset", currency="CNY"):
         item = self.db.query(CompanyBalanceItem).filter(
             CompanyBalanceItem.name == name
@@ -299,7 +300,6 @@ class SalesOrderService:
         order.shipped_date = ship_date
 
         self.db.flush()
-        from services.inventory_service import InventoryService
         inv_service = InventoryService(self.db)
         for pid in product_ids_to_sync:
             inv_service.sync_product_metrics(pid)
@@ -408,13 +408,119 @@ class SalesOrderService:
         order.status = OrderStatus.AFTER_SALES
 
         self.db.flush()
-        from services.inventory_service import InventoryService
         inv_service = InventoryService(self.db)
         for pid in product_ids_to_sync:
             inv_service.sync_product_metrics(pid)
 
         self.db.commit()
         return "售后记录已添加"
+
+    def update_refund(self, refund_id, refund_amount, refund_reason):
+        """更新售后记录并同步回滚财务数据与库存备注"""
+        refund = self.db.query(OrderRefund).filter(OrderRefund.id == refund_id).first()
+        if not refund: raise ValueError("售后记录不存在")
+        
+        order = refund.order
+        old_amount = refund.refund_amount
+        old_reason = refund.refund_reason
+        delta = refund_amount - old_amount # 计算差额
+        
+        # 1. 更新关联的成本项
+        if refund.cost_item_id:
+            cost_item = self.db.query(CostItem).filter(CostItem.id == refund.cost_item_id).first()
+            if cost_item:
+                cost_item.actual_cost = refund_amount
+                cost_item.unit_price = refund_amount
+                cost_item.remarks = refund_reason
+
+        # 2. 同步调整现金账户和流水
+        if order.status == OrderStatus.COMPLETED or order.status == OrderStatus.PRESALE_PENDING_FINAL:
+            asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"
+            self._update_asset_by_name(asset_name, -delta, currency=order.currency)
+            
+            finance_rec = self.db.query(FinanceRecord).filter(
+                FinanceRecord.order_id == order.id,
+                FinanceRecord.description.like(f"退款: {order.order_no}%")
+            ).first()
+            if finance_rec:
+                finance_rec.amount = -refund_amount
+                finance_rec.description = f"退款: {order.order_no} - {refund_reason} [账户: {asset_name}]"
+        else:
+            self._distribute_pending_asset(order, -delta)
+
+        # ✨ [完美补丁] 3. 如果修改了售后原因，同步修改退货入库日志的备注，确保数据链条不断裂
+        if refund.is_returned and old_reason != refund_reason:
+            target_old_note = f"订单退货: {order.order_no} - {old_reason}"
+            return_logs = self.db.query(InventoryLog).filter(
+                InventoryLog.order_id == order.id,
+                InventoryLog.reason == "退货入库",
+                InventoryLog.note == target_old_note
+            ).all()
+            for log in return_logs:
+                log.note = f"订单退货: {order.order_no} - {refund_reason}"
+
+        # 4. 更新售后记录本身
+        refund.refund_amount = refund_amount
+        refund.refund_reason = refund_reason
+        
+        self.db.flush()
+        InventoryService(self.db).sync_product_metrics(order.items[0].product_id if order.items else None)
+        
+        self.db.commit()
+        return "售后记录已成功修改"
+
+    def delete_refund(self, refund_id):
+        """彻底删除售后记录并还原所有影响（含实物库存）"""
+        refund = self.db.query(OrderRefund).filter(OrderRefund.id == refund_id).first()
+        if not refund: raise ValueError("售后记录不存在")
+        
+        order = refund.order
+        amount_to_restore = refund.refund_amount
+        product_ids_to_sync = set()
+        
+        # 1. 还原资金/资产与流水
+        if order.status == OrderStatus.COMPLETED:
+            asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"
+            self._update_asset_by_name(asset_name, amount_to_restore, currency=order.currency)
+            self.db.query(FinanceRecord).filter(
+                FinanceRecord.order_id == order.id,
+                FinanceRecord.description.like(f"退款: {order.order_no}%")
+            ).delete()
+        else:
+            self._distribute_pending_asset(order, amount_to_restore)
+
+        # 2. 删除关联的售后成本
+        if refund.cost_item_id:
+            cost_item = self.db.query(CostItem).filter(CostItem.id == refund.cost_item_id).first()
+            if cost_item:
+                product_ids_to_sync.add(cost_item.product_id)
+                self.db.delete(cost_item)
+
+        # ✨ [完美补丁] 3. 自动撤销退货产生的库存入库
+        if refund.is_returned:
+            target_note = f"订单退货: {order.order_no} - {refund.refund_reason}"
+            return_logs = self.db.query(InventoryLog).filter(
+                InventoryLog.order_id == order.id,
+                InventoryLog.reason == "退货入库",
+                InventoryLog.note == target_note
+            ).all()
+            
+            for log in return_logs:
+                p = self.db.query(Product).filter(Product.name == log.product_name).first()
+                if p: product_ids_to_sync.add(p.id)
+                self.db.delete(log)
+        
+        # 4. 删除售后记录本身
+        self.db.delete(refund)
+        self.db.flush()
+
+        # 5. 重算受影响商品的大货资产单价
+        inv_service = InventoryService(self.db)
+        for pid in product_ids_to_sync:
+            inv_service.sync_product_metrics(pid)
+
+        self.db.commit()
+        return "售后记录已删除，相关的资金、成本及实物库存均已回滚"
 
     # ================= 5. 删除订单 (智能回滚兼容) =================
 
@@ -458,7 +564,6 @@ class SalesOrderService:
         self.db.delete(order)
         self.db.flush()
         
-        from services.inventory_service import InventoryService
         inv_service = InventoryService(self.db)
         for pid in product_ids_to_sync:
             inv_service.sync_product_metrics(pid)
@@ -540,7 +645,7 @@ class SalesOrderService:
                 item.subtotal = item.quantity * new_unit_price
 
         self.db.flush()
-        from services.inventory_service import InventoryService
+
         inv_service = InventoryService(self.db)
         for pid in product_ids_to_sync:
             inv_service.sync_product_metrics(pid)
