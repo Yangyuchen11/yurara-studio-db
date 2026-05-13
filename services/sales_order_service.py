@@ -562,7 +562,7 @@ class SalesOrderService:
             required_cols.append('优惠')
 
         missing_cols = [c for c in required_cols if c not in df.columns]
-        if missing_cols: return None, f"缺少必要列: {', '.join(missing_cols)}"
+        if missing_cols: return None, [f"缺少必要列: {', '.join(missing_cols)}"]
 
         df['订单号'] = df['订单号'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
         if presale_mode == "尾款":
