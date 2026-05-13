@@ -14,6 +14,9 @@ class FinanceService:
     负责财务流水、债务、兑换及相关资产联动的核心业务逻辑
     """
 
+    # ✨ 定义不需要操作现金账户的分类集合
+    NON_CASH_CATEGORIES = {"现有资产增加", "新资产增加", "现有资产减少", "其他资产增加"}
+
     # ================= 辅助查询方法 =================
 
     @staticmethod
@@ -281,39 +284,43 @@ class FinanceService:
 
     @staticmethod
     def create_general_transaction(db, base_data, link_config, exchange_rate):
+        """✨ 核心优化：支持非现金流转逻辑"""
         is_income = (base_data['type'] == "收入")
         signed_amount = base_data['amount'] if is_income else -base_data['amount']
         
-        acc_id = base_data.get('account_id')
-        target_cash = FinanceService.get_cash_asset_by_id(db, acc_id) if acc_id else FinanceService.get_cash_asset(db, base_data['currency'])
+        # 判断是否为非现金类别
+        is_non_cash = base_data.get('is_non_cash', False) or (base_data['category'] in FinanceService.NON_CASH_CATEGORIES)
+        target_cash = None
         
-        # 确保收款现金账户提前生成并拿到 ID
-        if not target_cash:
-            target_cash = CompanyBalanceItem(category=BalanceCategory.ASSET, name=f"流动资金({base_data['currency']})", amount=0.0, currency=base_data['currency'], asset_type="现金")
-            db.add(target_cash)
-            db.flush()
+        if not is_non_cash:
+            acc_id = base_data.get('account_id')
+            target_cash = FinanceService.get_cash_asset_by_id(db, acc_id) if acc_id else FinanceService.get_cash_asset(db, base_data['currency'])
             
-        acc_name = target_cash.name
+            if not target_cash:
+                target_cash = CompanyBalanceItem(category=BalanceCategory.ASSET, name=f"流动资金({base_data['currency']})", amount=0.0, currency=base_data['currency'], asset_type="现金")
+                db.add(target_cash)
+                db.flush()
+            acc_name = target_cash.name
+        else:
+            acc_name = "无(资产账面核销)"
         
         note_detail = f"{base_data['shop']}" if base_data['shop'] else ""
         if link_config.get('qty', 1) > 1: note_detail += f" (x{link_config['qty']})"
         if base_data['desc']: note_detail += f" | {base_data['desc']}"
         note_detail += f" [账户: {acc_name}]"
         
-        # ✨ 生成流水时强绑定 account_id
         new_record = FinanceRecord(
             date=base_data['date'], amount=signed_amount, currency=base_data['currency'],
             category=base_data['category'], description=f"{link_config.get('name', '')} [{note_detail}]",
             url=base_data.get('url', ''),
-            account_id=target_cash.id
+            account_id=target_cash.id if target_cash else None
         )
         db.add(new_record)
         db.flush()
 
-        # 3. 更新流动资金
-        target_cash.amount += signed_amount
+        if target_cash:
+            target_cash.amount += signed_amount
 
-        # 4. 处理联动逻辑
         l_type = link_config.get('link_type')
         link_msg = "资金变动已记录"
         
@@ -586,6 +593,7 @@ class FinanceService:
 
     @staticmethod
     def update_record(db, record_id, updates):
+        """✨ 核心优化：修改逻辑中支持非现金屏蔽"""
         rec = FinanceService.get_record_by_id(db, record_id)
         if not rec: return False
 
@@ -593,35 +601,42 @@ class FinanceService:
         related_costs_count = db.query(CostItem).filter(CostItem.finance_record_id == record_id).count()
         related_fixed_assets_count = db.query(FixedAsset).filter(FixedAsset.finance_record_id == record_id).count()
         
+        # 新币种
+        new_currency_check = updates.get('currency', rec.currency)
+        
         # 只要关联了大于1个的成本明细或固定资产，就拦截金额或币种的修改
         if related_costs_count > 1 or related_fixed_assets_count > 1:
-            # 如果仅仅是修改备注、网址或者日期，可以放行；但如果修改了核心的金额、币种、账户或分类，必须拦截
-            if updates.get('amount_abs') != abs(rec.amount) or new_currency != rec.currency:
+            if updates.get('amount_abs') != abs(rec.amount) or new_currency_check != rec.currency:
                 raise ValueError("⚠️ 保护机制触发：该流水包含批量录入的多个明细物品。为保证成本分摊数据的准确性，不支持直接修改总金额。请【删除】该流水后重新批量录入。")
-        # 1. 精准回滚旧账户的资金
-        old_cash_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == rec.account_id).first()
-        if not old_cash_asset and rec.description: 
-            # 兼容老数据
-            match = re.search(r'\[账户:\s*(.+?)\]', rec.description)
-            if match:
-                old_cash_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == match.group(1)).first()
-        
-        if old_cash_asset:
-            old_cash_asset.amount -= rec.amount
+
+        # 1. 精准回滚旧账户的资金 (非现金调整跳过)
+        if rec.category not in FinanceService.NON_CASH_CATEGORIES:
+            old_cash_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == rec.account_id).first()
+            if not old_cash_asset and rec.description: 
+                # 兼容老数据
+                match = re.search(r'\[账户:\s*(.+?)\]', rec.description)
+                if match and match.group(1) != "无(资产账面核销)":
+                    old_cash_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == match.group(1)).first()
+            
+            if old_cash_asset:
+                old_cash_asset.amount -= rec.amount
         
         # 2. 计算新数据并入账新账户
         new_signed_amount = updates['amount_abs'] if updates['type'] == "收入" else -updates['amount_abs']
         
         # ✨ 直接使用前端传来的用户指定账户
         new_acc_id = updates.get('account_id')
-        new_cash_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == new_acc_id).first()
-        
-        if new_cash_asset:
-            new_currency = new_cash_asset.currency # 以真实账户的币种为准
-            new_cash_asset.amount += new_signed_amount
-        else:
-            raise ValueError("未找到指定的账户！")
-            
+        new_currency = rec.currency 
+        new_cash_asset = None
+
+        if updates['category'] not in FinanceService.NON_CASH_CATEGORIES:
+            new_cash_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == new_acc_id).first()
+            if new_cash_asset:
+                new_currency = new_cash_asset.currency # 以真实账户的币种为准
+                new_cash_asset.amount += new_signed_amount
+            else:
+                raise ValueError("未找到指定的账户！")
+                
         # 3. 更新流水自身 (同步外键)
         rec.date = updates['date']
         rec.currency = new_currency
@@ -629,7 +644,7 @@ class FinanceService:
         rec.category = updates['category']
         rec.description = updates['desc']
         rec.url = updates.get('url', '')
-        rec.account_id = new_cash_asset.id # ✨ 强绑定用户指定的账户ID
+        rec.account_id = new_cash_asset.id if new_cash_asset else None
         
         # 4. 级联更新关联表
         product_id_to_sync = None
@@ -665,10 +680,6 @@ class FinanceService:
             fa.currency = new_currency 
             fa.remarks = updates['desc'] # 同步更新备注
             
-        for fa in db.query(FixedAsset).filter(FixedAsset.finance_record_id == record_id).all():
-            if fa.quantity > 0: fa.unit_price = updates['amount_abs'] / fa.quantity
-            fa.currency = new_currency 
-            
         for ci in db.query(ConsumableItem).filter(ConsumableItem.finance_record_id == record_id).all():
             if ci.initial_quantity > 0: ci.unit_price = updates['amount_abs'] / ci.initial_quantity
             ci.currency = new_currency
@@ -698,13 +709,15 @@ class FinanceService:
 
         # === 辅助：强外键获取现金账户 fallback ===
         def get_acc_from_rec(record):
+            if record.category in FinanceService.NON_CASH_CATEGORIES:
+                return None
             if record.account_id:
                 return db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == record.account_id).first()
             
             # 向后兼容老数据：正则解析
             if record.description:
                 match = re.search(r'\[账户:\s*(.+?)\]', record.description)
-                if match:
+                if match and match.group(1) != "无(资产账面核销)":
                     acc_name = match.group(1)
                     return db.query(CompanyBalanceItem).filter(
                         CompanyBalanceItem.name == acc_name, 
@@ -826,7 +839,7 @@ class FinanceService:
             cash_asset = get_acc_from_rec(rec)
             if cash_asset: 
                 cash_asset.amount -= rec.amount
-                msg_list.append(f"资金已从【{cash_asset.name}】回滚")
+                msg_list.append(f"资金已回滚")
             
             product_id_to_sync = None # ✨ 初始化
 
@@ -856,4 +869,4 @@ class FinanceService:
             InventoryService(db).sync_product_metrics(product_id_to_sync)
 
         db.commit()
-        return " | ".join(msg_list)
+        return " | ".join(msg_list) if msg_list else "流水已删除"

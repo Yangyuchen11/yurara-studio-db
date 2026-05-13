@@ -262,6 +262,10 @@ def render_add_transaction_form(exchange_rate):
 
                 cat = base_data["category"]
 
+                # ✨ 核心点：标记非现金操作
+                is_non_cash = cat in FinanceService.NON_CASH_CATEGORIES
+                base_data["is_non_cash"] = is_non_cash
+
                 # ================= 专属：批量录入 / 匹配预算 交互区域 =================
                 if rec_type == "支出" and cat in ["商品成本", "固定资产购入", "其他资产购入"]:
                     st.markdown("##### 2. 共同设置 (共用信息)")
@@ -524,28 +528,33 @@ def render_add_transaction_form(exchange_rate):
                         base_data["amount"] = c_amt1.number_input(amt_label, min_value=0.0, step=10.0, format="%.2f", key=f"gen_amt_noq_{fv}")
                         base_data["currency"] = c_curr.selectbox("币种", ["CNY", "JPY"])
 
-                    valid_accs = [a for a in all_cash_assets if a.currency == base_data["currency"]]
-                    acc_opts = {f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})": a.id for a in valid_accs}
-                    
-                    if not acc_opts:
-                        st.warning(f"该币种 ({base_data['currency']}) 暂无现金账户，系统将自动创建默认账户。")
-                        base_data["account_id"] = None
-                    else:
-                        acc_names = list(acc_opts.keys())
-                        default_idx = 0
+                    # ✨ 核心修复：如果是资产账面调整，隐藏账户选择
+                    if not is_non_cash:
+                        valid_accs = [a for a in all_cash_assets if a.currency == base_data["currency"]]
+                        acc_opts = {f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})": a.id for a in valid_accs}
                         
-                        # 判断如果是支出，再去匹配关键词
-                        if rec_type == "支出":
-                            for i, name in enumerate(acc_names):
-                                if base_data["currency"] == "CNY" and "支付宝" in name:
-                                    default_idx = i
-                                    break
-                                elif base_data["currency"] == "JPY" and "日元银行" in name:
-                                    default_idx = i
-                                    break
-                                    
-                        sel_acc = st.selectbox("入账账户" if rec_type == "收入" else "操作账户", acc_names, index=default_idx)
-                        base_data["account_id"] = acc_opts.get(sel_acc)
+                        if not acc_opts:
+                            st.warning(f"该币种 ({base_data['currency']}) 暂无现金账户，系统将自动创建默认账户。")
+                            base_data["account_id"] = None
+                        else:
+                            acc_names = list(acc_opts.keys())
+                            default_idx = 0
+                            
+                            # 判断如果是支出，再去匹配关键词
+                            if rec_type == "支出":
+                                for i, name in enumerate(acc_names):
+                                    if base_data["currency"] == "CNY" and "支付宝" in name:
+                                        default_idx = i
+                                        break
+                                    elif base_data["currency"] == "JPY" and "日元银行" in name:
+                                        default_idx = i
+                                        break
+                                        
+                            sel_acc = st.selectbox("入账账户" if rec_type == "收入" else "操作账户", acc_names, index=default_idx)
+                            base_data["account_id"] = acc_opts.get(sel_acc)
+                    else:
+                        base_data["account_id"] = None
+                        st.info("💡 此操作为纯资产账面价值核销或增加，不影响真实的流动资金(现金)账户。")
 
                     # --- 4. 附加信息 ---
                     st.markdown("##### 4. 附加信息")
@@ -654,11 +663,9 @@ def render_edit_delete_panel(df_render):
                     if sel:
                         with st.form(key=f"edit_{sel['ID']}"):
                             
-                            # ✨ 【补全代码】在这里实时查询所有的现金账户，生成 acc_opts 字典
                             all_cash_assets = [a for a in FinanceService.get_transferable_assets(db_frag) if getattr(a, 'asset_type', '') == "现金"]
                             acc_opts = {f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})": a.id for a in all_cash_assets}
 
-                            # ✨ 提前查出这笔流水原本的账户，以便在下拉框中默认选中
                             rec_detail = FinanceService.get_record_by_id(db_frag, sel['ID'])
                             current_acc_id = rec_detail.account_id if rec_detail else None
                             
@@ -671,10 +678,16 @@ def render_edit_delete_panel(df_render):
 
                             n_date = st.date_input("日期", value=sel['日期'])
                             
-                            # ✨ 将下拉框改为：收支类型 + 选择具体账户（币种由账户决定，防止错乱）
                             c1, c2 = st.columns([1, 2])
                             n_type = c1.selectbox("类型", ["收入", "支出"], index=0 if "收入" in sel['收支'] else 1)
-                            n_acc_label = c2.selectbox("操作账户", acc_list, index=default_idx)
+                            
+                            # ✨ 逻辑：如果是资产账面核销，编辑时也不显示账户
+                            is_non_cash_edit = sel['分类'] in FinanceService.NON_CASH_CATEGORIES
+                            if is_non_cash_edit:
+                                c2.info("💡 此为账面核销/调整记录，无关联现金账户。")
+                                n_acc_label = None
+                            else:
+                                n_acc_label = c2.selectbox("操作账户", acc_list, index=default_idx)
                             
                             n_amt = st.number_input("金额", value=float(sel['金额']), min_value=0.0)
                             n_cat = st.text_input("分类", value=sel['分类'])
@@ -686,7 +699,7 @@ def render_edit_delete_panel(df_render):
                                     "date": n_date, "type": n_type, 
                                     "amount_abs": n_amt, "category": n_cat, "desc": n_desc,
                                     "url": n_url,
-                                    "account_id": acc_opts.get(n_acc_label) # ✨ 传回指定的账户ID
+                                    "account_id": acc_opts.get(n_acc_label) if n_acc_label else None
                                 }
                                 try:
                                     if FinanceService.update_record(db_frag, sel['ID'], updates):

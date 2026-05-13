@@ -363,24 +363,31 @@ with st.sidebar:
         uploaded_file = st.file_uploader("上传备份 ZIP", type="zip")
         if uploaded_file and st.button("🔴 确认导入"):
             try:
-                with zipfile.ZipFile(uploaded_file) as zf:
-                    for file_name, table_name, _ in TABLES_MAP:
-                        if file_name in zf.namelist():
-                            with zf.open(file_name) as f:
-                                df_import = pd.read_csv(f, encoding='utf-8-sig')
-                                if not df_import.empty:
-                                    df_import.to_sql(table_name, engine, if_exists='append', index=False)
-                                    st.toast(f"已导入 {table_name}")
+                from sqlalchemy import text
                 
-                if "postgres" in str(engine.url):
-                    from sqlalchemy import text
-                    with engine.connect() as conn:
+                # 使用 engine.begin() 开启一个统一的事务连接
+                with engine.begin() as conn:
+                    # 临时关闭外键检查触发器 
+                    if "postgres" in str(engine.url):
+                        conn.execute(text("SET session_replication_role = 'replica';"))
+                    
+                    with zipfile.ZipFile(uploaded_file) as zf:
+                        for file_name, table_name, _ in TABLES_MAP:
+                            if file_name in zf.namelist():
+                                with zf.open(file_name) as f:
+                                    df_import = pd.read_csv(f, encoding='utf-8-sig')
+                                    if not df_import.empty:
+                                        df_import.to_sql(table_name, conn, if_exists='append', index=False)
+                                        st.toast(f"已导入 {table_name}")
+                    
+                    # 恢复 PostgreSQL 的外键检查，并重置自增 ID 序列
+                    if "postgres" in str(engine.url):
+                        conn.execute(text("SET session_replication_role = 'origin';"))
                         for _, table_name, _ in TABLES_MAP:
                             try:
                                 conn.execute(text(f"SELECT setval(pg_get_serial_sequence('{table_name}', 'id'), coalesce(max(id),0) + 1, false) FROM {table_name};"))
                             except Exception:
                                 pass 
-                        conn.commit()
                         
                 st.success("恢复完成")
                 st.cache_data.clear()

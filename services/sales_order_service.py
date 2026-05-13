@@ -53,11 +53,12 @@ class SalesOrderService:
             
             for p_name, subtotal in product_subtotals.items():
                 item_delta = amount_delta * (subtotal / total_initial)
-                pending_asset_name = f"{AssetPrefix.PENDING_SETTLE}-{p_name}"
+                # 在资产名称后缀加上订单的币种，实现账目币种隔离
+                pending_asset_name = f"{AssetPrefix.PENDING_SETTLE}-{p_name}-{order.currency}" 
                 self._update_asset_by_name(pending_asset_name, item_delta, category="asset", currency=order.currency)
         else:
             if order.items:
-                pending_asset_name = f"{AssetPrefix.PENDING_SETTLE}-{order.items[0].product_name}"
+                pending_asset_name = f"{AssetPrefix.PENDING_SETTLE}-{order.items[0].product_name}-{order.currency}"
                 self._update_asset_by_name(pending_asset_name, amount_delta, category="asset", currency=order.currency)
 
     # ================= 1. 查询方法 =================
