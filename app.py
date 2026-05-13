@@ -18,7 +18,7 @@ from models import (
     CompanyBalanceItem,
     SystemSetting, ProductPrice, ProductPart,
     SalesOrder, SalesOrderItem, OrderRefund,
-    Warehouse # ✨ 新增导入 Warehouse
+    Warehouse,OfflineTemplate, OfflineTemplateItem
 )
 from database import Base
 from views.product_view import show_product_page
@@ -203,6 +203,8 @@ TABLES_MAP = [
     ("sales_orders.csv", "sales_orders", SalesOrder),
     ("sales_order_items.csv", "sales_order_items", SalesOrderItem),
     ("order_refunds.csv", "order_refunds", OrderRefund),
+    ("offline_templates.csv", "offline_templates", OfflineTemplate),
+    ("offline_template_items.csv", "offline_template_items", OfflineTemplateItem),
     # ("system_settings.csv", "system_settings", SystemSetting), #暂未修改该bug
 ]
 
@@ -415,9 +417,12 @@ with st.sidebar:
                 db.query(FinanceRecord).delete()
                 db.query(SalesOrder).delete() 
                 db.query(Warehouse).delete() 
+
+                db.query(OfflineTemplateItem).delete()
+                db.query(OfflineTemplate).delete()
                 
                 # 系统设置也可以选择性清空，如果不清空汇率会保留。如果想彻底重置加上下面这句：
-                db.query(SystemSetting).delete()
+                #db.query(SystemSetting).delete()
                 
                 db.commit()
                 st.session_state["toast_msg"] = ("数据已清空！表结构已保留。", "🧹")

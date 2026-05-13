@@ -24,7 +24,7 @@ def get_cached_orders_df(status_filter, product_filter, test_mode_flag, cache_ve
     db_cache = st.session_state.get_dynamic_session()
     try:
         service = SalesOrderService(db_cache)
-        orders = service.get_all_orders(status=status_filter, product_name=product_filter, limit=100)
+        orders = service.get_all_orders(status=status_filter, product_name=product_filter, limit=1000)
 
         data_list = []
         for o in orders:
