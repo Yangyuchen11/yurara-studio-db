@@ -228,6 +228,9 @@ class OrderRefund(Base):
     is_returned = Column(Boolean, default=False) # 是否退货
     returned_quantity = Column(Integer, default=0) # 退货数量
 
+    is_resend = Column(Boolean, default=False) # 是否补发
+    resend_quantity = Column(Integer, default=0) # 补发总数量
+    
     # 关联到成本项 (售后成本)
     cost_item_id = Column(Integer, ForeignKey("cost_items.id", ondelete="SET NULL"), nullable=True)
 

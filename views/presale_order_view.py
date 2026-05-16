@@ -22,7 +22,6 @@ def get_cached_presale_orders_df(status_filter, product_filter, test_mode_flag, 
     db_cache = st.session_state.get_dynamic_session()
     try:
         service = SalesOrderService(db_cache)
-        # 将 limit 改为 None，以支持全选 100 条以上的记录
         orders = service.get_all_orders(status=status_filter, product_name=product_filter, order_type="预售", limit=None)
 
         data_list = []
@@ -351,7 +350,6 @@ def show_presale_order_page(db, exchange_rate):
                 st.session_state[f"pre_ref_{sel_ids[0]}"] = True
                 st.session_state.pop(f"pre_det_{sel_ids[0]}", None)
                 
-            # ✨ 将按钮重命名为 "✏️ 编辑/详情/删除"
             if ac5.button("✏️ 编辑/详情/删除", key=f"pb_x_{sk}", disabled=(sc!=1), use_container_width=True):
                 st.session_state[f"pre_det_{sel_ids[0]}"] = True
                 st.session_state.pop(f"pre_ref_{sel_ids[0]}", None)
@@ -365,7 +363,6 @@ def show_presale_order_page(db, exchange_rate):
                         st.markdown(f"**📝 预售订单详情 | 定金: {o.order_no} | 尾款: {o.final_order_no or '-'}**")
                         st.write(f"状态: **{o.status}** | 定金: **{o.deposit_amount}** | 尾款: **{o.final_amount}** | platform: {o.platform}")
                         
-                        # ✨ 新增：订单详情中可直接修改优惠信息和备注的表单
                         with st.expander("✏️ 修改订单基础信息 (优惠/备注)"):
                             with st.form(f"edit_pre_info_{t_id}"):
                                 new_discount = st.text_input("修改优惠信息", value=o.discount_note or "")
@@ -399,16 +396,141 @@ def show_presale_order_page(db, exchange_rate):
                 if st.session_state.get(f"pre_ref_{t_id}"):
                     with st.container(border=True):
                         st.markdown(f"**🔧 预售订单售后 | {o.final_order_no or o.order_no}**")
-                        if o.refunds:
-                            st.markdown("**已有售后:**")
-                            for r in o.refunds: st.write(f"- {r.refund_date} | {r.refund_reason} | ¥ {r.refund_amount}")
                         
-                        with st.form(f"p_ref_f_{t_id}"):
-                            ra = st.number_input("退款金额", min_value=0.0)
-                            rr = st.text_input("退款原因")
-                            isr = st.checkbox("是否退回实物库存")
-                            if st.form_submit_button("确认提交售后", type="primary"):
-                                try:
-                                    msg = service.add_refund(t_id, ra, rr, is_returned=isr, returned_quantity=0, returned_items=None)
-                                    st.success(msg); sync_all_caches(); st.rerun()
-                                except Exception as e: st.error(str(e))
+                        if o.refunds:
+                            st.markdown("**已有售后记录:**")
+                            for r in o.refunds:
+                                with st.container(border=True):
+                                    col_r1, col_r2, col_r3, col_r4, col_r4_5, col_r5 = st.columns([1.5, 1.5, 1, 1, 1, 1.5])
+                                    col_r1.write(f"**日期:** {r.refund_date}")
+                                    col_r2.write(f"**原因:** {r.refund_reason}")
+                                    col_r3.write(f"**金额:** {r.refund_amount:.2f}")
+                                    col_r4.write(f"**退货:** {'是' if r.is_returned else '否'}")
+                                    col_r4_5.write(f"**补发:** {'是' if getattr(r, 'is_resend', False) else '否'}")
+
+                                    with col_r5:
+                                        btn_c1, btn_c2 = st.columns(2)
+                                        if btn_c1.button("✏️", key=f"edit_refund_{r.id}", help="修改", width="stretch"):
+                                            st.session_state[f"is_editing_refund_{r.id}"] = True
+                                            st.rerun()
+                                        if btn_c2.button("🗑️", key=f"del_refund_{r.id}", help="删除", width="stretch"):
+                                            try:
+                                                msg = service.delete_refund(r.id)
+                                                st.toast(msg, icon="✅")
+                                                sync_all_caches()
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(str(e))
+
+                                    if st.session_state.get(f"is_editing_refund_{r.id}"):
+                                        with st.form(f"edit_refund_form_{r.id}"):
+                                            st.markdown("**修改售后记录:**")
+                                            new_amount = st.number_input("售后金额", value=float(r.refund_amount), min_value=0.0, step=10.0, format="%.2f")
+                                            new_reason = st.text_input("售后原因", value=r.refund_reason)
+
+                                            col_e1, col_e2 = st.columns(2)
+                                            submit_edit = col_e1.form_submit_button("保存", type="primary", width="stretch")
+                                            cancel_edit = col_e2.form_submit_button("取消", width="stretch")
+
+                                            if submit_edit:
+                                                try:
+                                                    msg = service.update_refund(refund_id=r.id, refund_amount=new_amount, refund_reason=new_reason, exchange_rate=exchange_rate)
+                                                    st.success(msg)
+                                                    del st.session_state[f"is_editing_refund_{r.id}"]
+                                                    sync_all_caches()
+                                                    st.rerun()
+                                                except Exception as e:
+                                                    st.error(str(e))
+                                            if cancel_edit:
+                                                del st.session_state[f"is_editing_refund_{r.id}"]
+                                                st.rerun()
+                        st.divider()
+
+                        st.markdown("**添加新售后:**")
+                        
+                        refund_amount = st.number_input(f"售后/退款金额 ({o.currency})", min_value=0.0, step=10.0, format="%.2f", help="若仅补发商品无资金退款，可填 0。", key=f"pre_new_rf_amt_{o.id}")
+                        refund_reason = st.text_input("售后原因", placeholder="如：尺寸不合适、质量问题等", key=f"pre_new_rf_rsn_{o.id}")
+                        
+                        col_chk1, col_chk2 = st.columns(2)
+                        is_returned = col_chk1.checkbox("🔄 客户退回实物", key=f"pre_new_rf_ret_{o.id}")
+                        is_resend = col_chk2.checkbox("📦 补发商品或部件", key=f"pre_new_rf_res_{o.id}")
+
+                        returned_items = []
+                        if is_returned:
+                            st.markdown("**选择入库退货商品:**")
+                            for item in o.items:
+                                wh_name_display = item.warehouse.name if item.warehouse else '未分配仓库'
+                                return_qty = st.number_input(
+                                    f"{item.product_name}-{item.variant} (原出货: {wh_name_display})",
+                                    min_value=0, max_value=item.quantity, step=1,
+                                    key=f"pre_return_qty_{item.id}_{o.id}"
+                                )
+                                if return_qty > 0:
+                                    returned_items.append({
+                                        "product_name": item.product_name, "variant": item.variant,
+                                        "quantity": return_qty, "warehouse_id": item.warehouse_id
+                                    })
+
+                        resend_items = []
+                        if is_resend:
+                            st.markdown("**配置补发出库商品:**")
+                            for item in o.items:
+                                wh_name_display = item.warehouse.name if item.warehouse else '未分配仓库'
+                                
+                                p_obj = next((p for p in all_products if p.name == item.product_name), None)
+                                v_obj = next((c for c in p_obj.colors if c.color_name == item.variant), None) if p_obj else None
+                                
+                                part_options = ["整套"]
+                                if v_obj and v_obj.parts:
+                                    for pt in v_obj.parts:
+                                        part_options.append(pt.part_name)
+                                
+                                st.caption(f"🔧 **{item.product_name}-{item.variant}**")
+                                col_res1, col_res2, col_res3 = st.columns([1.5, 1, 1])
+                                res_part = col_res1.selectbox(f"补发目标", part_options, key=f"pre_resend_part_{item.id}_{o.id}")
+                                res_qty = col_res2.number_input("补发数量", min_value=0, step=1, key=f"pre_resend_qty_{item.id}_{o.id}")
+                                
+                                wh_opts = list(wh_map.keys()) + ["未分配"]
+                                def_wh_idx = list(wh_map.values()).index(item.warehouse_id) if item.warehouse_id in wh_map.values() else len(wh_map)
+                                res_wh = col_res3.selectbox("补发出货仓", wh_opts, index=def_wh_idx, key=f"pre_resend_wh_{item.id}_{o.id}")
+                                
+                                if res_qty > 0:
+                                    resend_items.append({
+                                        "product_name": item.product_name,
+                                        "variant": item.variant,
+                                        "quantity": res_qty,
+                                        "warehouse_id": wh_map.get(res_wh),
+                                        "part_name": None if res_part == "整套" else res_part
+                                    })
+
+                        col_rf1, col_rf2 = st.columns(2)
+                        submit_refund = col_rf1.button("确认提交售后", type="primary", width="stretch", key=f"pre_submit_rf_{o.id}")
+                        cancel_refund = col_rf2.button("关闭", width="stretch", key=f"pre_cancel_rf_{o.id}")
+
+                        if submit_refund:
+                            try:
+                                returned_quantity = sum(item["quantity"] for item in returned_items) if is_returned else 0
+                                resend_quantity = sum(item["quantity"] for item in resend_items) if is_resend else 0
+                                
+                                msg = service.add_refund(
+                                    order_id=o.id,
+                                    refund_amount=refund_amount,
+                                    refund_reason=refund_reason,
+                                    is_returned=is_returned,
+                                    returned_quantity=returned_quantity,
+                                    returned_items=returned_items if is_returned else None,
+                                    exchange_rate=exchange_rate,
+                                    is_resend=is_resend,
+                                    resend_quantity=resend_quantity,
+                                    resend_items=resend_items if is_resend else None
+                                )
+                                st.success(msg)
+                                st.session_state.pop(f"pre_ref_{t_id}", None)
+                                sync_all_caches()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(str(e))
+
+                        if cancel_refund:
+                            del st.session_state[f"pre_ref_{t_id}"]
+                            st.rerun()

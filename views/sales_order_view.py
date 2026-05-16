@@ -11,7 +11,7 @@ from constants import OrderStatus, PLATFORM_CODES
 # ------------------ 🚀 性能优化：独立数据层缓存 ------------------
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_cached_order_stats(product_filter, test_mode_flag, cache_version): # ✨ 加入版本参数
+def get_cached_order_stats(product_filter, test_mode_flag, cache_version):
     db_cache = st.session_state.get_dynamic_session()
     try:
         service = SalesOrderService(db_cache)
@@ -20,7 +20,7 @@ def get_cached_order_stats(product_filter, test_mode_flag, cache_version): # ✨
         db_cache.close()
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_cached_orders_df(status_filter, product_filter, test_mode_flag, cache_version): # ✨ 加入版本参数
+def get_cached_orders_df(status_filter, product_filter, test_mode_flag, cache_version):
     db_cache = st.session_state.get_dynamic_session()
     try:
         service = SalesOrderService(db_cache)
@@ -63,17 +63,15 @@ def show_sales_order_page(db, exchange_rate):
     st.header("🛒 线上销售管理")
 
     test_mode = st.session_state.get("test_mode", False)
-    cache_version = st.session_state.get("global_cache_version", 0) # ✨ 获取全局缓存版本
+    cache_version = st.session_state.get("global_cache_version", 0)
     
     service = SalesOrderService(db)
     all_products = db.query(Product).all()
     
-    # 获取所有的仓库
     all_warehouses = db.query(Warehouse).all()
     wh_map = {w.name: w.id for w in all_warehouses}
 
     # ================= 2. 创建订单 (购物车模式) =================
-    # 初始化购物车
     if "order_cart" not in st.session_state:
         st.session_state.order_cart = []
 
@@ -83,7 +81,6 @@ def show_sales_order_page(db, exchange_rate):
         order_no = col_r1_1.text_input("订单号", placeholder="输入订单号（必填）", key="order_no_input")
         order_date = col_r1_2.date_input("订单日期", value=date.today())
 
-        # --- プラットフォームと通貨の連動設定 ---
         def update_currency():
             platform_to_currency = {
                 "Booth": "JPY",
@@ -97,23 +94,10 @@ def show_sales_order_page(db, exchange_rate):
             selected_platform = st.session_state["platform"]
             st.session_state["currency"] = platform_to_currency.get(selected_platform, "CNY")
 
-        # プラットフォーム選択ボックス
         col_r2_1, col_r2_2, col_r2_3 = st.columns([1, 1, 2])
-        platform = col_r2_1.selectbox(
-            "销售平台",
-            list(PLATFORM_CODES.values()),
-            key="platform",
-            on_change=update_currency
-        )
+        platform = col_r2_1.selectbox("销售平台", list(PLATFORM_CODES.values()), key="platform", on_change=update_currency)
+        currency = col_r2_2.selectbox("币种", ["CNY", "JPY"], key="currency")
 
-        # 通貨選択ボックス
-        currency = col_r2_2.selectbox(
-            "币种",
-            ["CNY", "JPY"],
-            key="currency"
-        )
-
-        # --- 获取并筛选现金账户 ---
         cash_items = db.query(CompanyBalanceItem).filter(
             CompanyBalanceItem.category == "asset",
             CompanyBalanceItem.asset_type == "现金",
@@ -133,27 +117,22 @@ def show_sales_order_page(db, exchange_rate):
         target_account_name = col_r2_3.selectbox("收款现金账户", cash_account_names, index=default_idx)
 
         st.divider()
-        
-        # --- 购物车操作区 ---
         st.subheader("2. 订单商品列表 (添加商品)")
         
         c_p, c_v, c_q, c_w, c_b = st.columns([2, 1.5, 1, 1.5, 1], vertical_alignment="bottom")
         sel_p_name = c_p.selectbox("选择商品", [p.name for p in all_products], key="cart_p")
         
-        # 联动获取款式
         sel_p_obj = next((p for p in all_products if p.name == sel_p_name), None) if sel_p_name else None
         v_options = [c.color_name for c in sel_p_obj.colors] if sel_p_obj else []
         
         sel_v_name = c_v.selectbox("选择款式", v_options, key="cart_v")
         sel_qty = c_q.number_input("数量", min_value=1, step=1, value=1, key="cart_q")
         
-        # ✨ 新增仓库选择
         wh_options_list = list(wh_map.keys()) + ["未分配"]
         sel_wh_name = c_w.selectbox("出货仓库", wh_options_list, key="cart_w")
         
         if c_b.button("➕ 加入订单", type="primary", use_container_width=True):
             if sel_p_name and sel_v_name:
-                # 检查订单购物车中是否已有该商品+款式+仓库的组合
                 found = False
                 for item in st.session_state.order_cart:
                     if item["product_name"] == sel_p_name and item["variant"] == sel_v_name and item["warehouse_name"] == sel_wh_name:
@@ -171,7 +150,6 @@ def show_sales_order_page(db, exchange_rate):
                     })
                 st.rerun()
 
-        # --- 订单展示与编辑区 ---
         if st.session_state.order_cart:
             st.markdown("**当前已加入的商品 (支持直接修改数量或删除空行):**")
             cart_df = pd.DataFrame(st.session_state.order_cart)
@@ -183,13 +161,12 @@ def show_sales_order_page(db, exchange_rate):
                 column_config={
                     "product_name": st.column_config.TextColumn("商品名称", disabled=True),
                     "variant": st.column_config.TextColumn("款式", disabled=True),
-                    "warehouse_id": None, # 隐藏内部ID
+                    "warehouse_id": None,
                     "warehouse_name": st.column_config.TextColumn("出货仓库", disabled=True),
                     "quantity": st.column_config.NumberColumn("数量", min_value=1, step=1)
                 }
             )
             
-            # 数据清洗：过滤掉被用户删除空置的行
             cleaned_cart = []
             for record in edited_cart.to_dict('records'):
                 if pd.notna(record.get("product_name")) and str(record.get("product_name")).strip() != "":
@@ -200,14 +177,12 @@ def show_sales_order_page(db, exchange_rate):
 
         st.divider()
 
-        # --- 结算区 ---
         st.subheader("3. 结算信息")
         col_r3_1, col_r3_2 = st.columns([1, 2], vertical_alignment="bottom")
         total_price = col_r3_1.number_input("订单总价 (含邮费)", min_value=0.0, step=10.0, value=0.0, format="%.2f", key="order_total_price")
         deduct_fee = col_r3_2.checkbox("扣除平台手续费", value=True)
         notes = st.text_input("订单备注", placeholder="如：客户名称、特殊要求等", key="order_notes_input")
         
-        # 实时计算结算数据
         total_quantity = sum(item["quantity"] for item in st.session_state.order_cart) if st.session_state.order_cart else 0
         gross_price = total_price
         fee = 0.0
@@ -224,9 +199,7 @@ def show_sales_order_page(db, exchange_rate):
                     if target_c:
                         target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
                         unit_p = target_price
-                
-                if unit_p <= 0:
-                    price_missing = True
+                if unit_p <= 0: price_missing = True
                 preset_item_total += unit_p * item["quantity"]
             
             if price_missing or preset_item_total <= 0:
@@ -236,10 +209,8 @@ def show_sales_order_page(db, exchange_rate):
                 shipping_and_other = max(0.0, gross_price - preset_item_total)
 
         if deduct_fee:
-            if platform == "微店": 
-                fee = gross_price * 0.006
-            elif platform == "Booth": 
-                fee = math.ceil(gross_price * 0.056 + 45)
+            if platform == "微店": fee = gross_price * 0.006
+            elif platform == "Booth": fee = math.ceil(gross_price * 0.056 + 45)
             
         net_price = gross_price - fee - shipping_and_other
 
@@ -247,10 +218,10 @@ def show_sales_order_page(db, exchange_rate):
         col_qty_display.markdown(f"**总数量: {total_quantity} 件**")
 
         if total_quantity > 0 and gross_price > 0:
-            unit_price = net_price / total_quantity
+            final_unit_price = net_price / total_quantity
             fee_str = f" (预估手续费: {fee:.2f})" if fee > 0 else ""
             ship_str = f" (含邮费: {shipping_and_other:.2f})" if shipping_and_other > 0 else ""
-            col_price_display.markdown(f"**商品净收: {net_price:.2f} {currency} | 净单价: {unit_price:.2f} {currency}/件**<br><span style='font-size: 0.85em; color: gray;'>{fee_str}{ship_str}</span>", unsafe_allow_html=True)
+            col_price_display.markdown(f"**商品净收: {net_price:.2f} {currency} | 净单价: {final_unit_price:.2f} {currency}/件**<br><span style='font-size: 0.85em; color: gray;'>{fee_str}{ship_str}</span>", unsafe_allow_html=True)
         else:
             col_price_display.markdown(f"**平均净单价: - {currency}/件**")
 
@@ -271,7 +242,7 @@ def show_sales_order_page(db, exchange_rate):
                             "quantity": item["quantity"],
                             "unit_price": final_unit_price,
                             "subtotal": item["quantity"] * final_unit_price,
-                            "warehouse_id": item.get("warehouse_id") # ✨ 传递 warehouse_id 到后端
+                            "warehouse_id": item.get("warehouse_id")
                         })
                 
                 order, error = service.create_order(
@@ -313,37 +284,20 @@ def show_sales_order_page(db, exchange_rate):
                 
                 if errors:
                     st.error("❌ 数据校验失败，请修复 Excel 中的以下问题后重新上传：")
-                    for err in errors:
-                        st.write(f"- {err}")
+                    for err in errors: st.write(f"- {err}")
                 elif parsed_orders:
                     st.success(f"✅ 数据校验通过！共识别出 {len(parsed_orders)} 个有效订单。预览如下：")
-                    
                     preview_data = []
                     for po in parsed_orders:
-                        # 获取仓库名称
                         wh_id_to_name = {w.id: w.name for w in all_warehouses}
                         items_str = ", ".join([f"{i['product_name']}-{i['variant']} ×{i['quantity']} (仓: {wh_id_to_name.get(i['warehouse_id'], '未分配')})" for i in po["items"]])
                         preview_data.append({
-                            "订单号": po["order_no"],
-                            "平台": po["platform"],
-                            "收款目标账户": po["target_account"], 
-                            "币种": po["currency"],
-                            "总数量": po["total_qty"],
-                            "原总价": po["gross_price"],
-                            "预估手续费": po["fee"],
-                            "实际净入账": po["net_price"],
-                            "商品明细": items_str
+                            "订单号": po["order_no"], "平台": po["platform"], "收款目标账户": po["target_account"], 
+                            "币种": po["currency"], "总数量": po["total_qty"], "原总价": po["gross_price"],
+                            "预估手续费": po["fee"], "实际净入账": po["net_price"], "商品明细": items_str
                         })
                         
-                    st.dataframe(
-                        pd.DataFrame(preview_data), 
-                        width="stretch",
-                        column_config={
-                            "原总价": st.column_config.NumberColumn(format="%.2f"),
-                            "预估手续费": st.column_config.NumberColumn(format="%.2f"),
-                            "实际净入账": st.column_config.NumberColumn(format="%.2f")
-                        }
-                    )
+                    st.dataframe(pd.DataFrame(preview_data), width="stretch", column_config={"原总价": st.column_config.NumberColumn(format="%.2f"), "预估手续费": st.column_config.NumberColumn(format="%.2f"), "实际净入账": st.column_config.NumberColumn(format="%.2f")})
                     
                     if st.button("🚀 确认无误，开始导入订单", type="primary"):
                         with st.spinner("正在逐个生成订单并入账..."):
@@ -352,7 +306,6 @@ def show_sales_order_page(db, exchange_rate):
                             sync_all_caches() 
                             st.session_state.uploader_key += 1
                             st.rerun()
-                            
             except Exception as e:
                 st.error(f"读取或处理 Excel 文件失败: {e}")
                 st.caption("提示：请确保安装了 openpyxl 库。")
@@ -361,16 +314,12 @@ def show_sales_order_page(db, exchange_rate):
 
     # ================= 数据筛选 =================
     product_options = ["全部商品"] + [p.name for p in all_products]
-    selected_product = st.selectbox(
-        "🔍 选择商品以筛选下方表格与统计数据",
-        product_options,
-        key="sales_order_product_filter"
-    )
+    selected_product = st.selectbox("🔍 选择商品以筛选下方表格与统计数据", product_options, key="sales_order_product_filter")
     product_filter = None if selected_product == "全部商品" else selected_product
     st.divider()
 
-    # ================= 1. 订单统计概览 (秒开) =================
-    stats = get_cached_order_stats(product_filter, test_mode, cache_version) # ✨ 传版本
+    # ================= 1. 订单统计概览 =================
+    stats = get_cached_order_stats(product_filter, test_mode, cache_version) 
     with st.container(border=True):
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("总订单数", stats["total"])
@@ -392,39 +341,30 @@ def show_sales_order_page(db, exchange_rate):
         editor_key = f"editor_{status_key_suffix}"
         select_all_key = f"select_all_flag_{status_key_suffix}"
 
-        if select_all_key not in st.session_state:
-            st.session_state[select_all_key] = False
+        if select_all_key not in st.session_state: st.session_state[select_all_key] = False
 
         with st.spinner("加载数据中..."):
-            df = get_cached_orders_df(status_filter, product_filter, test_mode, cache_version).copy() # ✨ 传版本
+            df = get_cached_orders_df(status_filter, product_filter, test_mode, cache_version).copy() 
 
         if df.empty:
             st.info("暂无订单")
             return
 
         c_sel1, c_sel2, _ = st.columns([1, 1, 6])
-        
         if c_sel1.button("☑️ 全选", key=f"btn_sel_all_{status_key_suffix}", width="stretch"):
             st.session_state[select_all_key] = True
-            if editor_key in st.session_state: 
-                del st.session_state[editor_key]
+            if editor_key in st.session_state: del st.session_state[editor_key]
             st.rerun()
-            
         if c_sel2.button("☐ 取消全选", key=f"btn_desel_all_{status_key_suffix}", width="stretch"):
             st.session_state[select_all_key] = False
-            if editor_key in st.session_state: 
-                del st.session_state[editor_key]
+            if editor_key in st.session_state: del st.session_state[editor_key]
             st.rerun()
 
-        is_all_selected = st.session_state[select_all_key]
-        df["勾选"] = is_all_selected
-
+        df["勾选"] = st.session_state[select_all_key]
         st.markdown("**👇 勾选下方订单，点击操作栏按钮执行相应操作**")
 
         edited_df = st.data_editor(
-            df,
-            width="stretch",
-            hide_index=True,
+            df, width="stretch", hide_index=True,
             disabled=["订单号", "状态", "商品", "金额", "已退款", "币种", "平台", "日期"], 
             column_config={
                 "勾选": st.column_config.CheckboxColumn("选择", default=False),
@@ -454,8 +394,7 @@ def show_sales_order_page(db, exchange_rate):
         
         err_key = f"order_op_errors_{status_key_suffix}"
         if err_key in st.session_state:
-            for err in st.session_state[err_key]:
-                st.error(err, icon="🚨")
+            for err in st.session_state[err_key]: st.error(err, icon="🚨")
             del st.session_state[err_key]
 
         action_col1, action_col2, action_col3, action_col4, action_col5 = st.columns(5)
@@ -469,18 +408,13 @@ def show_sales_order_page(db, exchange_rate):
                     success_count += 1
                 except Exception as e:
                     err_list.append(f"订单 {o_id} 发货失败: {e}")
-                    
             if success_count > 0:
                 st.toast(f"✅ 成功发货 {success_count} 个订单", icon="📦")
                 if editor_key in st.session_state: del st.session_state[editor_key]
                 st.session_state[select_all_key] = False
                 sync_all_caches() 
-                
-            if err_list:
-                st.session_state[err_key] = err_list
-                
-            if success_count > 0 or err_list:
-                st.rerun()
+            if err_list: st.session_state[err_key] = err_list
+            if success_count > 0 or err_list: st.rerun()
 
         if action_col2.button(f"✅ 完成 ({selected_count})", key=f"btn_comp_{status_key_suffix}", type="primary", width="stretch", disabled=not all_can_complete, help="仅当选中的所有订单均为【已发货】或【售后】时可用"):
             success_count = 0
@@ -491,18 +425,13 @@ def show_sales_order_page(db, exchange_rate):
                     success_count += 1
                 except Exception as e:
                     err_list.append(f"订单 {o_id} 完成失败: {e}")
-                    
             if success_count > 0:
                 st.toast(f"✅ 成功完成 {success_count} 个订单", icon="💰")
                 if editor_key in st.session_state: del st.session_state[editor_key]
                 st.session_state[select_all_key] = False
                 sync_all_caches()
-                
-            if err_list:
-                st.session_state[err_key] = err_list
-
-            if success_count > 0 or err_list:
-                st.rerun()
+            if err_list: st.session_state[err_key] = err_list
+            if success_count > 0 or err_list: st.rerun()
 
         if action_col3.button("🔧 售后处理", key=f"btn_after_{status_key_suffix}", width="stretch", disabled=not can_refund, help="仅限对单个【已发货/完成/售后】订单操作"):
             st.session_state[f"show_refund_form_{target_order_id}"] = True
@@ -556,7 +485,6 @@ def show_sales_order_page(db, exchange_rate):
 
                     st.divider()
                     st.markdown("**商品明细:**")
-                    # ✨ 详情中直接展示绑定的仓库名称
                     items_detail = [{"商品": i.product_name, "款式": i.variant, "出货仓库": i.warehouse.name if i.warehouse else "未分配", "数量": i.quantity, "单价": i.unit_price, "小计": i.subtotal} for i in o.items]
                     st.dataframe(pd.DataFrame(items_detail), width="stretch", hide_index=True, column_config={"单价": st.column_config.NumberColumn(format="%.2f"), "小计": st.column_config.NumberColumn(format="%.2f")})
                     
@@ -570,11 +498,12 @@ def show_sales_order_page(db, exchange_rate):
                         st.markdown("**已有售后记录:**")
                         for r in o.refunds:
                             with st.container(border=True):
-                                col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns([1.5, 2, 1, 1, 1.5])
+                                col_r1, col_r2, col_r3, col_r4, col_r4_5, col_r5 = st.columns([1.5, 1.5, 1, 1, 1, 1.5])
                                 col_r1.write(f"**日期:** {r.refund_date}")
                                 col_r2.write(f"**原因:** {r.refund_reason}")
                                 col_r3.write(f"**金额:** {r.refund_amount:.2f}")
                                 col_r4.write(f"**退货:** {'是' if r.is_returned else '否'}")
+                                col_r4_5.write(f"**补发:** {'是' if getattr(r, 'is_resend', False) else '否'}")
 
                                 with col_r5:
                                     btn_c1, btn_c2 = st.columns(2)
@@ -602,7 +531,7 @@ def show_sales_order_page(db, exchange_rate):
 
                                         if submit_edit:
                                             try:
-                                                msg = service.update_refund(refund_id=r.id, refund_amount=new_amount, refund_reason=new_reason)
+                                                msg = service.update_refund(refund_id=r.id, refund_amount=new_amount, refund_reason=new_reason, exchange_rate=exchange_rate)
                                                 st.success(msg)
                                                 del st.session_state[f"is_editing_refund_{r.id}"]
                                                 sync_all_caches()
@@ -614,58 +543,93 @@ def show_sales_order_page(db, exchange_rate):
                                             st.rerun()
                         st.divider()
 
-                    with st.form(f"new_refund_form_{o.id}"):
-                        st.markdown("**添加新售后:**")
-                        refund_amount = st.number_input("售后金额", min_value=0.0, step=10.0, format="%.2f")
-                        refund_reason = st.text_input("售后原因", placeholder="如：尺寸不合适、质量问题等")
-                        is_returned = st.checkbox("是否退货")
+                    st.markdown("**添加新售后:**")
+                    refund_amount = st.number_input(f"售后/退款金额 ({o.currency})", min_value=0.0, step=10.0, format="%.2f", help="若仅补发商品无资金退款，可填 0。", key=f"new_rf_amt_{o.id}")
+                    refund_reason = st.text_input("售后原因", placeholder="如：尺寸不合适、质量问题等", key=f"new_rf_rsn_{o.id}")
+                    
+                    col_chk1, col_chk2 = st.columns(2)
+                    is_returned = col_chk1.checkbox("🔄 客户退回实物", key=f"new_rf_ret_{o.id}")
+                    is_resend = col_chk2.checkbox("📦 补发商品或部件", key=f"new_rf_res_{o.id}")
 
-                        returned_items = []
-                        if is_returned:
-                            st.markdown("**选择退货商品:**")
-                            for item in o.items:
-                                # ✨ 加入原发货仓库的名字以防同商品不同仓混淆
-                                wh_name_display = item.warehouse.name if item.warehouse else '未分配仓库'
-                                return_qty = st.number_input(
-                                    f"{item.product_name}-{item.variant} (原出货: {wh_name_display})",
-                                    min_value=0,
-                                    max_value=item.quantity,
-                                    step=1,
-                                    key=f"return_qty_{item.id}_{o.id}"
-                                )
-                                if return_qty > 0:
-                                    returned_items.append({
-                                        "product_name": item.product_name,
-                                        "variant": item.variant,
-                                        "quantity": return_qty,
-                                        "warehouse_id": item.warehouse_id # ✨ 附带仓库ID，使得退货时能精准返回对应仓
-                                    })
+                    returned_items = []
+                    if is_returned:
+                        st.markdown("**选择入库退货商品:**")
+                        for item in o.items:
+                            wh_name_display = item.warehouse.name if item.warehouse else '未分配仓库'
+                            return_qty = st.number_input(
+                                f"{item.product_name}-{item.variant} (原出货: {wh_name_display})",
+                                min_value=0, max_value=item.quantity, step=1,
+                                key=f"return_qty_{item.id}_{o.id}"
+                            )
+                            if return_qty > 0:
+                                returned_items.append({
+                                    "product_name": item.product_name, "variant": item.variant,
+                                    "quantity": return_qty, "warehouse_id": item.warehouse_id
+                                })
 
-                        col_rf1, col_rf2 = st.columns(2)
-                        submit_refund = col_rf1.form_submit_button("添加售后", type="primary", width="stretch")
-                        cancel_refund = col_rf2.form_submit_button("关闭", width="stretch")
+                    resend_items = []
+                    if is_resend:
+                        st.markdown("**配置补发出库商品:**")
+                        for item in o.items:
+                            wh_name_display = item.warehouse.name if item.warehouse else '未分配仓库'
+                            
+                            p_obj = next((p for p in all_products if p.name == item.product_name), None)
+                            v_obj = next((c for c in p_obj.colors if c.color_name == item.variant), None) if p_obj else None
+                            
+                            part_options = ["整套"]
+                            if v_obj and v_obj.parts:
+                                for pt in v_obj.parts:
+                                    part_options.append(pt.part_name)
+                            
+                            st.caption(f"🔧 **{item.product_name}-{item.variant}**")
+                            col_res1, col_res2, col_res3 = st.columns([1.5, 1, 1])
+                            res_part = col_res1.selectbox(f"补发目标", part_options, key=f"resend_part_{item.id}_{o.id}")
+                            res_qty = col_res2.number_input("补发数量", min_value=0, step=1, key=f"resend_qty_{item.id}_{o.id}")
+                            
+                            wh_opts = list(wh_map.keys()) + ["未分配"]
+                            def_wh_idx = list(wh_map.values()).index(item.warehouse_id) if item.warehouse_id in wh_map.values() else len(wh_map)
+                            res_wh = col_res3.selectbox("补发出货仓", wh_opts, index=def_wh_idx, key=f"resend_wh_{item.id}_{o.id}")
+                            
+                            if res_qty > 0:
+                                resend_items.append({
+                                    "product_name": item.product_name,
+                                    "variant": item.variant,
+                                    "quantity": res_qty,
+                                    "warehouse_id": wh_map.get(res_wh),
+                                    "part_name": None if res_part == "整套" else res_part
+                                })
 
-                        if submit_refund:
-                            try:
-                                returned_quantity = sum(item["quantity"] for item in returned_items) if is_returned else 0
-                                msg = service.add_refund(
-                                    order_id=o.id,
-                                    refund_amount=refund_amount,
-                                    refund_reason=refund_reason,
-                                    is_returned=is_returned,
-                                    returned_quantity=returned_quantity,
-                                    returned_items=returned_items if is_returned else None
-                                )
-                                st.success(msg)
-                                st.session_state.pop(f"show_refund_form_{target_order_id}", None)
-                                sync_all_caches()
-                                st.rerun()
-                            except Exception as e:
-                                st.error(str(e))
+                    col_rf1, col_rf2 = st.columns(2)
+                    submit_refund = col_rf1.button("确认提交售后", type="primary", width="stretch", key=f"submit_rf_{o.id}")
+                    cancel_refund = col_rf2.button("关闭", width="stretch", key=f"cancel_rf_{o.id}")
 
-                        if cancel_refund:
-                            del st.session_state[f"show_refund_form_{target_order_id}"]
+                    if submit_refund:
+                        try:
+                            returned_quantity = sum(item["quantity"] for item in returned_items) if is_returned else 0
+                            resend_quantity = sum(item["quantity"] for item in resend_items) if is_resend else 0
+                            
+                            msg = service.add_refund(
+                                order_id=o.id,
+                                refund_amount=refund_amount,
+                                refund_reason=refund_reason,
+                                is_returned=is_returned,
+                                returned_quantity=returned_quantity,
+                                returned_items=returned_items if is_returned else None,
+                                exchange_rate=exchange_rate,
+                                is_resend=is_resend,
+                                resend_quantity=resend_quantity,
+                                resend_items=resend_items if is_resend else None
+                            )
+                            st.success(msg)
+                            st.session_state.pop(f"show_refund_form_{target_order_id}", None)
+                            sync_all_caches()
                             st.rerun()
+                        except Exception as e:
+                            st.error(str(e))
+
+                    if cancel_refund:
+                        del st.session_state[f"show_refund_form_{target_order_id}"]
+                        st.rerun()
 
     with tab_all: render_order_list()
     with tab_pending: render_order_list(OrderStatus.PENDING)
