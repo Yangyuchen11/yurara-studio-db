@@ -867,6 +867,10 @@ class SalesOrderService:
             total_qty = 0
             has_item_error = False
             
+            # 初始化当前订单的库存状态标记
+            is_order_out_of_stock = False
+            order_stock_warning_msg = ""
+
             for v_name, q_str, wh_name in zip(variants, qtys_str, wh_names):
                 try:
                     qty = int(float(q_str))
@@ -905,9 +909,10 @@ class SalesOrderService:
                             
                         current_stock = stock_query.scalar() or 0
                         
+                        # 【核心重构】：库存不足时，不塞入错误(errors)，而是打上缺货标记，允许继续解析
                         if current_stock < current_consumed + qty:
-                            errors.append(f"订单号 {order_no}: '{p_name}-{v_name}' 在【{wh_name}】库存不足 (当前可用:{current_stock}, 表格内已占用:{current_consumed + qty})")
-                            has_item_error = True; break
+                            is_order_out_of_stock = True
+                            order_stock_warning_msg += f"【{v_name}】库存不足(可用:{int(current_stock)},需:{int(current_consumed + qty)}); "
                         
                         consumed_stock_in_excel[stock_key] = current_consumed + qty
                         
@@ -961,7 +966,9 @@ class SalesOrderService:
                 "total_qty": total_qty, "items": items_data,
                 "target_account": target_acc,
                 "matched_deposit_id": matched_deposit_id,
-                "discount_note": discount_val
+                "discount_note": discount_val,
+                "is_out_of_stock": is_order_out_of_stock,
+                "stock_warning": order_stock_warning_msg if is_order_out_of_stock else "🟢 充足"
             })
 
         return parsed_orders, errors

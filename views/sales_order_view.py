@@ -234,6 +234,11 @@ def show_sales_order_page(db, exchange_rate):
             else:
                 items_data = []
                 final_unit_price = net_price / total_quantity
+                
+                # 【新增逻辑】：在创建前查询并盘点库存，如果不足则进行警告，但不拦截
+                stock_warning_msgs = []
+                valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动"]
+                
                 for item in st.session_state.order_cart:
                     if item["quantity"] > 0:
                         items_data.append({
@@ -244,7 +249,32 @@ def show_sales_order_page(db, exchange_rate):
                             "subtotal": item["quantity"] * final_unit_price,
                             "warehouse_id": item.get("warehouse_id")
                         })
-                
+                        
+                        # 异步查一下当前选择仓库的物理库存
+                        from sqlalchemy import func
+                        from models import InventoryLog
+                        stock_query = db.query(func.sum(InventoryLog.change_amount)).filter(
+                            InventoryLog.product_name == item["product_name"],
+                            InventoryLog.variant == item["variant"],
+                            InventoryLog.reason.in_(valid_reasons)
+                        )
+                        if item.get("warehouse_id") is not None:
+                            stock_query = stock_query.filter(InventoryLog.warehouse_id == item["warehouse_id"])
+                        else:
+                            stock_query = stock_query.filter(InventoryLog.warehouse_id == None)
+                            
+                        current_stock = stock_query.scalar() or 0
+                        if current_stock < item["quantity"]:
+                            wh_name_display = item["warehouse_name"] if item.get("warehouse_id") else '未分配仓库'
+                            stock_warning_msgs.append(f"⚠️ 商品【{item['product_name']}-{item['variant']}】在【{wh_name_display}】库存不足（需要: {item['quantity']}, 当前可用: {current_stock}）")
+
+                # 如果有库存不足的项，前端弹出警告，但继续执行创建
+                if stock_warning_msgs:
+                    for msg in stock_warning_msgs:
+                        st.warning(msg)
+                    st.toast("⚠️ 检测到库存不足，但已允许超卖建单。后续发货时必须补足库存！", icon="⚠️")
+
+                # 正常调用底层创建，不再拒绝
                 order, error = service.create_order(
                     items_data=items_data, platform=platform, currency=currency, 
                     notes=notes, order_date=order_date, order_no=order_no.strip(),
@@ -287,18 +317,45 @@ def show_sales_order_page(db, exchange_rate):
                     for err in errors: st.write(f"- {err}")
                 elif parsed_orders:
                     st.success(f"✅ 数据校验通过！共识别出 {len(parsed_orders)} 个有效订单。预览如下：")
+                    # 检查整个表格里有没有任何一笔单子缺货，如果有，在顶部弹个黄色小字提醒
+                    any_out_of_stock = any(po.get("is_out_of_stock", False) for po in parsed_orders)
+                    if any_out_of_stock:
+                        st.warning("⚠️ 提示：表格中包含部分【库存不足】的订单。系统已为您自动放行，导入后会进入【待发货】状态，您可以后续补货后再发货。")
+
                     preview_data = []
                     for po in parsed_orders:
                         wh_id_to_name = {w.id: w.name for w in all_warehouses}
                         items_str = ", ".join([f"{i['product_name']}-{i['variant']} ×{i['quantity']} (仓: {wh_id_to_name.get(i['warehouse_id'], '未分配')})" for i in po["items"]])
+                        
+                        # 根据后端带回来的缺货标记，换上高亮 Emoji
+                        status_emoji = "⚠️ " + po.get("stock_warning", "缺货") if po.get("is_out_of_stock", False) else "🟢 库存充足"
+
                         preview_data.append({
-                            "订单号": po["order_no"], "平台": po["platform"], "收款目标账户": po["target_account"], 
-                            "币种": po["currency"], "总数量": po["total_qty"], "原总价": po["gross_price"],
-                            "预估手续费": po["fee"], "实际净入账": po["net_price"], "商品明细": items_str
+                            "库存盘点": status_emoji,  # 👈 新增：让这一列显示在最前面
+                            "订单号": po["order_no"], 
+                            "平台": po["platform"], 
+                            "收款目标账户": po["target_account"], 
+                            "币种": po["currency"], 
+                            "总数量": po["total_qty"], 
+                            "原总价": po["gross_price"],
+                            "预估手续费": po["fee"], 
+                            "实际净入账": po["net_price"], 
+                            "商品明细": items_str
                         })
                         
-                    st.dataframe(pd.DataFrame(preview_data), width="stretch", column_config={"原总价": st.column_config.NumberColumn(format="%.2f"), "预估手续费": st.column_config.NumberColumn(format="%.2f"), "实际净入账": st.column_config.NumberColumn(format="%.2f")})
-                    
+                    # 调整 Streamlit 数据编辑器的列配置，让警告列非常显眼
+                    st.dataframe(
+                        pd.DataFrame(preview_data), 
+                        width="stretch", 
+                        hide_index=True,
+                        column_config={
+                            "库存盘点": st.column_config.TextColumn("📋 库存盘点", help="系统自动穿透数据库为您计算的实时仓库余量状态"),
+                            "原总价": st.column_config.NumberColumn(format="%.2f"), 
+                            "预估手续费": st.column_config.NumberColumn(format="%.2f"), 
+                            "实际净入账": st.column_config.NumberColumn(format="%.2f")
+                        }
+                    )
+
                     if st.button("🚀 确认无误，开始导入订单", type="primary"):
                         with st.spinner("正在逐个生成订单并入账..."):
                             count = service.batch_create_orders(parsed_orders)
