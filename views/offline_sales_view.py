@@ -18,21 +18,38 @@ else:
     fragment_decorator = st.experimental_fragment
 
 def get_warehouse_stock_map(db, warehouse_id):
-    """辅助函数：获取特定仓库下所有商品的现货库存字典"""
-    valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动"]
-    query = db.query(
-        InventoryLog.product_name, 
-        InventoryLog.variant, 
-        func.sum(InventoryLog.change_amount).label('total')
-    ).filter(InventoryLog.reason.in_(valid_reasons))
+    """辅助函数：获取特定仓库下所有商品的现货库存字典（采用木桶原理计算可组装整套数）"""
+    from services.inventory_service import InventoryService
+    from models import Product
+
+    # 1. 调用库存服务，获取所有仓库底层部件的物理库存字典
+    inv_service = InventoryService(db)
+    wh_details = inv_service.get_warehouse_inventory_details()
     
-    if warehouse_id is not None:
-        query = query.filter(InventoryLog.warehouse_id == warehouse_id)
-    else:
-        query = query.filter(InventoryLog.warehouse_id == None)
-        
-    res = query.group_by(InventoryLog.product_name, InventoryLog.variant).all()
-    return {f"{r.product_name}_{r.variant}": (r.total or 0) for r in res}
+    # 2. 获取当前指定仓库的库存数据
+    stock_in_wh = wh_details.get(warehouse_id, {}).get("stock", {})
+
+    # 3. 获取所有商品对部件的需求配比
+    products = db.query(Product).all()
+    req_map = {} 
+    for prod in products:
+        req_map[prod.name] = {}
+        for c in prod.colors:
+            req_map[prod.name][c.color_name] = {p.part_name: p.quantity for p in c.parts} if c.parts else {"整套": 1}
+    
+    # 4. 根据配比，计算可组装的整套数
+    result_map = {}
+    for prod_n, v_dict in stock_in_wh.items():
+        for var_n, pt_dict in v_dict.items():
+            reqs = req_map.get(prod_n, {}).get(var_n, {"整套": 1})
+            possible_sets = 0
+            if reqs:
+                # 木桶原理：找到所有必需部件中，库存满足配比的最小值
+                possible_sets = min((pt_dict.get(pt, 0) // req) for pt, req in reqs.items())
+            
+            result_map[f"{prod_n}_{var_n}"] = max(0, possible_sets)
+            
+    return result_map
 
 @fragment_decorator
 def render_pos_machine(db, template, all_cash_assets, image_lookup):

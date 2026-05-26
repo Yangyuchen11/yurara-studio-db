@@ -12,26 +12,37 @@ class OfflineSalesService:
     def __init__(self, db: Session):
         self.db = db
 
+    def _get_available_sets(self, warehouse_id, product_name, variant_name):
+        """内部工具：获取指定仓库下某款式的可组装整套数"""
+        from services.inventory_service import InventoryService
+        inv_service = InventoryService(self.db)
+        wh_details = inv_service.get_warehouse_inventory_details()
+        stock_in_wh = wh_details.get(warehouse_id, {}).get("stock", {})
+
+        pt_dict = stock_in_wh.get(product_name, {}).get(variant_name, {})
+
+        # 获取需求
+        prod = self.db.query(Product).filter(Product.name == product_name).first()
+        if not prod: return 0
+        target_c = next((c for c in prod.colors if c.color_name == variant_name), None)
+        if not target_c: return 0
+
+        reqs = {p.part_name: p.quantity for p in target_c.parts} if target_c.parts else {"整套": 1}
+
+        possible_sets = 0
+        if reqs:
+            possible_sets = min((pt_dict.get(pt, 0) // req) for pt, req in reqs.items())
+        return max(0, possible_sets)
+
     def _validate_template_stock(self, warehouse_id, items_data):
-        """核心校验引擎：检查分配的数量是否超过指定仓库的物理库存"""
-        valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动"]
+        """核心校验引擎：检查分配的数量是否超过指定仓库的物理库存 (按整套算)"""
         for item in items_data:
             qty = item['quantity']
             if qty > 0:
-                stock_query = self.db.query(func.sum(InventoryLog.change_amount)).filter(
-                    InventoryLog.product_name == item['product_name'],
-                    InventoryLog.variant == item['variant'],
-                    InventoryLog.reason.in_(valid_reasons)
-                )
-                if warehouse_id is not None:
-                    stock_query = stock_query.filter(InventoryLog.warehouse_id == warehouse_id)
-                else:
-                    stock_query = stock_query.filter(InventoryLog.warehouse_id == None)
-                    
-                current_stock = stock_query.scalar() or 0
+                current_stock = self._get_available_sets(warehouse_id, item['product_name'], item['variant'])
                 if qty > current_stock:
                     wh_name = self.db.query(Warehouse).filter(Warehouse.id == warehouse_id).first().name if warehouse_id else "未分配仓库"
-                    raise ValueError(f"库存不足：【{item['product_name']}-{item['variant']}】在【{wh_name}】仅有 {current_stock} 件，无法分配 {qty} 件！")
+                    raise ValueError(f"库存不足：【{item['product_name']}-{item['variant']}】在【{wh_name}】最多可组装 {current_stock} 套，无法分配 {qty} 套！")
 
     def get_all_templates(self):
         return self.db.query(OfflineTemplate).options(
@@ -133,20 +144,10 @@ class OfflineSalesService:
             if not tpl_item or tpl_item.remaining_quantity < item["qty"]:
                 raise ValueError(f"模板额度不足：{item['product_name']} 剩余 {tpl_item.remaining_quantity if tpl_item else 0}")
 
-            # 校验物理仓库库存
-            valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动"]
-            stock_query = self.db.query(func.sum(InventoryLog.change_amount)).filter(
-                InventoryLog.product_name == item["product_name"],
-                InventoryLog.variant == item["variant"],
-                InventoryLog.reason.in_(valid_reasons)
-            )
-            if tpl.warehouse_id:
-                stock_query = stock_query.filter(InventoryLog.warehouse_id == tpl.warehouse_id)
-            else:
-                stock_query = stock_query.filter(InventoryLog.warehouse_id == None)
-                
-            if (stock_query.scalar() or 0) < item["qty"]:
-                raise ValueError(f"仓库实物不足：{item['product_name']} 在选定仓库中已售罄")
+            # 校验物理仓库库存 (按整套算)
+            current_stock = self._get_available_sets(tpl.warehouse_id, item["product_name"], item["variant"])
+            if current_stock < item["qty"]:
+                raise ValueError(f"仓库实物不足：【{item['product_name']}】可组装整套数不足 (仅剩 {current_stock} 套)")
 
             total_amount += item["qty"] * item["unit_price"]
 
