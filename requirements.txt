@@ -7,3 +7,5 @@ discord.py
 python-dotenv
 openpyxl
 streamlit-cookies-controller
+reflex
+reflex-ag-grid

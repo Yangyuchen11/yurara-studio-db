@@ -1,30 +1,25 @@
-import streamlit as st
+# database.py
+import os
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
-# 1. 获取连接字符串
-# 注意：如果是本地运行 Bot，st.secrets 可能无法加载，
-# 你可能需要改为从 os.getenv("DATABASE_URL") 读取，并配合 python-dotenv
-try:
-    SQLALCHEMY_DATABASE_URL = st.secrets["database"]["DATABASE_URL"]
-except:
-    # 如果找不到 secrets (例如在本地运行脚本时)，尝试从环境变量读取
-    import os
-    from dotenv import load_dotenv
-    load_dotenv()
-    SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "")
+# 加载 .env 文件
+load_dotenv()
 
-# 2. 修正协议头 (Supabase 兼容性处理)
+# 获取数据库连接
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
+if not SQLALCHEMY_DATABASE_URL:
+    raise ValueError("未找到 DATABASE_URL 环境变量！")
+
+# 修正 Supabase 协议头
 if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
     SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# 3. 创建引擎
-# 建议加上 pool_pre_ping=True 以防止断连
+# 创建引擎 (保持你的 pool_pre_ping 优化)
 engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 Base = declarative_base()
 
 def get_db():
