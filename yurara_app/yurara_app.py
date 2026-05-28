@@ -6,8 +6,12 @@ Reflex 应用主入口。
 import reflex as rx
 from .pages.login import login_page
 from .pages.product import product_page
+from .pages.finance import finance_page
+from .pages.balance import balance_page
 from .state.auth_state import AuthState
 from .state.app_state import AppState
+from .state.finance_state import FinanceState
+from .state.balance_state import BalanceState
 
 
 # ---- 占位页面（后续逐步替换） ----
@@ -36,8 +40,6 @@ def placeholder_page(title: str, icon: str = "construction") -> rx.Component:
     )
 
 
-def finance_page(): return placeholder_page("财务流水录入", "circle-dollar-sign")
-def balance_page(): return placeholder_page("公司账面概览", "clipboard-list")
 def report_page(): return placeholder_page("财务报表与分析", "chart-pie")
 def cost_page(): return placeholder_page("商品成本核算", "calculator")
 def sales_order_page(): return placeholder_page("线上销售管理", "shopping-cart")
@@ -153,8 +155,8 @@ app.add_page(
 )
 
 # 占位页面（迁移进行中）
-app.add_page(finance_page, route="/finance", title="财务流水 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate])
-app.add_page(balance_page, route="/balance", title="账面概览 | Yurara Studio", on_load=[AuthState.check_auth])
+app.add_page(finance_page, route="/finance", title="财务流水 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, FinanceState.load_finance_page])
+app.add_page(balance_page, route="/balance", title="账面概览 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, BalanceState.load_balance_data])
 app.add_page(report_page, route="/report", title="财务报表 | Yurara Studio", on_load=[AuthState.check_auth])
 app.add_page(cost_page, route="/cost", title="成本核算 | Yurara Studio", on_load=[AuthState.check_auth])
 app.add_page(sales_order_page, route="/sales-order", title="线上销售 | Yurara Studio", on_load=[AuthState.check_auth])
