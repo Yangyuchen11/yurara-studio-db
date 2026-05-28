@@ -2,84 +2,76 @@
 """
 商品管理 State。
 负责：商品列表、创建/编辑/删除商品、颜色规格、定价矩阵、款式图片。
+
+Reflex 0.9.x 兼容：使用 Pydantic BaseModel 作为状态的数据类型，以提供强类型支持，
+从而允许 rx.foreach 成功编译嵌套的列表与属性访问。
 """
 import base64
 import reflex as rx
-from typing import Optional
+from pydantic import BaseModel
 from ..state.app_state import AppState
 from constants import PLATFORM_CODES
-
-
-# ---- 数据传输对象（用于 rx.State 序列化）----
-
-class PriceEntry(rx.Base):
-    platform: str = ""
-    platform_label: str = ""
-    price: float = 0.0
-
-
-class ColorEntry(rx.Base):
-    id: int = 0
-    name: str = ""
-    quantity: int = 0
-    image_data: str = ""  # base64 data URL，空字符串表示无图
-    prices: list[PriceEntry] = []
-
-
-class PartEntry(rx.Base):
-    part_name: str = ""
-    quantity: int = 1
-
-
-class ProductEntry(rx.Base):
-    id: int = 0
-    name: str = ""
-    platform: str = ""
-    total_quantity: int = 0
-    is_completed: bool = False
-    colors: list[ColorEntry] = []
-
-
-# ---- 新建/编辑表单用的临时行数据 ----
-
-class ColorRow(rx.Base):
-    """用于新建/编辑表单中的颜色规格行。"""
-    key: str = ""   # 前端唯一 key，用 uuid 或 index
-    name: str = ""
-    quantity: int = 0
-    prices: dict[str, float] = {}  # {platform_key: price}
-    image_data: str = ""
-
-
-class PartRow(rx.Base):
-    key: str = ""
-    part_name: str = ""
-    quantity: int = 1
-
 
 PLATFORMS = list(PLATFORM_CODES.keys())
 PLATFORM_OPTIONS = [{"key": k, "label": v} for k, v in PLATFORM_CODES.items()]
 PLATFORM_LAUNCH_OPTIONS = ["微店", "Booth", "Instagram", "日本线下", "中国线下", "其他"]
 
+# ===================== Pydantic 强类型声明 =====================
+
+class ColorRow(BaseModel):
+    key: str = ""
+    name: str = ""
+    quantity: int = 0
+    image_data: str = ""
+    price_weidian: float = 0.0
+    price_booth: float = 0.0
+    price_offline_cn: float = 0.0
+    price_offline_jp: float = 0.0
+    price_instagram: float = 0.0
+    price_other: float = 0.0
+    price_other_jpy: float = 0.0
+
+class PartRow(BaseModel):
+    key: str = ""
+    part_name: str = ""
+    quantity: int = 1
+
+class ProductItem(BaseModel):
+    id: int = 0
+    name: str = ""
+    platform: str = ""
+    total_quantity: int = 0
+    is_completed: bool = False
+    color_summary: str = ""
+    color_rows: list[ColorRow] = []
+
+# ---- 空行模板 ----
+def _new_color_row(idx: int) -> ColorRow:
+    prices = {f"price_{k}": 0.0 for k in PLATFORMS}
+    return ColorRow(key=f"row_{idx}", name="", quantity=0, image_data="", **prices)
+
+def _new_part_row(idx: int) -> PartRow:
+    return PartRow(key=f"part_{idx}", part_name="", quantity=1)
+
 
 class ProductState(AppState):
     """商品管理页状态。"""
 
-    # --- 商品列表 ---
-    products: list[ProductEntry] = []
+    # --- 商品列表（list of ProductItem） ---
+    products: list[ProductItem] = []
     is_loading: bool = False
 
     # --- 当前激活的 Tab ---
-    active_tab: str = "list"  # "list" | "create" | "edit"
+    active_tab: str = "list"
 
-    # === 新建表单状态 ===
+    # === 新建表单 ===
     create_name: str = ""
     create_platform: str = "微店"
     create_color_rows: list[ColorRow] = []
     create_part_rows: list[PartRow] = []
     create_error: str = ""
 
-    # === 编辑表单状态 ===
+    # === 编辑表单 ===
     edit_product_id: int = 0
     edit_name: str = ""
     edit_platform: str = "微店"
@@ -87,18 +79,15 @@ class ProductState(AppState):
     edit_part_rows: list[PartRow] = []
     edit_error: str = ""
 
-    # === 删除确认 ===
-    delete_confirm_id: int = 0
-
-    # ===================== 属性计算 =====================
-
-    @rx.var
-    def platform_codes(self) -> list[dict]:
-        return PLATFORM_OPTIONS
+    # ===================== 计算属性 =====================
 
     @rx.var
     def platform_launch_options(self) -> list[str]:
         return PLATFORM_LAUNCH_OPTIONS
+
+    @rx.var
+    def platform_keys(self) -> list[str]:
+        return PLATFORMS
 
     @rx.var
     def has_products(self) -> bool:
@@ -108,7 +97,6 @@ class ProductState(AppState):
 
     @rx.event
     def load_products(self):
-        """从数据库加载所有商品。"""
         self.is_loading = True
         yield
         db = self.get_db()
@@ -118,35 +106,49 @@ class ProductState(AppState):
             prods = service.get_all_products()
             result = []
             for p in prods:
-                colors = []
+                # 构建展平的颜色行（用于列表展示的定价表格）
+                color_rows = []
+                color_names = []
                 for c in p.colors:
-                    prices = []
-                    for pf_key, pf_label in PLATFORM_CODES.items():
-                        price_val = 0.0
-                        for pr in c.prices:
-                            if pr.platform == pf_key:
-                                price_val = pr.price
-                                break
-                        prices.append(PriceEntry(
-                            platform=pf_key,
-                            platform_label=pf_label,
-                            price=price_val,
-                        ))
-                    colors.append(ColorEntry(
-                        id=c.id,
-                        name=c.color_name,
-                        quantity=c.quantity,
-                        image_data=getattr(c, "image_data", "") or "",
-                        prices=prices,
-                    ))
-                result.append(ProductEntry(
-                    id=p.id,
-                    name=p.name,
-                    platform=p.target_platform or "",
-                    total_quantity=p.total_quantity or 0,
-                    is_completed=p.is_production_completed or False,
-                    colors=colors,
-                ))
+                    color_names.append(c.color_name)
+                    prices = {
+                        "price_weidian": 0.0,
+                        "price_booth": 0.0,
+                        "price_offline_cn": 0.0,
+                        "price_offline_jp": 0.0,
+                        "price_instagram": 0.0,
+                        "price_other": 0.0,
+                        "price_other_jpy": 0.0,
+                    }
+                    for pr in c.prices:
+                        field_key = f"price_{pr.platform}"
+                        if field_key in prices:
+                            prices[field_key] = pr.price
+                    
+                    color_rows.append(
+                        ColorRow(
+                            key=f"row_{len(color_rows)}",
+                            name=c.color_name,
+                            quantity=c.quantity,
+                            image_data=getattr(c, "image_data", "") or "",
+                            **prices
+                        )
+                    )
+
+                result.append(
+                    ProductItem(
+                        id=p.id,
+                        name=p.name,
+                        platform=p.target_platform or "",
+                        total_quantity=p.total_quantity or 0,
+                        is_completed=p.is_production_completed or False,
+                        # 颜色名称摘要字符串
+                        color_summary="规格: " + "、".join(color_names) if color_names else "暂无规格",
+                        # 展平的颜色行，供产品卡片列表中的定价表使用
+                        color_rows=color_rows,
+                    )
+                )
+
             self.products = result
         except Exception as e:
             print(f"[ProductState] load_products error: {e}")
@@ -158,18 +160,10 @@ class ProductState(AppState):
 
     @rx.event
     def init_create_form(self):
-        """初始化新建表单（重置状态）。"""
         self.create_name = ""
         self.create_platform = "微店"
-        self.create_color_rows = [
-            ColorRow(
-                key="row_0",
-                name="",
-                quantity=0,
-                prices={k: 0.0 for k in PLATFORMS},
-            )
-        ]
-        self.create_part_rows = [PartRow(key="part_0", part_name="", quantity=1)]
+        self.create_color_rows = [_new_color_row(0)]
+        self.create_part_rows = [_new_part_row(0)]
         self.create_error = ""
         self.active_tab = "create"
 
@@ -183,61 +177,59 @@ class ProductState(AppState):
 
     @rx.event
     def add_create_color_row(self):
-        idx = len(self.create_color_rows)
-        self.create_color_rows.append(
-            ColorRow(
-                key=f"row_{idx}",
-                name="",
-                quantity=0,
-                prices={k: 0.0 for k in PLATFORMS},
-            )
-        )
+        self.create_color_rows.append(_new_color_row(len(self.create_color_rows)))
 
     @rx.event
     def remove_create_color_row(self, key: str):
         self.create_color_rows = [r for r in self.create_color_rows if r.key != key]
 
     @rx.event
-    def update_create_color_field(self, key: str, field: str, value):
-        """更新颜色行的某个字段。"""
+    def update_create_color_field(self, key: str, field: str, value: str):
         for row in self.create_color_rows:
             if row.key == key:
                 if field == "name":
-                    row.name = str(value)
+                    row.name = value
                 elif field == "quantity":
-                    row.quantity = int(value or 0)
+                    try:
+                        row.quantity = int(value)
+                    except ValueError:
+                        row.quantity = 0
                 elif field.startswith("price_"):
-                    pf_key = field[6:]  # 去掉 "price_" 前缀
-                    row.prices[pf_key] = float(value or 0)
+                    try:
+                        setattr(row, field, float(value))
+                    except ValueError:
+                        setattr(row, field, 0.0)
                 break
+        self.create_color_rows = list(self.create_color_rows)
 
     @rx.event
     def add_create_part_row(self):
-        idx = len(self.create_part_rows)
-        self.create_part_rows.append(PartRow(key=f"part_{idx}", part_name="", quantity=1))
+        self.create_part_rows.append(_new_part_row(len(self.create_part_rows)))
 
     @rx.event
     def remove_create_part_row(self, key: str):
         self.create_part_rows = [r for r in self.create_part_rows if r.key != key]
 
     @rx.event
-    def update_create_part_field(self, key: str, field: str, value):
+    def update_create_part_field(self, key: str, field: str, value: str):
         for row in self.create_part_rows:
             if row.key == key:
                 if field == "part_name":
-                    row.part_name = str(value)
+                    row.part_name = value
                 elif field == "quantity":
-                    row.quantity = int(value or 1)
+                    try:
+                        row.quantity = int(value)
+                    except ValueError:
+                        row.quantity = 1
                 break
+        self.create_part_rows = list(self.create_part_rows)
 
     @rx.event
     async def upload_create_color_image(self, key: str, files: list[rx.UploadFile]):
-        """上传颜色缩略图并转为 base64 存储。"""
         if not files:
             return
         file = files[0]
         data = await file.read()
-        # 压缩图片至 100x100
         try:
             from PIL import Image
             from io import BytesIO
@@ -256,11 +248,10 @@ class ProductState(AppState):
             if row.key == key:
                 row.image_data = data_url
                 break
+        self.create_color_rows = list(self.create_color_rows)
 
     @rx.event
     def save_create_product(self):
-        """提交新建商品表单。"""
-        # 验证
         if not self.create_name.strip():
             self.create_error = "产品名称不能为空"
             return
@@ -278,14 +269,14 @@ class ProductState(AppState):
 
             colors_with_prices = []
             for row in valid_colors:
+                prices = {k: getattr(row, f"price_{k}", 0.0) for k in PLATFORMS}
                 colors_with_prices.append({
                     "name": row.name.strip(),
                     "qty": row.quantity,
-                    "prices": dict(row.prices),
+                    "prices": prices,
                     "image_data": row.image_data or None,
                 })
 
-            # 部件（所有颜色共用）
             valid_parts = [r for r in self.create_part_rows if r.part_name.strip()]
             all_color_names = [r.name.strip() for r in valid_colors]
             parts_rows = []
@@ -314,8 +305,6 @@ class ProductState(AppState):
         finally:
             db.close()
 
-        # 成功：重置表单并刷新列表
-        self.init_create_form()
         self.active_tab = "list"
         yield ProductState.load_products()
 
@@ -323,7 +312,6 @@ class ProductState(AppState):
 
     @rx.event
     def load_edit_product(self, product_id: int):
-        """加载指定商品进入编辑表单。"""
         db = self.get_db()
         try:
             from services.product_service import ProductService
@@ -338,30 +326,33 @@ class ProductState(AppState):
 
             color_rows = []
             for i, c in enumerate(p.colors):
-                prices = {k: 0.0 for k in PLATFORMS}
+                prices = {f"price_{k}": 0.0 for k in PLATFORMS}
                 for pr in c.prices:
-                    if pr.platform in prices:
-                        prices[pr.platform] = pr.price
-                color_rows.append(ColorRow(
+                    if pr.platform in PLATFORMS:
+                        prices[f"price_{pr.platform}"] = pr.price
+                
+                row = ColorRow(
                     key=f"edit_row_{i}",
                     name=c.color_name,
                     quantity=c.quantity,
-                    prices=prices,
                     image_data=getattr(c, "image_data", "") or "",
-                ))
+                    **prices
+                )
+                color_rows.append(row)
             self.edit_color_rows = color_rows
 
-            # 部件（取第一个颜色的部件列表作为模板）
             part_rows = []
             if p.colors and p.colors[0].parts:
                 for i, pt in enumerate(p.colors[0].parts):
-                    part_rows.append(PartRow(
-                        key=f"edit_part_{i}",
-                        part_name=pt.part_name,
-                        quantity=pt.quantity,
-                    ))
+                    part_rows.append(
+                        PartRow(
+                            key=f"edit_part_{i}",
+                            part_name=pt.part_name,
+                            quantity=pt.quantity,
+                        )
+                    )
             if not part_rows:
-                part_rows = [PartRow(key="edit_part_0", part_name="", quantity=1)]
+                part_rows = [_new_part_row(0)]
             self.edit_part_rows = part_rows
             self.edit_error = ""
             self.active_tab = "edit"
@@ -378,36 +369,33 @@ class ProductState(AppState):
 
     @rx.event
     def add_edit_color_row(self):
-        idx = len(self.edit_color_rows)
-        self.edit_color_rows.append(
-            ColorRow(
-                key=f"edit_row_{idx}",
-                name="",
-                quantity=0,
-                prices={k: 0.0 for k in PLATFORMS},
-            )
-        )
+        self.edit_color_rows.append(_new_color_row(len(self.edit_color_rows)))
 
     @rx.event
     def remove_edit_color_row(self, key: str):
         self.edit_color_rows = [r for r in self.edit_color_rows if r.key != key]
 
     @rx.event
-    def update_edit_color_field(self, key: str, field: str, value):
+    def update_edit_color_field(self, key: str, field: str, value: str):
         for row in self.edit_color_rows:
             if row.key == key:
                 if field == "name":
-                    row.name = str(value)
+                    row.name = value
                 elif field == "quantity":
-                    row.quantity = int(value or 0)
+                    try:
+                        row.quantity = int(value)
+                    except ValueError:
+                        row.quantity = 0
                 elif field.startswith("price_"):
-                    pf_key = field[6:]
-                    row.prices[pf_key] = float(value or 0)
+                    try:
+                        setattr(row, field, float(value))
+                    except ValueError:
+                        setattr(row, field, 0.0)
                 break
+        self.edit_color_rows = list(self.edit_color_rows)
 
     @rx.event
     def save_edit_product(self):
-        """提交编辑商品。"""
         if not self.edit_name.strip():
             self.edit_error = "产品名称不能为空"
             return
@@ -423,12 +411,11 @@ class ProductState(AppState):
             import pandas as pd
             service = ProductService(db)
 
-            import pandas as pd
             color_rows_data = []
             for row in valid_colors:
                 r = {"颜色名称": row.name.strip(), "库存/预计数量": row.quantity}
                 for pf_key in PLATFORMS:
-                    r[pf_key] = row.prices.get(pf_key, 0.0)
+                    r[pf_key] = getattr(row, f"price_{pf_key}", 0.0)
                 color_rows_data.append(r)
             color_df = pd.DataFrame(color_rows_data)
 

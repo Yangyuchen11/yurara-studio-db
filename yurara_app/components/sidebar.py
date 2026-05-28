@@ -12,31 +12,31 @@ NAV_ITEMS = [
     {
         "group": "财务管理",
         "items": [
-            {"label": "财务流水录入", "icon": "circle-dollar-sign", "href": "/finance"},
-            {"label": "公司账面概览", "icon": "clipboard-list", "href": "/balance"},
-            {"label": "财务报表与分析", "icon": "chart-pie", "href": "/report"},
+            {"label": "财务流水录入", "icon": "circle_dollar_sign", "href": "/finance"},
+            {"label": "公司账面概览", "icon": "clipboard_list", "href": "/balance"},
+            {"label": "财务报表与分析", "icon": "chart_pie", "href": "/report"},
         ]
     },
     {
         "group": "商品管理",
         "items": [
-            {"label": "商品管理", "icon": "package-heart", "href": "/product"},
+            {"label": "商品管理", "icon": "package", "href": "/product"},
             {"label": "商品成本核算", "icon": "calculator", "href": "/cost"},
         ]
     },
     {
         "group": "销售管理",
         "items": [
-            {"label": "线上销售管理", "icon": "shopping-cart", "href": "/sales-order"},
-            {"label": "预售销售管理", "icon": "shopping-basket", "href": "/presale"},
+            {"label": "线上销售管理", "icon": "shopping_cart", "href": "/sales-order"},
+            {"label": "预售销售管理", "icon": "shopping_basket", "href": "/presale"},
             {"label": "线下销售管理", "icon": "store", "href": "/offline-sales"},
-            {"label": "销售额一览", "icon": "trending-up", "href": "/sales"},
+            {"label": "销售额一览", "icon": "trending_up", "href": "/sales"},
         ]
     },
     {
         "group": "仓储资产",
         "items": [
-            {"label": "仓库库存管理", "icon": "arrow-left-right", "href": "/inventory"},
+            {"label": "仓库库存管理", "icon": "arrow_left_right", "href": "/inventory"},
             {"label": "固定资产管理", "icon": "camera", "href": "/asset"},
             {"label": "其他资产管理", "icon": "box", "href": "/consumable"},
         ]
@@ -82,7 +82,7 @@ def exchange_rate_widget() -> rx.Component:
     """汇率设置小组件。"""
     return rx.vstack(
         rx.hstack(
-            rx.icon("refresh-cw", size=13),
+            rx.icon("refresh_cw", size=13),
             rx.text("全局汇率", size="1", weight="bold"),
             spacing="1",
             color=rx.color("slate", 10),
@@ -94,7 +94,7 @@ def exchange_rate_widget() -> rx.Component:
                 type="number",
                 size="1",
                 width="70px",
-                on_blur=lambda v: AppState.set_exchange_rate(float(v)),
+                on_blur=AppState.set_exchange_rate,
             ),
             rx.text("CNY", size="1", color=rx.color("slate", 10)),
             spacing="1",
@@ -178,7 +178,7 @@ def sidebar() -> rx.Component:
             rx.spacer(),
             rx.tooltip(
                 rx.icon_button(
-                    rx.icon("log-out", size=14),
+                    rx.icon("log_out", size=14),
                     on_click=AuthState.logout,
                     variant="ghost",
                     size="1",
@@ -199,7 +199,7 @@ def sidebar() -> rx.Component:
             AppState.test_mode,
             rx.callout(
                 "测试模式已开启，操作不影响线上数据",
-                icon="triangle-alert",
+                icon="triangle_alert",
                 color_scheme="orange",
                 size="1",
                 margin="0.5rem",

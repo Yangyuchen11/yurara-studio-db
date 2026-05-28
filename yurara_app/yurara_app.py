@@ -33,7 +33,6 @@ def placeholder_page(title: str, icon: str = "construction") -> rx.Component:
             padding="4rem",
         ),
         title=title,
-        on_load=[AuthState.check_auth, AppState.load_exchange_rate],
     )
 
 
@@ -135,13 +134,6 @@ html {
 # ---- App 定义 ----
 
 app = rx.App(
-    theme=rx.theme(
-        appearance="dark",
-        accent_color="violet",
-        gray_color="slate",
-        radius="medium",
-        scaling="95%",
-    ),
     style={
         "font_family": "Inter, -apple-system, sans-serif",
     },
@@ -174,7 +166,12 @@ app.add_page(asset_page, route="/asset", title="固定资产 | Yurara Studio", o
 app.add_page(consumable_page, route="/consumable", title="其他资产 | Yurara Studio", on_load=[AuthState.check_auth])
 
 # 默认根路由：跳转到财务（需登录）
-def index_page():
-    return rx.redirect("/finance")
+def index_page() -> rx.Component:
+    return rx.center(
+        rx.spinner(size="3"),
+        padding="8rem",
+        width="100%",
+        height="100vh",
+    )
 
-app.add_page(index_page, route="/")
+app.add_page(index_page, route="/", on_load=rx.redirect("/finance"))

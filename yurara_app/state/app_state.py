@@ -76,8 +76,12 @@ class AppState(rx.State):
     # ===================== 事件处理器 =====================
 
     @rx.event
-    def set_exchange_rate(self, rate: float):
+    def set_exchange_rate(self, rate_val: str):
         """更新全局汇率并写入数据库。"""
+        try:
+            rate = float(rate_val)
+        except ValueError:
+            return
         if rate < 0.01:
             rate = 0.01
         self.exchange_rate_100 = rate
