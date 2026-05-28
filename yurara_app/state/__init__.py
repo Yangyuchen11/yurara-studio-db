@@ -4,3 +4,6 @@ from .auth_state import AuthState
 from .product_state import ProductState
 from .balance_state import BalanceState
 from .finance_state import FinanceState
+from .asset_state import AssetState
+from .consumable_state import ConsumableState
+from .sales_state import SalesState

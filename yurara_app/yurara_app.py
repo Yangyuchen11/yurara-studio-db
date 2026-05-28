@@ -8,10 +8,16 @@ from .pages.login import login_page
 from .pages.product import product_page
 from .pages.finance import finance_page
 from .pages.balance import balance_page
+from .pages.asset import asset_page
+from .pages.consumable import consumable_page
+from .pages.sales import sales_page
 from .state.auth_state import AuthState
 from .state.app_state import AppState
 from .state.finance_state import FinanceState
 from .state.balance_state import BalanceState
+from .state.asset_state import AssetState
+from .state.consumable_state import ConsumableState
+from .state.sales_state import SalesState
 
 
 # ---- 占位页面（后续逐步替换） ----
@@ -45,10 +51,7 @@ def cost_page(): return placeholder_page("商品成本核算", "calculator")
 def sales_order_page(): return placeholder_page("线上销售管理", "shopping-cart")
 def presale_page(): return placeholder_page("预售销售管理", "shopping-basket")
 def offline_sales_page(): return placeholder_page("线下销售管理", "store")
-def sales_page(): return placeholder_page("销售额一览", "trending-up")
 def inventory_page(): return placeholder_page("仓库库存管理", "arrow-left-right")
-def asset_page(): return placeholder_page("固定资产管理", "camera")
-def consumable_page(): return placeholder_page("其他资产管理", "box")
 
 
 # ---- 全局样式 ----
@@ -162,10 +165,10 @@ app.add_page(cost_page, route="/cost", title="成本核算 | Yurara Studio", on_
 app.add_page(sales_order_page, route="/sales-order", title="线上销售 | Yurara Studio", on_load=[AuthState.check_auth])
 app.add_page(presale_page, route="/presale", title="预售管理 | Yurara Studio", on_load=[AuthState.check_auth])
 app.add_page(offline_sales_page, route="/offline-sales", title="线下销售 | Yurara Studio", on_load=[AuthState.check_auth])
-app.add_page(sales_page, route="/sales", title="销售额 | Yurara Studio", on_load=[AuthState.check_auth])
+app.add_page(sales_page, route="/sales", title="销售额 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, SalesState.load_sales_data])
 app.add_page(inventory_page, route="/inventory", title="库存管理 | Yurara Studio", on_load=[AuthState.check_auth])
-app.add_page(asset_page, route="/asset", title="固定资产 | Yurara Studio", on_load=[AuthState.check_auth])
-app.add_page(consumable_page, route="/consumable", title="其他资产 | Yurara Studio", on_load=[AuthState.check_auth])
+app.add_page(asset_page, route="/asset", title="固定资产 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, AssetState.load_asset_page])
+app.add_page(consumable_page, route="/consumable", title="其他资产 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, ConsumableState.load_consumable_page])
 
 # 默认根路由：跳转到财务（需登录）
 def index_page() -> rx.Component:
