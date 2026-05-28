@@ -1,9 +1,33 @@
-streamlit
-streamlit-option-menu
-pandas
+# ============================================================
+# Yurara Studio - Reflex 版本依赖
+# ============================================================
+
+# === 前端框架 ===
+reflex>=0.8.9
+
+# === 数据库 ===
 sqlalchemy
 psycopg2-binary
-discord.py
-python-dotenv
+alembic
+
+# === 数据处理 ===
+pandas
 openpyxl
+
+# === 图片处理 ===
+Pillow
+
+# === 工具 ===
+python-dotenv
+httpx
+
+# === Discord Bot (保持不变) ===
+discord.py
+
+# ============================================================
+# 以下为 Streamlit 版本依赖（并行运行期间保留）
+# 完全迁移到 Reflex 后可删除
+# ============================================================
+streamlit
+streamlit-option-menu
 streamlit-cookies-controller

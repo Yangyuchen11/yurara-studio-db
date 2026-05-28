@@ -1,3 +1,9 @@
+*.db
+.states
+*.py[cod]
+.web
+__pycache__/
+assets/external/
 .streamlit/secrets.toml
 .env
 services/__pycache__

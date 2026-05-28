@@ -1,9 +1,10 @@
 # cache_manager.py
-import streamlit as st
+# 在 Reflex 中，缓存失效通过 State 更新自动驱动
+# 此文件保留兼容接口，方便 Service 层直接复用时不报错
 
 def sync_all_caches():
     """
-    万能同步函数：一键清空全系统所有带 @st.cache_data 的缓存。
-    在任何 View 中，只要执行了增、删、改数据库的操作，在 st.rerun() 前调用此函数即可保证数据 100% 同步。
+    Reflex 版本中，此函数为空操作（no-op）。
+    Reflex 采用响应式状态，数据更新后 UI 自动同步，无需手动清缓存。
     """
-    st.cache_data.clear()
+    pass

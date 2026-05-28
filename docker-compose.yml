@@ -1,31 +1,61 @@
-version: '3.8' # 升级到推荐的 Compose 版本
+version: '3.8'
 
 services:
-  # 服务 1: Streamlit 前端
+  # ========================================
+  # 服务 1: Reflex 前端（新版）
+  # ========================================
   web:
     build: .
-    container_name: yurara-web
-    restart: always # 确保服务器重启或崩溃时自动拉起
+    container_name: yurara-web-reflex
+    restart: always
     ports:
-      - "8501:8501"
-    volumes:
-      - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro
+      - "8080:8080"  # Reflex 后端 + WebSocket
+      - "3000:3000"  # Reflex 前端（开发模式）
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - APP_CREDENTIALS=${APP_CREDENTIALS}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
     networks:
       - yurara-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  # 服务 2: Discord Bot
+  # ========================================
+  # 服务 2: Streamlit 旧版（过渡期并行）
+  # 完成迁移后删除此服务
+  # ========================================
+  # web-legacy:
+  #   build: .
+  #   container_name: yurara-web-streamlit
+  #   restart: always
+  #   ports:
+  #     - "8501:8501"
+  #   volumes:
+  #     - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro
+  #   command: ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+  #   networks:
+  #     - yurara-net
+
+  # ========================================
+  # 服务 3: Discord Bot
+  # ========================================
   bot:
     build: .
     container_name: yurara-bot
-    restart: always # 确保机器人 24 小时在线
+    restart: always
     command: python bot.py
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
     volumes:
-      - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro
       - ./.env:/app/.env:ro
     networks:
       - yurara-net
     healthcheck:
-      disable: true  # 关键修改：禁用 bot 容器的 Web 健康检查，防止被误判为卡死
+      disable: true
 
 networks:
   yurara-net:
