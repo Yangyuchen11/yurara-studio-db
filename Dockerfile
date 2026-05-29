@@ -74,4 +74,4 @@ EXPOSE 3000
 
 # 启动命令：Reflex 生产模式（前后端合并）
 # --backend-host 0.0.0.0 使容器可被外部访问
-CMD ["reflex", "run", "--env", "prod", "--backend-host", "0.0.0.0", "--backend-port", "8080"]
+CMD ["reflex", "run", "--env", "prod", "--backend-host", "0.0.0.0"]

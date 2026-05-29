@@ -35,8 +35,8 @@ services:
     command: python bot.py
     environment:
       - DATABASE_URL=${DATABASE_URL}
-    volumes:
-      - ./.env:/app/.env:ro
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - DISCORD_ALLOWED_CHANNEL_ID=${DISCORD_ALLOWED_CHANNEL_ID}
     networks:
       - yurara-net
     healthcheck:
