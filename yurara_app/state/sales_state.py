@@ -165,10 +165,10 @@ class SalesState(AppState):
             # 2. 算全局销售指标
             total_cny_val = df[df['currency'] == 'CNY']['amount'].sum()
             total_jpy_val = df[df['currency'] == 'JPY']['amount'].sum()
-            self.total_cny = float(total_cny_val)
-            self.total_jpy = float(total_jpy_val)
-            self.grand_total_cny = self.total_cny + (self.total_jpy * self.exchange_rate)
-            self.total_qty = float(df['qty'].sum())
+            self.total_cny = round(float(total_cny_val), 2)
+            self.total_jpy = round(float(total_jpy_val), 2)
+            self.grand_total_cny = round(float(self.total_cny + (self.total_jpy * self.exchange_rate)), 2)
+            self.total_qty = round(float(df['qty'].sum()), 2)
 
             # 3. 统计产品热卖排行榜
             df_prod_summary = SalesService.get_product_leaderboard(df, self.exchange_rate)
@@ -176,9 +176,9 @@ class SalesState(AppState):
             for _, row in df_prod_summary.iterrows():
                 leader_list.append(SalesLeaderboardRow(
                     product_name=str(row['product']),
-                    grand_total_cny=float(row['折合CNY总额']),
-                    total_cny=float(row.get('CNY总额', 0.0)),
-                    total_jpy=float(row.get('JPY总额', 0.0))
+                    grand_total_cny=round(float(row['折合CNY总额']), 2),
+                    total_cny=round(float(row.get('CNY总额', 0.0)), 2),
+                    total_jpy=round(float(row.get('JPY总额', 0.0)), 2)
                 ))
             self.leaderboard = leader_list
 
@@ -225,8 +225,8 @@ class SalesState(AppState):
             # 1. 销量/销售额折合/活跃平台数
             p_cny = df_p[df_p['currency'] == 'CNY']['amount'].sum()
             p_jpy = df_p[df_p['currency'] == 'JPY']['amount'].sum()
-            self.p_net_qty = float(df_p['qty'].sum())
-            self.p_cny_equiv = float(p_cny + (p_jpy * self.exchange_rate))
+            self.p_net_qty = round(float(df_p['qty'].sum()), 2)
+            self.p_cny_equiv = round(float(p_cny + (p_jpy * self.exchange_rate)), 2)
             self.p_active_platforms = int(df_p[df_p['qty'] != 0]['platform'].nunique())
 
             # 2. 款式-平台交叉透视数据构建 (Static Standardized Formatter)
@@ -332,9 +332,9 @@ class SalesState(AppState):
                     date=str(row['date']),
                     type_label=lbl,
                     variant=str(row.get('variant', '')),
-                    qty=float(row.get('qty', 0.0)),
+                    qty=round(float(row.get('qty', 0.0)), 2),
                     platform=PLATFORM_CODES.get(row.get('platform', ''), row.get('platform', '')),
-                    amount=float(row.get('amount', 0.0)),
+                    amount=round(float(row.get('amount', 0.0)), 2),
                     currency=str(row.get('currency', 'CNY'))
                 ))
             self.logs = log_items

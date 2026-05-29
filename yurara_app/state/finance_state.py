@@ -325,8 +325,8 @@ class FinanceState(AppState):
         new_item = TempBatchItem(
             key=f"item_{len(self.batch_items)}",
             name=self.temp_name.strip(),
-            amount=self.temp_amount,
-            qty=self.temp_qty,
+            amount=round(float(self.temp_amount), 2),
+            qty=round(float(self.temp_qty), 2),
             desc=self.temp_desc.strip(),
             url=self.temp_url.strip()
         )
@@ -439,20 +439,20 @@ class FinanceState(AppState):
                         date=row["日期"].strftime("%Y-%m-%d"),
                         currency=row["币种"],
                         type=row["收支"],
-                        amount=float(row["金额"]),
+                        amount=round(float(row["金额"]), 2),
                         category=row["分类"],
                         desc=row["备注"],
                         url=row["网址"],
-                        cny_bal=float(row["当前CNY余额"]),
-                        jpy_bal=float(row["当前JPY余额"])
+                        cny_bal=round(float(row["当前CNY余额"]), 2),
+                        jpy_bal=round(float(row["当前JPY余额"]), 2)
                     )
                 )
             self.records = processed_records
             
             # 2. 当前总额指标
             cny_bal, jpy_bal = FinanceService.get_current_balances(db)
-            self.cur_cny = cny_bal
-            self.cur_jpy = jpy_bal
+            self.cur_cny = round(float(cny_bal), 2)
+            self.cur_jpy = round(float(jpy_bal), 2)
             
             # 3. 加载缓存的下拉选项
             # A. 现金账户

@@ -123,7 +123,7 @@ class ProductState(AppState):
                     for pr in c.prices:
                         field_key = f"price_{pr.platform}"
                         if field_key in prices:
-                            prices[field_key] = pr.price
+                            prices[field_key] = round(float(pr.price), 2)
                     
                     color_rows.append(
                         ColorRow(
@@ -329,7 +329,7 @@ class ProductState(AppState):
                 prices = {f"price_{k}": 0.0 for k in PLATFORMS}
                 for pr in c.prices:
                     if pr.platform in PLATFORMS:
-                        prices[f"price_{pr.platform}"] = pr.price
+                        prices[f"price_{pr.platform}"] = round(float(pr.price), 2)
                 
                 row = ColorRow(
                     key=f"edit_row_{i}",

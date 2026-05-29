@@ -155,19 +155,19 @@ class ConsumableState(AppState):
                     name=i.name,
                     category=i.category or "",
                     currency=curr,
-                    unit_price=unit_price,
-                    remaining_qty=qty,
-                    remaining_cny=show_cny,
-                    remaining_jpy=show_jpy,
+                    unit_price=round(float(unit_price), 2),
+                    remaining_qty=round(float(qty), 2),
+                    remaining_cny=round(float(show_cny), 2),
+                    remaining_jpy=round(float(show_jpy), 2),
                     shop_name=i.shop_name or "",
                     url=getattr(i, 'url', '') or "",
                     remarks=i.remarks or ""
                 ))
             
             self.items = formatted_items
-            self.total_cny = t_cny
-            self.total_jpy = t_jpy
-            self.grand_total_cny = t_cny + (t_jpy * self.exchange_rate)
+            self.total_cny = round(float(t_cny), 2)
+            self.total_jpy = round(float(t_jpy), 2)
+            self.grand_total_cny = round(float(t_cny + (t_jpy * self.exchange_rate)), 2)
 
             # 2. 快速操作默认值
             active_list = service.get_active_consumables()
@@ -185,7 +185,7 @@ class ConsumableState(AppState):
                 id=l.id,
                 date=str(l.date),
                 item_name=l.item_name,
-                change_qty=l.change_qty,
+                change_qty=round(float(l.change_qty), 2),
                 note=l.note or ""
             ) for l in raw_logs]
 
@@ -347,8 +347,8 @@ class ConsumableState(AppState):
                     "name": self.edit_name.strip(),
                     "category": self.edit_category.strip(),
                     "currency": self.edit_currency,
-                    "unit_price": self.edit_unit_price,
-                    "remaining_qty": self.edit_remaining_qty,
+                    "unit_price": round(float(self.edit_unit_price), 2),
+                    "remaining_qty": round(float(self.edit_remaining_qty), 2),
                     "shop_name": self.edit_shop_name.strip(),
                     "url": self.edit_url.strip(),
                     "remarks": self.edit_remarks.strip()

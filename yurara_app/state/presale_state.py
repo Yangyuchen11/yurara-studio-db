@@ -336,9 +336,9 @@ class PresaleState(AppState):
                     final_order_no=o.final_order_no or "-",
                     status=status_display,
                     items_summary=items_summary,
-                    deposit_amount=float(o.deposit_amount),
-                    final_amount=float(o.final_amount),
-                    refunded_amount=float(total_refunded),
+                    deposit_amount=round(float(o.deposit_amount), 2),
+                    final_amount=round(float(o.final_amount), 2),
+                    refunded_amount=round(float(total_refunded), 2),
                     discount_note=o.discount_note or "-",
                     currency=o.currency,
                     platform=o.platform,
@@ -909,12 +909,12 @@ class PresaleState(AppState):
                     "variant": i.variant,
                     "warehouse_name": wh_dict.get(i.warehouse_id, "未分配"),
                     "quantity": i.quantity,
-                    "subtotal": float(i.subtotal)
+                    "subtotal": round(float(i.subtotal), 2)
                 })
             self.detail_items = items_list
-            self.detail_deposit_amount = float(o.deposit_amount)
-            self.detail_final_amount = float(o.final_amount)
-            self.detail_total_amount = float(o.total_amount)
+            self.detail_deposit_amount = round(float(o.deposit_amount), 2)
+            self.detail_final_amount = round(float(o.final_amount), 2)
+            self.detail_total_amount = round(float(o.total_amount), 2)
         finally:
             db.close()
 
@@ -1032,7 +1032,7 @@ class PresaleState(AppState):
                     "id": r.id,
                     "refund_date": r.refund_date.strftime("%Y-%m-%d") if r.refund_date else "",
                     "refund_reason": r.refund_reason,
-                    "refund_amount": float(r.refund_amount),
+                    "refund_amount": round(float(r.refund_amount), 2),
                     "is_returned": r.is_returned,
                     "is_resend": getattr(r, "is_resend", False),
                     "is_editing": False

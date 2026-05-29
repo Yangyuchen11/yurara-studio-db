@@ -107,12 +107,12 @@ class AssetState(AppState):
                     id=a.id,
                     name=a.name,
                     currency=curr,
-                    unit_price=a.unit_price,
-                    quantity=a.quantity,
-                    remaining_qty=a.remaining_qty,
-                    total_price=total_origin,
-                    remaining_cny=show_cny,
-                    remaining_jpy=show_jpy,
+                    unit_price=round(float(a.unit_price), 2),
+                    quantity=round(float(a.quantity), 2),
+                    remaining_qty=round(float(a.remaining_qty), 2),
+                    total_price=round(float(total_origin), 2),
+                    remaining_cny=round(float(show_cny), 2),
+                    remaining_jpy=round(float(show_jpy), 2),
                     shop_name=a.shop_name or "",
                     url=getattr(a, 'url', '') or "",
                     remarks=a.remarks or ""
@@ -122,9 +122,9 @@ class AssetState(AppState):
             # 2. 计算大项指标
             if raw_assets:
                 v_total, v_remain, v_jpy_raw = AssetService.calculate_asset_totals(raw_assets, self.exchange_rate)
-                self.val_total = v_total
-                self.val_remain = v_remain
-                self.val_jpy_raw = v_jpy_raw
+                self.val_total = round(float(v_total), 2)
+                self.val_remain = round(float(v_remain), 2)
+                self.val_jpy_raw = round(float(v_jpy_raw), 2)
             else:
                 self.val_total = 0.0
                 self.val_remain = 0.0
@@ -133,12 +133,12 @@ class AssetState(AppState):
             # 3. 核销日志
             raw_logs = AssetService.get_asset_logs(db)
             self.logs = [AssetLogItem(
-                id=l.id,
-                date=str(l.date),
-                asset_name=l.asset_name,
-                decrease_qty=l.decrease_qty,
-                reason=l.reason or ""
-            ) for l in raw_logs]
+                    id=l.id,
+                    date=str(l.date),
+                    asset_name=l.asset_name,
+                    decrease_qty=round(float(l.decrease_qty), 2),
+                    reason=l.reason or ""
+                ) for l in raw_logs]
 
             # 4. 初始化核销表单选择默认值
             active_opts = self.active_assets_options

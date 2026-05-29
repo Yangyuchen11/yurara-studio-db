@@ -352,8 +352,8 @@ class SalesOrderState(AppState):
                     order_no=o.order_no,
                     status=status_display,
                     items_summary=items_summary,
-                    total_amount=float(o.total_amount),
-                    refunded_amount=float(total_refunded),
+                    total_amount=round(float(o.total_amount), 2),
+                    refunded_amount=round(float(total_refunded), 2),
                     currency=o.currency,
                     platform=o.platform,
                     created_date=o.created_date.strftime("%Y-%m-%d") if o.created_date else "",
@@ -640,9 +640,9 @@ class SalesOrderState(AppState):
                         "target_account": p["target_account"],
                         "currency": p["currency"],
                         "total_qty": p["total_qty"],
-                        "gross_price": float(p["gross_price"]),
-                        "fee": float(p["fee"]),
-                        "net_price": float(p["net_price"]),
+                        "gross_price": round(float(p["gross_price"]), 2),
+                        "fee": round(float(p["fee"]), 2),
+                        "net_price": round(float(p["net_price"]), 2),
                         "items_str": items_str,
                         "items": p["items"]
                     })
@@ -806,11 +806,11 @@ class SalesOrderState(AppState):
                     "variant": i.variant,
                     "warehouse_name": wh_dict.get(i.warehouse_id, "未分配"),
                     "quantity": i.quantity,
-                    "unit_price": float(i.unit_price),
-                    "subtotal": float(i.subtotal)
+                    "unit_price": round(float(i.unit_price), 2),
+                    "subtotal": round(float(i.subtotal), 2)
                 })
             self.detail_items = items_list
-            self.detail_total_amount = float(o.total_amount)
+            self.detail_total_amount = round(float(o.total_amount), 2)
         finally:
             db.close()
 
@@ -910,7 +910,7 @@ class SalesOrderState(AppState):
                     "id": r.id,
                     "refund_date": r.refund_date.strftime("%Y-%m-%d") if r.refund_date else "",
                     "refund_reason": r.refund_reason,
-                    "refund_amount": float(r.refund_amount),
+                    "refund_amount": round(float(r.refund_amount), 2),
                     "is_returned": r.is_returned,
                     "is_resend": getattr(r, "is_resend", False),
                     "is_editing": False

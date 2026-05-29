@@ -274,7 +274,7 @@ class OfflineSalesState(AppState):
                     id=item.id,
                     product_name=item.product_name,
                     variant=item.variant,
-                    preset_price=item.preset_price,
+                    preset_price=round(float(item.preset_price), 2),
                     remaining_quantity=item.remaining_quantity,
                     max_limit=max(0, possible_sets),
                     image_data=img_data
@@ -312,8 +312,8 @@ class OfflineSalesState(AppState):
                 order_no=o.order_no,
                 date=o.created_date.strftime("%Y-%m-%d") if o.created_date else "",
                 items_str=items_str,
-                original_amount=o.total_amount,
-                received_amount=o.total_amount - fee,
+                original_amount=round(float(o.total_amount), 2),
+                received_amount=round(float(o.total_amount - fee), 2),
                 notes=o.notes or ""
             ))
         self.pos_orders = orders_list
@@ -338,7 +338,7 @@ class OfflineSalesState(AppState):
                 self.cart.append(CartItemModel(
                     product_name=prod_name,
                     variant=variant,
-                    unit_price=price,
+                    unit_price=round(float(price), 2),
                     qty=1,
                     image_data=image_data
                 ))
@@ -556,7 +556,7 @@ class OfflineSalesState(AppState):
                     
             exist_map = {}
             if exist_items:
-                exist_map = {f"{i.product_name}_{i.variant}": (i.preset_price, i.remaining_quantity) for i in exist_items}
+                exist_map = {f"{i.product_name}_{i.variant}": (round(float(i.preset_price), 2), i.remaining_quantity) for i in exist_items}
                 
             assign_list = []
             for p in all_prods:
@@ -586,7 +586,7 @@ class OfflineSalesState(AppState):
                     assign_list.append({
                         "product_name": p.name,
                         "variant": c.color_name,
-                        "preset_price": price,
+                        "preset_price": round(float(price), 2),
                         "quantity": qty,
                         "max_stock": max_stock,
                         "is_selected": is_in,
