@@ -179,7 +179,6 @@ def index_page() -> rx.Component:
 app.add_page(index_page, route="/", on_load=rx.redirect("/finance"))
 
 # === 自定义 API：全量数据备份 ZIP 下载接口 ===
-@app._api.route("/backup", methods=["GET"])
 def download_backup(request):
     from yurara_app.state.app_state import get_cached_engine, TABLES_MAP
     from sqlalchemy.orm import sessionmaker
@@ -218,6 +217,8 @@ def download_backup(request):
         )
     finally:
         db.close()
+
+app._api.add_route("/backup", download_backup, methods=["GET"])
 
 
 # ==========================================
