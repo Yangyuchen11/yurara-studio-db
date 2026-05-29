@@ -246,3 +246,13 @@ def download_backup(request):
         )
     finally:
         db.close()
+
+
+# ==========================================
+# 自动数据库结构建立与迁移 (正式环境 / SQLite)
+# ==========================================
+try:
+    from database import Base, engine
+    Base.metadata.create_all(bind=engine)
+except Exception as e:
+    print(f"[Reflex App] Database auto-migration / init failed: {e}")
