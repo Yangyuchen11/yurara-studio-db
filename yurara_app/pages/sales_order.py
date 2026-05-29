@@ -377,6 +377,27 @@ def build_excel_import_form() -> rx.Component:
             on_drop=SalesOrderState.handle_excel_import(rx.upload_files(upload_id="excel_upload")),
             width="100%",
         ),
+        rx.cond(
+            rx.selected_files("excel_upload"),
+            rx.hstack(
+                rx.foreach(
+                    rx.selected_files("excel_upload"),
+                    lambda file: rx.badge(f"📁 {file}", color_scheme="violet", variant="soft")
+                ),
+                spacing="2",
+                flex_wrap="wrap",
+                width="100%",
+            )
+        ),
+        rx.button(
+            "🔍 上传并开始解析校验 Excel",
+            on_click=SalesOrderState.handle_excel_import(
+                rx.upload_files(upload_id="excel_upload")
+            ),
+            color_scheme="violet",
+            width="100%",
+            size="2",
+        ),
         
         # 错误反馈
         rx.cond(
@@ -816,18 +837,15 @@ def sales_order_page() -> rx.Component:
                     rx.tabs.trigger("➕ 创建新订单 (购物车模式)", value="manual"),
                     rx.tabs.trigger("📥 批量导入订单 (Excel)", value="bulk"),
                 ),
-                default_value="manual",
-                width="100%",
-            ),
-            
-            rx.card(
-                rx.tabs.root(
+                rx.card(
                     rx.tabs.content(build_manual_order_form(), value="manual"),
                     rx.tabs.content(build_excel_import_form(), value="bulk"),
-                    default_value="manual"
+                    width="100%",
+                    padding="1rem",
+                    margin_top="0.5rem",
                 ),
+                default_value="manual",
                 width="100%",
-                padding="1rem",
             ),
             
             rx.divider(),

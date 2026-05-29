@@ -521,6 +521,27 @@ def build_excel_presale_import() -> rx.Component:
             on_drop=PresaleState.handle_excel_import(rx.upload_files(upload_id="presale_upload")),
             width="100%",
         ),
+        rx.cond(
+            rx.selected_files("presale_upload"),
+            rx.hstack(
+                rx.foreach(
+                    rx.selected_files("presale_upload"),
+                    lambda file: rx.badge(f"📁 {file}", color_scheme="violet", variant="soft")
+                ),
+                spacing="2",
+                flex_wrap="wrap",
+                width="100%",
+            )
+        ),
+        rx.button(
+            "🔍 上传并开始解析校验 Excel",
+            on_click=PresaleState.handle_excel_import(
+                rx.upload_files(upload_id="presale_upload")
+            ),
+            color_scheme="violet",
+            width="100%",
+            size="2",
+        ),
         
         rx.cond(
             PresaleState.excel_import_errors,
@@ -953,18 +974,15 @@ def presale_page() -> rx.Component:
                     rx.tabs.trigger("➕ 创建预售单据 / 绑定尾款", value="create"),
                     rx.tabs.trigger("📥 批量导入预售 (Excel)", value="bulk"),
                 ),
-                default_value="create",
-                width="100%",
-            ),
-            
-            rx.card(
-                rx.tabs.root(
+                rx.card(
                     rx.tabs.content(build_presale_create_form(), value="create"),
                     rx.tabs.content(build_excel_presale_import(), value="bulk"),
-                    default_value="create"
+                    width="100%",
+                    padding="1rem",
+                    margin_top="0.5rem",
                 ),
+                default_value="create",
                 width="100%",
-                padding="1rem",
             ),
             
             rx.divider(),

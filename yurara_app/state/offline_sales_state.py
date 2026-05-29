@@ -195,18 +195,15 @@ class OfflineSalesState(AppState):
                 
             if self.selected_template_id:
                 self.load_template_orders(service)
+            
+            # 自动初始化加载可分配的商品大货列表，防止切换至模板配置Tab时内容为空
+            self.open_create_template()
         finally:
             db.close()
 
     @rx.event
     def select_tab(self, tab_name: str):
         self.active_tab = tab_name
-        db = self.get_db()
-        try:
-            service = OfflineSalesService(db)
-            self.load_templates_list(service)
-        finally:
-            db.close()
 
     @rx.event
     def select_template(self, tpl_id: int):
@@ -246,16 +243,19 @@ class OfflineSalesState(AppState):
         
         # 抓取仓库木桶原理真实大货可组装库存限额
         inv_service = InventoryService(service.db)
+        wh_details = inv_service.get_warehouse_inventory_details()
+        
+        # 缓存所有产品，以避免在循环中对每个模板项执行 N+1 数据库查询
+        prod_lookup = {p.name: p for p in all_prods}
         
         tpl_list = []
         for t in tpls:
-            wh_details = inv_service.get_warehouse_inventory_details()
             stock_in_wh = wh_details.get(t.warehouse_id, {}).get("stock", {})
             
             items_list = []
             for item in t.items:
-                # 获取可分配最大库存
-                prod_obj = service.db.query(Product).filter(Product.name == item.product_name).first()
+                # 从内存中快速检索产品，无需再次查询数据库
+                prod_obj = prod_lookup.get(item.product_name)
                 reqs = {"整套": 1}
                 if prod_obj:
                     color_obj = next((c for c in prod_obj.colors if c.color_name == item.variant), None)
@@ -489,6 +489,18 @@ class OfflineSalesState(AppState):
     def set_tpl_platform(self, val: str):
         self.tpl_platform = val
         self.load_assignable_stocks()
+
+    @rx.event
+    def change_template_mode(self, val: str | list[str]):
+        """处理新建/编辑模式切换"""
+        if isinstance(val, list):
+            val = val[0] if val else ""
+        if val == "create":
+            self.open_create_template()
+        else:
+            self.is_edit_mode = True
+            if self.templates:
+                self.open_edit_template(self.templates[0])
 
     @rx.event
     def open_create_template(self):

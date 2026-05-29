@@ -129,6 +129,102 @@ def test_mode_toggle() -> rx.Component:
     )
 
 
+def data_management_popover() -> rx.Component:
+    """全局数据备份与恢复、清空的弹出控制面板。"""
+    return rx.popover.root(
+        rx.popover.trigger(
+            rx.button(
+                rx.hstack(
+                    rx.icon("database", size=14),
+                    rx.text("数据管理与备份", size="1"),
+                    spacing="2",
+                    align="center",
+                ),
+                variant="soft",
+                color_scheme="violet",
+                width="100%",
+                cursor="pointer",
+            )
+        ),
+        rx.popover.content(
+            rx.vstack(
+                # === 备份区域 ===
+                rx.heading("💾 数据备份与恢复", size="2"),
+                rx.text("下载或导入本系统所有的业务数据。", size="1", color=rx.color("slate", 9)),
+                
+                rx.button(
+                    rx.icon("download", size=13),
+                    "下载全量备份 (ZIP)",
+                    on_click=AppState.download_backup_zip,
+                    color_scheme="green",
+                    width="100%",
+                    size="1",
+                ),
+                
+                rx.divider(margin_y="0.25rem"),
+                
+                # === 恢复区域 ===
+                rx.text("恢复/导入备份 ZIP:", size="1", weight="bold"),
+                rx.upload(
+                    rx.center(
+                        rx.vstack(
+                            rx.icon("cloud_upload", size=16, color=rx.color("slate", 9)),
+                            rx.text("拖拽 ZIP 文件至此或点击选择", size="1", color=rx.color("slate", 9)),
+                            spacing="1",
+                        )
+                    ),
+                    id="backup_upload",
+                    border=f"1px dashed {rx.color('slate', 5)}",
+                    padding="0.75rem",
+                    border_radius="6px",
+                    width="100%",
+                ),
+                
+                rx.button(
+                    "🔴 确认导入并覆盖",
+                    on_click=AppState.handle_backup_restore(
+                        rx.upload_files(upload_id="backup_upload")
+                    ),
+                    color_scheme="red",
+                    width="100%",
+                    size="1",
+                ),
+                
+                rx.divider(margin_y="0.25rem"),
+                
+                # === 危险操作：清空 ===
+                rx.heading("💣 危险：环境清空", size="2", color_scheme="red"),
+                rx.text(
+                    rx.fragment("⚠️ 此操作将彻底删除【", AppState.env_label, "】的所有业务数据且无法撤销！"),
+                    size="1",
+                    color=rx.color("red", 10),
+                ),
+                
+                rx.input(
+                    placeholder="请输入 DELETE 以确认",
+                    value=AppState.delete_confirm_code,
+                    on_change=AppState.set_delete_confirm_code,
+                    size="1",
+                    width="100%",
+                ),
+                
+                rx.button(
+                    "确认清空所有数据",
+                    on_click=AppState.clear_environment_data,
+                    disabled=AppState.delete_confirm_code != "DELETE",
+                    color_scheme="red",
+                    width="100%",
+                    size="1",
+                ),
+                
+                spacing="3",
+                width="200px",
+            ),
+            style={"maxWidth": "220px"},
+        ),
+    )
+
+
 def sidebar() -> rx.Component:
     """主侧边栏组件。"""
     return rx.box(
@@ -225,8 +321,10 @@ def sidebar() -> rx.Component:
         # === 底部工具区 ===
         rx.vstack(
             exchange_rate_widget(),
-            rx.box(height="0.5rem"),
+            rx.box(height="0.25rem"),
             test_mode_toggle(),
+            rx.box(height="0.25rem"),
+            data_management_popover(),
             spacing="2",
             padding="0.75rem",
             width="100%",

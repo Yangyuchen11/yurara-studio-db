@@ -47,6 +47,7 @@ class ConsumableService:
         """
         处理库存变动，并根据模式处理联动 (销售/成本)
         """
+        delta_qty = int(delta_qty)
         item = self.db.query(ConsumableItem).filter(ConsumableItem.name == item_name).with_for_update().first()
         if not item:
             raise ValueError("物品不存在")
@@ -136,17 +137,35 @@ class ConsumableService:
 
     # ================= 3. 批量更新 =================
     def update_items_batch(self, changes):
-        """处理 DataEditor 的批量修改"""
+        """处理 DataEditor / Dialog 的批量修改"""
         has_change = False
         for item_id, diff in changes.items():
             item = self.get_consumable_by_id(item_id)
             if item:
-                if "币种" in diff: item.currency = diff["币种"]; has_change = True
-                if "单价 (原币)" in diff: item.unit_price = float(diff["单价 (原币)"]); has_change = True
-                if "店铺" in diff: item.shop_name = diff["店铺"]; has_change = True
-                if "备注" in diff: item.remarks = diff["备注"]; has_change = True
-                if "剩余数量" in diff: item.remaining_qty = float(diff["剩余数量"]); has_change = True
-                if "相关链接" in diff: item.url = diff["相关链接"]; has_change = True
+                if "name" in diff:
+                    item.name = diff["name"]
+                    has_change = True
+                if "category" in diff:
+                    item.category = diff["category"]
+                    has_change = True
+                if "currency" in diff or "币种" in diff:
+                    item.currency = diff.get("currency", diff.get("币种"))
+                    has_change = True
+                if "unit_price" in diff or "单价 (原币)" in diff:
+                    item.unit_price = float(diff.get("unit_price", diff.get("单价 (原币)")))
+                    has_change = True
+                if "shop_name" in diff or "店铺" in diff:
+                    item.shop_name = diff.get("shop_name", diff.get("店铺"))
+                    has_change = True
+                if "remarks" in diff or "备注" in diff:
+                    item.remarks = diff.get("remarks", diff.get("备注"))
+                    has_change = True
+                if "remaining_qty" in diff or "剩余数量" in diff:
+                    item.remaining_qty = float(diff.get("remaining_qty", diff.get("剩余数量")))
+                    has_change = True
+                if "url" in diff or "相关链接" in diff:
+                    item.url = diff.get("url", diff.get("相关链接"))
+                    has_change = True
         
         if has_change:
             self.db.commit()

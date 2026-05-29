@@ -445,7 +445,7 @@ def template_config_tab() -> rx.Component:
                 rx.segmented_control.item("➕ 新建收银场景模板", value="create"),
                 rx.segmented_control.item("✏️ 编辑/注销现有模板", value="edit"),
                 value=rx.cond(OfflineSalesState.is_edit_mode, "edit", "create"),
-                on_change=lambda val: rx.cond(val == "create", OfflineSalesState.open_create_template, OfflineSalesState.set_tpl_name(OfflineSalesState.tpl_name)),
+                on_change=OfflineSalesState.change_template_mode,
                 size="2",
                 width="100%",
             ),

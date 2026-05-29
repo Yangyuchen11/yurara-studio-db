@@ -184,7 +184,7 @@ class AssetState(AppState):
                 "remarks": self.edit_remarks.strip()
             }
             if AssetService.update_asset_info(db, self.edit_asset_id, updates):
-                yield rx.toast("固定资产信息更新成功！", icon="💾")
+                yield rx.toast("💾 固定资产信息更新成功！")
                 yield AssetState.load_asset_page()
                 self.is_edit_open = False
             else:
@@ -228,7 +228,7 @@ class AssetState(AppState):
                 self.write_off_qty, 
                 self.write_off_reason.strip()
             )
-            yield rx.toast(f"已核销 {int(self.write_off_qty)} 个 {name}！", icon="📉")
+            yield rx.toast(f"📉 已核销 {int(self.write_off_qty)} 个 {name}！")
             # 重置核销表单状态
             self.write_off_qty = 1.0
             self.write_off_reason = ""

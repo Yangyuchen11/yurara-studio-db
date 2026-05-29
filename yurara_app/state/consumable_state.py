@@ -233,7 +233,7 @@ class ConsumableState(AppState):
         try:
             service = ConsumableService(db)
             sign = -1 if self.op_type == "出库" else 1
-            qty_delta = self.op_qty * sign
+            qty_delta = int(self.op_qty) * sign
             
             mode = "normal"
             s_info = None
@@ -275,20 +275,23 @@ class ConsumableState(AppState):
             except ValueError:
                 op_date_obj = date.today()
 
-            # 调用 Service 写入
+            # 调用 Service 写入 (使用数值汇率避免 rx.Var 传递)
+            rate_val = float(self.exchange_rate_100 / 100.0)
             name, delta, link_msg = service.process_inventory_change(
                 item_name=self.op_item_name,
                 date_obj=op_date_obj,
                 delta_qty=qty_delta,
-                exchange_rate=self.exchange_rate,
+                exchange_rate=rate_val,
                 mode=mode,
                 sale_info=s_info,
                 cost_info=c_info,
                 base_remark=final_remark
             )
 
-            msg_icon = "💰" if self.is_sale else ("📉" if qty_delta < 0 else "📈")
-            yield rx.toast(f"库存更新成功：{name} {delta} {link_msg}", icon=msg_icon)
+            # 使用后台纯 Python 状态变量，不使用 computed var rx.Var 以防 truthiness 报错
+            is_sale_backend = (self.op_type == "出库" and self.out_mode == "对外销售")
+            msg_icon = "💰" if is_sale_backend else ("📉" if qty_delta < 0 else "📈")
+            yield rx.toast(f"{msg_icon} 库存更新成功：{name} {delta} {link_msg}")
             
             # 全局同步缓存并重置页面状态
             sync_all_caches()
@@ -352,7 +355,7 @@ class ConsumableState(AppState):
                 }
             }
             if service.update_items_batch(changes):
-                yield rx.toast("耗材资产更新成功！", icon="💾")
+                yield rx.toast("💾 耗材资产更新成功！")
                 self.is_edit_open = False
                 yield ConsumableState.load_consumable_page()
             else:
@@ -374,7 +377,7 @@ class ConsumableState(AppState):
                 log_id: {"date": new_date.strip()}
             }
             if service.update_logs_batch(log_changes):
-                yield rx.toast("账期修改成功", icon="📅")
+                yield rx.toast("📅 账期修改成功")
                 yield ConsumableState.load_consumable_page()
             else:
                 yield rx.toast("账期修改失败", level="error")

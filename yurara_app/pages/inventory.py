@@ -33,7 +33,7 @@ def render_excess_row(row) -> rx.Component:
     return rx.table.row(
         rx.table.cell(rx.text(row.variant, size="1")),
         rx.table.cell(rx.text(row.part_name, size="1")),
-        rx.table.cell(rx.badge(row.qty.to_string(), color_scheme="orange", variant="soft"))
+        rx.table.cell(rx.badge(row.qty.to_string(), color_scheme="orange", variant="solid"))
     )
 
 
@@ -474,8 +474,8 @@ def inventory_page() -> rx.Component:
                                             rx.accordion.root(
                                                 rx.accordion.item(
                                                     header=rx.hstack(
-                                                        rx.icon("search", size=13),
-                                                        rx.text("查看无法成套的散落部件物理余量", size="1"),
+                                                        rx.icon("search", size=13, color=rx.color("violet", 9)),
+                                                        rx.text("查看无法成套的散落部件物理余量", size="1", weight="medium"),
                                                         spacing="1",
                                                         align="center"
                                                     ),
@@ -499,7 +499,13 @@ def inventory_page() -> rx.Component:
                                                     value="excess"
                                                 ),
                                                 collapsible=True,
-                                                width="100%"
+                                                variant="outline",
+                                                width="100%",
+                                                style={
+                                                    "border": "1px solid var(--violet-6)",
+                                                    "borderRadius": "6px",
+                                                    "padding": "0.25rem 0.75rem",
+                                                }
                                             ),
                                             rx.fragment()
                                         ),
@@ -515,7 +521,16 @@ def inventory_page() -> rx.Component:
                                         
                                         rx.cond(
                                             InventoryState.is_production_completed,
-                                            rx.fragment(),
+                                            rx.card(
+                                                rx.vstack(
+                                                    rx.text("💡 该商品已生产结单（在制资产已清零）。若后期追加了新的真实物理成本项，请点击下方按钮重新触发木桶还原估值与大货资产的同步核算：", size="1", color=rx.color("slate", 10)),
+                                                    rx.button("🔄 重新核算大货成本与资产", color_scheme="violet", variant="soft", on_click=InventoryState.clear_product_wip, size="2", width="100%"),
+                                                    spacing="2",
+                                                    width="100%"
+                                                ),
+                                                width="100%",
+                                                padding="0.75rem"
+                                            ),
                                             rx.card(
                                                 rx.vstack(
                                                     rx.text("💡 当前未完结生产，可在生产大货全部进入仓库后，清零在制折旧冲账大货：", size="1", color=rx.color("slate", 10)),

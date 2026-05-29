@@ -472,14 +472,25 @@ def cost_page() -> rx.Component:
                                     ),
                                     rx.cond(
                                         CostState.is_production_completed,
-                                        rx.box(
-                                            rx.text("✅ 已完成生产结单", weight="bold", color=rx.color("green", 11), size="2"),
-                                            padding="0.5rem",
-                                            background=rx.color("green", 3),
-                                            border=f"1px solid {rx.color('green', 6)}",
-                                            border_radius="6px",
-                                            width="100%",
-                                            text_align="center"
+                                        rx.vstack(
+                                            rx.box(
+                                                rx.text("✅ 已完成生产结单", weight="bold", color=rx.color("green", 11), size="2"),
+                                                padding="0.5rem",
+                                                background=rx.color("green", 3),
+                                                border=f"1px solid {rx.color('green', 6)}",
+                                                border_radius="6px",
+                                                width="100%",
+                                                text_align="center"
+                                            ),
+                                            rx.button(
+                                                "🔄 重新计算大货单价与资产",
+                                                color_scheme="violet",
+                                                variant="soft",
+                                                on_click=CostState.wip_completed_fix,
+                                                width="100%"
+                                            ),
+                                            spacing="2",
+                                            width="100%"
                                         ),
                                         rx.button(
                                             "🚀 生产完成 (清零在制)",
