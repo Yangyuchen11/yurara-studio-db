@@ -498,9 +498,10 @@ class SalesOrderService:
 
         refund.refund_amount = refund_amount
         refund.refund_reason = refund_reason
-        
-        self.db.flush()
-        InventoryService(self.db).sync_product_metrics(order.items[0].product_id if order.items else None)
+        if order.items:
+            product = self.db.query(Product).filter(Product.name == order.items[0].product_name).first()
+            if product:
+                InventoryService(self.db).sync_product_metrics(product.id)
         
         self.db.commit()
         return "售后记录已成功修改"

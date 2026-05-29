@@ -630,7 +630,11 @@ class FinanceService:
         new_cash_asset = None
 
         if updates['category'] not in FinanceService.NON_CASH_CATEGORIES:
-            new_cash_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == new_acc_id).first()
+            new_cash_asset = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == new_acc_id).first() if new_acc_id else None
+            if not new_cash_asset:
+                # 尝试通过币种自动查找默认的流动资金账户
+                new_cash_asset = FinanceService.get_cash_asset(db, new_currency)
+                
             if new_cash_asset:
                 new_currency = new_cash_asset.currency # 以真实账户的币种为准
                 new_cash_asset.amount += new_signed_amount

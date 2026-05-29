@@ -173,7 +173,8 @@ class AssetState(AppState):
     def submit_edit_asset(self):
         """保存固定资产信息更改"""
         if not self.edit_shop_name.strip():
-            return rx.toast("店名/来源不能为空", level="error")
+            yield rx.toast("店名/来源不能为空", level="error")
+            return
             
         db = self.get_db()
         try:
@@ -209,11 +210,14 @@ class AssetState(AppState):
     def submit_write_off(self):
         """提交核销报废资产的请求"""
         if not self.write_off_asset_id:
-            return rx.toast("请选择要核销的固定资产", level="error")
+            yield rx.toast("请选择要核销的固定资产", level="error")
+            return
         if not self.write_off_reason.strip():
-            return rx.toast("请填写核销原因说明", level="error")
+            yield rx.toast("请填写核销原因说明", level="error")
+            return
         if self.write_off_qty <= 0 or self.write_off_qty > self.write_off_max_qty:
-            return rx.toast(f"核销数量有误 (范围: 1 到 {int(self.write_off_max_qty)})", level="error")
+            yield rx.toast(f"核销数量有误 (范围: 1 到 {int(self.write_off_max_qty)})", level="error")
+            return
 
         db = self.get_db()
         try:

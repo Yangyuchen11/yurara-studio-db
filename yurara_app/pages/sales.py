@@ -6,7 +6,7 @@
 import reflex as rx
 from ..state.sales_state import SalesState, SalesLeaderboardRow, SalesLogItem, VariantPivotRow
 from ..components.layout import page_layout
-from ..components.editable_table import data_card, form_field, empty_state
+from ..components.editable_table import data_card, custom_form_field, empty_state
 
 
 def sales_metric_card(label: str, value: rx.Var, unit: str = "", color_scheme: str = "violet", icon: str = "trending_up", description: str = "") -> rx.Component:
@@ -58,8 +58,8 @@ def render_leaderboard_row(r: SalesLeaderboardRow, idx: int) -> rx.Component:
         rx.table.cell(rx.text(f"¥ {r.grand_total_cny:,.2f}", size="1", weight="medium")),
         on_click=lambda: SalesState.select_product(r.product_name),
         style={
-            "background-color": bg_color,
-            "border-left": f"3px solid {border_color}",
+            "backgroundColor": bg_color,
+            "borderLeft": f"3px solid {border_color}",
             "cursor": "pointer",
             "transition": "all 0.15s ease"
         }
@@ -124,15 +124,15 @@ def pivot_analysis_table() -> rx.Component:
                         SalesState.pivot_rows,
                         lambda row: rx.table.row(
                             rx.table.cell(rx.text(row.variant, size="1", weight="bold")),
-                            rx.table.cell(rx.text(row.qtys[0].to_string(), size="1")),
-                            rx.table.cell(rx.text(row.qtys[1].to_string(), size="1")),
-                            rx.table.cell(rx.text(row.qtys[2].to_string(), size="1")),
-                            rx.table.cell(rx.text(row.qtys[3].to_string(), size="1")),
-                            rx.table.cell(rx.text(row.qtys[4].to_string(), size="1")),
-                            rx.table.cell(rx.text(row.qtys[5].to_string(), size="1")),
-                            rx.table.cell(rx.text(row.qtys[6].to_string(), size="1")),
-                            rx.table.cell(rx.text(row.qtys[7].to_string(), size="1")),
-                            style={"background-color": rx.cond(row.variant == "总计", rx.color("slate", 3), "transparent")}
+                            rx.table.cell(rx.text(row.qtys[0], size="1")),
+                            rx.table.cell(rx.text(row.qtys[1], size="1")),
+                            rx.table.cell(rx.text(row.qtys[2], size="1")),
+                            rx.table.cell(rx.text(row.qtys[3], size="1")),
+                            rx.table.cell(rx.text(row.qtys[4], size="1")),
+                            rx.table.cell(rx.text(row.qtys[5], size="1")),
+                            rx.table.cell(rx.text(row.qtys[6], size="1")),
+                            rx.table.cell(rx.text(row.qtys[7], size="1")),
+                            style={"backgroundColor": rx.cond(row.variant == "总计", rx.color("slate", 3), "transparent")}
                         )
                     )
                 ),
@@ -148,23 +148,25 @@ def pivot_analysis_table() -> rx.Component:
 def visualization_chart() -> rx.Component:
     """销量构成直方图组件 (Stacked Bar Chart)"""
     return rx.vstack(
-        rx.recharts.bar_chart(
-            rx.recharts.cartesian_grid(stroke_dasharray="3 3", stroke=rx.color("slate", 4)),
-            rx.recharts.x_axis(data_key="variant", stroke=rx.color("slate", 9), style={"font-size": "10px"}),
-            rx.recharts.y_axis(stroke=rx.color("slate", 9), style={"font-size": "10px"}),
-            rx.recharts.tooltip(content_style={"background-color": "var(--slate-2)", "border-radius": "6px", "font-size": "11px"}),
-            rx.recharts.legend(vertical_align="top", height=36, icon_size=10, style={"font-size": "11px"}),
-            
-            # 各平台销量色彩映射 (自适应 HSL 高彩亮边)
-            rx.recharts.bar(data_key="微店", stack_id="platform_stack", fill=rx.color("violet", 9)),
-            rx.recharts.bar(data_key="Booth", stack_id="platform_stack", fill=rx.color("crimson", 9)),
-            rx.recharts.bar(data_key="国内线下", stack_id="platform_stack", fill=rx.color("blue", 9)),
-            rx.recharts.bar(data_key="日本线下", stack_id="platform_stack", fill=rx.color("jade", 9)),
-            rx.recharts.bar(data_key="Instagram", stack_id="platform_stack", fill=rx.color("pink", 9)),
-            rx.recharts.bar(data_key="其他(CNY)", stack_id="platform_stack", fill=rx.color("amber", 9)),
-            rx.recharts.bar(data_key="其他(JPY)", stack_id="platform_stack", fill=rx.color("orange", 9)),
-            
-            data=SalesState.chart_data,
+        rx.recharts.responsive_container(
+            rx.recharts.bar_chart(
+                rx.recharts.cartesian_grid(stroke_dasharray="3 3", stroke=rx.color("slate", 4)),
+                rx.recharts.x_axis(data_key="variant", stroke=rx.color("slate", 9), style={"fontSize": "10px"}),
+                rx.recharts.y_axis(stroke=rx.color("slate", 9), style={"fontSize": "10px"}),
+                rx.recharts.tooltip(content_style={"backgroundColor": "var(--slate-2)", "borderRadius": "6px", "fontSize": "11px"}),
+                rx.recharts.legend(vertical_align="top", height=36, icon_size=10, style={"fontSize": "11px"}),
+                
+                # 各平台销量色彩映射 (自适应 HSL 高彩亮边)
+                rx.recharts.bar(data_key="微店", stack_id="platform_stack", fill=rx.color("violet", 9)),
+                rx.recharts.bar(data_key="Booth", stack_id="platform_stack", fill=rx.color("crimson", 9)),
+                rx.recharts.bar(data_key="国内线下", stack_id="platform_stack", fill=rx.color("blue", 9)),
+                rx.recharts.bar(data_key="日本线下", stack_id="platform_stack", fill=rx.color("jade", 9)),
+                rx.recharts.bar(data_key="Instagram", stack_id="platform_stack", fill=rx.color("pink", 9)),
+                rx.recharts.bar(data_key="其他(CNY)", stack_id="platform_stack", fill=rx.color("amber", 9)),
+                rx.recharts.bar(data_key="其他(JPY)", stack_id="platform_stack", fill=rx.color("orange", 9)),
+                
+                data=SalesState.chart_data,
+            ),
             width="100%",
             height=300
         ),
@@ -279,7 +281,7 @@ def sales_detail_panel() -> rx.Component:
                         value=SalesState.selected_product,
                         on_change=SalesState.select_product,
                         size="2",
-                        style={"max_width": "220px"}
+                        style={"maxWidth": "220px"}
                     ),
                     width="100%",
                     align="center"
@@ -337,34 +339,53 @@ def sales_page() -> rx.Component:
             # Tab 介绍信息
             rx.cond(
                 SalesState.active_tab == "v2",
-                rx.callout("💡 【精准订单模式】：数据仅来源于「销售订单」和「售后管理」。数据完全隔离，剔除了早期反推中的冗余重复，兼容了“仅退款”场景。(推荐使用)", icon="info", color_scheme="green", size="1", width="100%"),
+                rx.callout("💡 【精准订单模式】：数据仅来源于「销售订单」和「售后管理」。数据完全隔离，剔除了早期反推中的冗余重复，兼容了\u201c仅退款\u201d场景。(推荐使用)", icon="info", color_scheme="green", size="1", width="100%"),
                 rx.callout("⚠️ 【历史兼容模式】：数据强行从底层的「物理库存变动日志」反向推演。包含无订单系统的早期历史脏数据，可能因物理入出库存在部分重复记录，仅供对账参考。", icon="triangle_alert", color_scheme="orange", size="1", width="100%")
             ),
             
-            rx.grid(
-                sales_metric_card("纯 CNY 累计收款额", SalesState.total_cny_str, color_scheme="green", icon="dollar_sign", description="纯 CNY 货币的实际成交及收款总计"),
-                sales_metric_card("纯 JPY 累计收款额", SalesState.total_jpy_str, color_scheme="blue", icon="japanese_yen", description="纯 JPY 货币的实际成交及收款原币总计"),
-                sales_metric_card("折合总销售额 (CNY总计)", SalesState.grand_total_cny_str, color_scheme="violet", icon="banknote", description="包含 JPY 汇率折合后的全币种总销售额大项结算"),
-                sales_metric_card("累计销量总数", SalesState.total_qty_str, color_scheme="orange", icon="layers", description="全品类产品的实际累计净销售出库数总计"),
-                columns="4",
-                spacing="3",
-                width="100%"
-            ),
-            
-            rx.divider(),
-            
-            # 分栏大屏布局
-            rx.grid(
-                # 左侧：🏆 热销产品榜单
-                leaderboard_panel(),
-                # 右侧：🔍 产品销售多角度剖析
-                sales_detail_panel(),
-                columns="12",
-                spacing="4",
-                width="100%",
-                style={
-                    "grid-template-columns": "4fr 8fr"
-                }
+            # 加载状态保护：避免 Recharts 在数据尚未就绪时渲染导致 React 崩溃
+            rx.cond(
+                SalesState.is_loading,
+                rx.center(
+                    rx.vstack(
+                        rx.spinner(size="3"),
+                        rx.text("正在加载销售数据...", size="2", color=rx.color("slate", 10)),
+                        spacing="3",
+                        align="center",
+                    ),
+                    padding="4rem",
+                    width="100%",
+                ),
+                rx.vstack(
+                    rx.grid(
+                        sales_metric_card("纯 CNY 累计收款额", SalesState.total_cny_str, color_scheme="green", icon="dollar_sign", description="纯 CNY 货币的实际成交及收款总计"),
+                        sales_metric_card("纯 JPY 累计收款额", SalesState.total_jpy_str, color_scheme="blue", icon="japanese_yen", description="纯 JPY 货币的实际成交及收款原币总计"),
+                        sales_metric_card("折合总销售额 (CNY总计)", SalesState.grand_total_cny_str, color_scheme="violet", icon="banknote", description="包含 JPY 汇率折合后的全币种总销售额大项结算"),
+                        sales_metric_card("累计销量总数", SalesState.total_qty_str, color_scheme="orange", icon="layers", description="全品类产品的实际累计净销售出库数总计"),
+                        columns="4",
+                        spacing="3",
+                        width="100%"
+                    ),
+                    
+                    rx.divider(),
+                    
+                    # 分栏大屏布局
+                    rx.grid(
+                        # 左侧：🏆 热销产品榜单
+                        leaderboard_panel(),
+                        # 右侧：🔍 产品销售多角度剖析
+                        sales_detail_panel(),
+                        columns="12",
+                        spacing="4",
+                        width="100%",
+                        style={
+                            "gridTemplateColumns": "4fr 8fr"
+                        }
+                    ),
+                    
+                    spacing="4",
+                    width="100%"
+                ),
             ),
             
             spacing="4",

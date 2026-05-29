@@ -6,7 +6,7 @@
 import reflex as rx
 from ..state.consumable_state import ConsumableState, ConsumableItem, ConsumableLogItem, DropdownOption
 from ..components.layout import page_layout
-from ..components.editable_table import data_card, form_field, empty_state
+from ..components.editable_table import data_card, custom_form_field, empty_state
 from constants import PRODUCT_COST_CATEGORIES
 
 
@@ -18,8 +18,8 @@ def operation_panel() -> rx.Component:
             rx.text("在下方执行货物的物理入库补货，或者物理出库消耗（计入商品成本或记账销售）。", size="1", color=rx.color("slate", 9)),
             
             rx.grid(
-                form_field("📅 变动日期", rx.input(type="date", value=ConsumableState.op_date, on_change=ConsumableState.set_op_date, size="2")),
-                form_field(
+                custom_form_field("📅 变动日期", rx.input(type="date", value=ConsumableState.op_date, on_change=ConsumableState.set_op_date, size="2")),
+                custom_form_field(
                     "📦 选择项目",
                     rx.select.root(
                         rx.select.trigger(),
@@ -34,7 +34,7 @@ def operation_panel() -> rx.Component:
                         size="2"
                     )
                 ),
-                form_field(
+                custom_form_field(
                     "⚙️ 操作类型",
                     rx.radio_group.root(
                         rx.hstack(
@@ -46,7 +46,7 @@ def operation_panel() -> rx.Component:
                         on_change=ConsumableState.set_op_type
                     )
                 ),
-                form_field("🔢 变动数量", rx.input(type="number", value=ConsumableState.op_qty.to_string(), on_change=lambda v: ConsumableState.set_op_qty(rx.cond(v != "", v.to(float), 1.0)), size="2")),
+                custom_form_field("🔢 变动数量", rx.input(type="number", value=ConsumableState.op_qty.to_string(), on_change=lambda v: ConsumableState.set_op_qty(rx.cond(v != "", v.to(float), 1.0)), size="2")),
                 columns="4",
                 spacing="4",
                 width="100%"
@@ -58,7 +58,7 @@ def operation_panel() -> rx.Component:
             rx.cond(
                 ConsumableState.is_outbound,
                 rx.vstack(
-                    form_field(
+                    custom_form_field(
                         "📤 出库目的",
                         rx.radio_group.root(
                             rx.hstack(
@@ -77,15 +77,15 @@ def operation_panel() -> rx.Component:
                         rx.vstack(
                             rx.callout("📝 请填写财务记账信息 (将自动在选定的现金账户中生成【销售收入】流水)", icon="circle_dollar_sign", color_scheme="green", size="1", width="100%"),
                             rx.grid(
-                                form_field("收入内容说明", rx.input(value=ConsumableState.sale_content, on_change=ConsumableState.set_sale_content, size="2")),
-                                form_field("收入来源 (如: 线下、闲鱼)", rx.input(placeholder="线下/闲鱼/Booth", value=ConsumableState.sale_source, on_change=ConsumableState.set_sale_source, size="2")),
-                                form_field("销售总额 (原币)", rx.input(type="number", value=ConsumableState.sale_amount.to_string(), on_change=lambda v: ConsumableState.set_sale_amount(rx.cond(v != "", v.to(float), 0.0)), size="2")),
+                                custom_form_field("收入内容说明", rx.input(value=ConsumableState.sale_content, on_change=ConsumableState.set_sale_content, size="2")),
+                                custom_form_field("收入来源 (如: 线下、闲鱼)", rx.input(placeholder="线下/闲鱼/Booth", value=ConsumableState.sale_source, on_change=ConsumableState.set_sale_source, size="2")),
+                                custom_form_field("销售总额 (原币)", rx.input(type="number", value=ConsumableState.sale_amount.to_string(), on_change=lambda v: ConsumableState.set_sale_amount(rx.cond(v != "", v.to(float), 0.0)), size="2")),
                                 columns="3",
                                 spacing="4",
                                 width="100%"
                             ),
                             rx.grid(
-                                form_field(
+                                custom_form_field(
                                     "交易币种",
                                     rx.select.root(
                                         rx.select.trigger(),
@@ -98,7 +98,7 @@ def operation_panel() -> rx.Component:
                                         size="2"
                                     )
                                 ),
-                                form_field(
+                                custom_form_field(
                                     "收款入账账户",
                                     rx.select.root(
                                         rx.select.trigger(),
@@ -118,7 +118,7 @@ def operation_panel() -> rx.Component:
                                 spacing="4",
                                 width="100%"
                             ),
-                            form_field("流水备注 (选填)", rx.input(placeholder="将显示在财务流水的备注一栏中", value=ConsumableState.sale_remark, on_change=ConsumableState.set_sale_remark, size="2")),
+                            custom_form_field("流水备注 (选填)", rx.input(placeholder="将显示在财务流水的备注一栏中", value=ConsumableState.sale_remark, on_change=ConsumableState.set_sale_remark, size="2")),
                             spacing="3",
                             width="100%"
                         ),
@@ -126,10 +126,10 @@ def operation_panel() -> rx.Component:
                         # --- Subbranch B: Internal Cost ---
                         rx.vstack(
                             rx.grid(
-                                form_field("分摊消耗选项", rx.checkbox("🔗 计入商品大货成本", checked=ConsumableState.is_link_product, on_change=ConsumableState.set_is_link_product)),
+                                custom_form_field("分摊消耗选项", rx.checkbox("🔗 计入商品大货成本", checked=ConsumableState.is_link_product, on_change=ConsumableState.set_is_link_product)),
                                 rx.cond(
                                     ConsumableState.is_link_product,
-                                    form_field(
+                                    custom_form_field(
                                         "归属商品",
                                         rx.select.root(
                                             rx.select.trigger(),
@@ -148,7 +148,7 @@ def operation_panel() -> rx.Component:
                                 ),
                                 rx.cond(
                                     ConsumableState.is_link_product,
-                                    form_field(
+                                    custom_form_field(
                                         "分摊成本分类",
                                         rx.select.root(
                                             rx.select.trigger(),
@@ -169,7 +169,7 @@ def operation_panel() -> rx.Component:
                                 spacing="4",
                                 width="100%"
                             ),
-                            form_field("出库备注说明 (选填)", rx.input(placeholder="如：打包用去", value=ConsumableState.op_remark, on_change=ConsumableState.set_op_remark, size="2")),
+                            custom_form_field("出库备注说明 (选填)", rx.input(placeholder="如：打包用去", value=ConsumableState.op_remark, on_change=ConsumableState.set_op_remark, size="2")),
                             spacing="3",
                             width="100%"
                         )
@@ -178,7 +178,7 @@ def operation_panel() -> rx.Component:
                     width="100%"
                 ),
                 # If Inbound: Inbound Remark
-                form_field("入库/补货备注说明 (选填)", rx.input(placeholder="如：淘宝店自主补货购入", value=ConsumableState.op_remark, on_change=ConsumableState.set_op_remark, size="2"))
+                custom_form_field("入库/补货备注说明 (选填)", rx.input(placeholder="如：淘宝店自主补货购入", value=ConsumableState.op_remark, on_change=ConsumableState.set_op_remark, size="2"))
             ),
             
             rx.button(
@@ -240,11 +240,11 @@ def edit_consumable_dialog() -> rx.Component:
             rx.dialog.description("在这里安全修改其他耗材的单价、当前库存数量、备注和采购店铺链接。", size="1", color=rx.color("slate", 9), margin_bottom="1rem"),
             
             rx.vstack(
-                form_field("耗材名称 (必填)", rx.input(value=ConsumableState.edit_name, on_change=ConsumableState.set_edit_name, size="2")),
-                form_field("分类说明", rx.input(placeholder="如：包装材/备用素材/周边", value=ConsumableState.edit_category, on_change=ConsumableState.set_edit_category, size="2")),
+                custom_form_field("耗材名称 (必填)", rx.input(value=ConsumableState.edit_name, on_change=ConsumableState.set_edit_name, size="2")),
+                custom_form_field("分类说明", rx.input(placeholder="如：包装材/备用素材/周边", value=ConsumableState.edit_category, on_change=ConsumableState.set_edit_category, size="2")),
                 rx.grid(
-                    form_field("单价 (原币)", rx.input(type="number", value=ConsumableState.edit_unit_price.to_string(), on_change=lambda v: ConsumableState.set_edit_unit_price(rx.cond(v != "", v.to(float), 0.0)), size="2")),
-                    form_field(
+                    custom_form_field("单价 (原币)", rx.input(type="number", value=ConsumableState.edit_unit_price.to_string(), on_change=lambda v: ConsumableState.set_edit_unit_price(rx.cond(v != "", v.to(float), 0.0)), size="2")),
+                    custom_form_field(
                         "交易币种",
                         rx.select.root(
                             rx.select.trigger(),
@@ -260,10 +260,10 @@ def edit_consumable_dialog() -> rx.Component:
                     columns="2",
                     spacing="3"
                 ),
-                form_field("当前库存数量", rx.input(type="number", value=ConsumableState.edit_remaining_qty.to_string(), on_change=lambda v: ConsumableState.set_edit_remaining_qty(rx.cond(v != "", v.to(float), 0.0)), size="2")),
-                form_field("店铺来源", rx.input(value=ConsumableState.edit_shop_name, on_change=ConsumableState.set_edit_shop_name, size="2")),
-                form_field("购买链接 / 网址", rx.input(value=ConsumableState.edit_url, on_change=ConsumableState.set_edit_url, size="2")),
-                form_field("备注说明", rx.input(value=ConsumableState.edit_remarks, on_change=ConsumableState.set_edit_remarks, size="2")),
+                custom_form_field("当前库存数量", rx.input(type="number", value=ConsumableState.edit_remaining_qty.to_string(), on_change=lambda v: ConsumableState.set_edit_remaining_qty(rx.cond(v != "", v.to(float), 0.0)), size="2")),
+                custom_form_field("店铺来源", rx.input(value=ConsumableState.edit_shop_name, on_change=ConsumableState.set_edit_shop_name, size="2")),
+                custom_form_field("购买链接 / 网址", rx.input(value=ConsumableState.edit_url, on_change=ConsumableState.set_edit_url, size="2")),
+                custom_form_field("备注说明", rx.input(value=ConsumableState.edit_remarks, on_change=ConsumableState.set_edit_remarks, size="2")),
                 
                 rx.hstack(
                     rx.dialog.close(

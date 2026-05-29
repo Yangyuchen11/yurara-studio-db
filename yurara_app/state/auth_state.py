@@ -74,9 +74,9 @@ class AuthState(rx.State):
                         found = True
                         break
         else:
-            # 兜底：检查单用户环境变量
-            admin_user = os.getenv("ADMIN_USERNAME", "admin")
-            admin_pass = os.getenv("ADMIN_PASSWORD", "")
+            # 兜底：检查单用户环境变量（兼顾 ADMIN_USERNAME 和 ADMIN_USER 两种命名格式）
+            admin_user = os.getenv("ADMIN_USERNAME", os.getenv("ADMIN_USER", "admin")).strip()
+            admin_pass = os.getenv("ADMIN_PASSWORD", os.getenv("ADMIN_PW", "")).strip()
             if username == admin_user and password == admin_pass:
                 found = True
 

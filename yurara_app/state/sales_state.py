@@ -21,7 +21,7 @@ class SalesLeaderboardRow(BaseModel):
 
 
 class SalesLogItem(BaseModel):
-    id: int = 0
+    id: str = ""
     date: str = ""
     type_label: str = ""  # 📤 售出, ↩️ 退货入库, etc.
     variant: str = ""
@@ -38,7 +38,7 @@ class VariantPivotRow(BaseModel):
 
 class SalesState(AppState):
     active_tab: str = "v2"  # "v2" 或 "v1"
-    is_loading: bool = False
+    is_loading: bool = True
     
     # 汇总卡片数值
     total_cny: float = 0.0
@@ -294,7 +294,7 @@ class SalesState(AppState):
                     lbl = "🔙 撤销"
 
                 log_items.append(SalesLogItem(
-                    id=int(row.get('id', 0)),
+                    id=str(row.get('id', '')),
                     date=str(row['date']),
                     type_label=lbl,
                     variant=str(row.get('variant', '')),

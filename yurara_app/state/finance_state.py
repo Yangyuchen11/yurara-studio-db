@@ -548,7 +548,8 @@ class FinanceState(AppState):
             # ---- 场景 A: 货币兑换 ----
             if self.rec_type == "货币兑换":
                 if self.ex_amount_out <= 0 or self.ex_amount_in <= 0:
-                    return rx.toast("兑换出入账金额必须大于 0", level="warning")
+                    yield rx.toast("兑换出入账金额必须大于 0", level="warning")
+                    return
                 
                 src_acc = int(self.ex_source_acc_id) if self.ex_source_acc_id else None
                 tgt_acc = int(self.ex_target_acc_id) if self.ex_target_acc_id else None
@@ -570,11 +571,13 @@ class FinanceState(AppState):
             elif self.rec_type == "债务":
                 if "新增" in self.debt_op:
                     if not self.debt_name.strip() or self.debt_amount <= 0:
-                        return rx.toast("请填写债务名称并确保金额大于 0！", level="warning")
+                        yield rx.toast("请填写债务名称并确保金额大于 0！", level="warning")
+                        return
                     
                     is_to_cash = (self.debt_dest == "存入流动资金 (拿到现金)")
                     if not is_to_cash and not self.debt_rel_content.strip():
-                        return rx.toast("请填写关联挂账的资产名称！", level="warning")
+                        yield rx.toast("请填写关联挂账的资产名称！", level="warning")
+                        return
                         
                     tgt_acc = int(self.debt_target_acc_id) if self.debt_target_acc_id else None
                     
@@ -594,9 +597,11 @@ class FinanceState(AppState):
                 else:
                     # 偿还债务
                     if not self.debt_selected_id:
-                        return rx.toast("当前无记录在案的债务可偿清！", level="warning")
+                        yield rx.toast("当前无记录在案的债务可偿清！", level="warning")
+                        return
                     if self.debt_repay_amount <= 0:
-                        return rx.toast("还款金额必须大于 0！", level="warning")
+                        yield rx.toast("还款金额必须大于 0！", level="warning")
+                        return
                         
                     sel_debt_id = int(self.debt_selected_id)
                     
@@ -614,7 +619,8 @@ class FinanceState(AppState):
                     else:
                         # 资产抵消
                         if not self.debt_repay_offset_asset_id:
-                            return rx.toast("请先选择抵债资产项！", level="warning")
+                            yield rx.toast("请先选择抵债资产项！", level="warning")
+                            return
                             
                         asset_id = int(self.debt_repay_offset_asset_id)
                         FinanceService.offset_debt(
@@ -634,9 +640,11 @@ class FinanceState(AppState):
                 # A. 批量录入模式
                 if is_batch_mode:
                     if not self.batch_items and self.batch_shipping_fee <= 0:
-                        return rx.toast("请先在下方明细表中至少录入一项明细或提供邮费金额！", level="warning")
+                        yield rx.toast("请先在下方明细表中至少录入一项明细或提供邮费金额！", level="warning")
+                        return
                     if not self.f_account_id:
-                        return rx.toast("未指定操作现金扣款账户！", level="warning")
+                        yield rx.toast("未指定操作现金扣款账户！", level="warning")
+                        return
                         
                     items_data = []
                     for item in self.batch_items:
@@ -668,7 +676,8 @@ class FinanceState(AppState):
                     if selected_budget_id:
                         # 强绑定为单条记录匹配预算
                         if len(self.batch_items) != 1:
-                            return rx.toast("匹配特定预算项时，物品明细表内只能有且仅有一条物品记录！", level="warning")
+                            yield rx.toast("匹配特定预算项时，物品明细表内只能有且仅有一条物品记录！", level="warning")
+                            return
                             
                         first_item = self.batch_items[0]
                         base_data = {
@@ -696,7 +705,8 @@ class FinanceState(AppState):
                 # B. 单项通用录入模式
                 else:
                     if self.f_amount <= 0:
-                        return rx.toast("录入金额必须大于 0！", level="warning")
+                        yield rx.toast("录入金额必须大于 0！", level="warning")
+                        return
                         
                     # 非现金类别不需要现金账户
                     is_non_cash = self.f_category in FinanceService.NON_CASH_CATEGORIES
@@ -721,11 +731,14 @@ class FinanceState(AppState):
             # ---- 场景 D: 资金移动 ----
             elif self.rec_type == "资金移动":
                 if not self.move_from_asset_id or not self.move_to_asset_id:
-                    return rx.toast("请选择转出账户和转入账户！", level="warning")
+                    yield rx.toast("请选择转出账户和转入账户！", level="warning")
+                    return
                 if self.move_from_asset_id == self.move_to_asset_id:
-                    return rx.toast("转出和转入不能是同一个现金账户！", level="warning")
+                    yield rx.toast("转出和转入不能是同一个现金账户！", level="warning")
+                    return
                 if self.move_amount <= 0:
-                    return rx.toast("资金划转金额必须大于 0！", level="warning")
+                    yield rx.toast("资金划转金额必须大于 0！", level="warning")
+                    return
                     
                 from_id = int(self.move_from_asset_id)
                 to_id = int(self.move_to_asset_id)
@@ -754,7 +767,8 @@ class FinanceState(AppState):
     @rx.event
     def submit_delete_record(self):
         if not self.delete_selected_id:
-            return rx.toast("请选择要删除的流水记录！", level="warning")
+            yield rx.toast("请选择要删除的流水记录！", level="warning")
+            return
             
         rec_id = int(self.delete_selected_id)
         db = self.get_db()
@@ -779,7 +793,8 @@ class FinanceState(AppState):
     @rx.event
     def submit_edit_record(self):
         if not self.edit_selected_id:
-            return rx.toast("请选择要修改的流水记录！", level="warning")
+            yield rx.toast("请选择要修改的流水记录！", level="warning")
+            return
             
         rec_id = int(self.edit_selected_id)
         db = self.get_db()

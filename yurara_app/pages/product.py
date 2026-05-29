@@ -6,7 +6,7 @@ import reflex as rx
 from ..state.auth_state import AuthState
 from ..state.product_state import ProductState, PLATFORM_CODES, ColorRow, PartRow, ProductItem
 from ..components.layout import page_layout
-from ..components.editable_table import data_card, confirm_dialog, empty_state, form_field
+from ..components.editable_table import data_card, confirm_dialog, empty_state, custom_form_field
 
 
 # ===================== 可编辑行组件 =====================
@@ -168,7 +168,7 @@ def create_tab() -> rx.Component:
         data_card(
             "基础信息",
             rx.grid(
-                form_field(
+                custom_form_field(
                     "产品名称",
                     rx.input(
                         placeholder="如：水母睡裙",
@@ -178,7 +178,7 @@ def create_tab() -> rx.Component:
                     ),
                     required=True,
                 ),
-                form_field(
+                custom_form_field(
                     "首发平台",
                     rx.select(
                         ProductState.platform_launch_options,
@@ -247,7 +247,7 @@ def edit_tab() -> rx.Component:
             data_card(
                 "基础信息",
                 rx.grid(
-                    form_field(
+                    custom_form_field(
                         "产品名称",
                         rx.input(
                             value=ProductState.edit_name,
@@ -256,7 +256,7 @@ def edit_tab() -> rx.Component:
                         ),
                         required=True,
                     ),
-                    form_field(
+                    custom_form_field(
                         "首发平台",
                         rx.select(
                             ProductState.platform_launch_options,
@@ -429,6 +429,7 @@ def product_page() -> rx.Component:
             rx.tabs.content(edit_tab(), value="edit", padding_top="1.5rem"),
             default_value="list",
             value=ProductState.active_tab,
+            on_change=ProductState.switch_tab,
         ),
         title="商品管理",
     )

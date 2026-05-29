@@ -223,9 +223,11 @@ class ConsumableState(AppState):
     def submit_inventory_change(self):
         """执行快速出入库处理，包括联动计费或记账"""
         if not self.op_item_name or self.op_item_name == "暂无库存":
-            return rx.toast("请选择有效的库存项目", level="error")
+            yield rx.toast("请选择有效的库存项目", level="error")
+            return
         if self.op_qty <= 0:
-            return rx.toast("变动数量必须大于 0", level="error")
+            yield rx.toast("变动数量必须大于 0", level="error")
+            return
             
         db = self.get_db()
         try:
@@ -244,9 +246,11 @@ class ConsumableState(AppState):
                     if self.sale_amount <= 0:
                         yield rx.toast("⚠️ 销售金额为 0，仅扣减库存，不生成流水", level="warning")
                     if not self.sale_content.strip():
-                        return rx.toast("请输入收入内容说明", level="error")
+                        yield rx.toast("请输入收入内容说明", level="error")
+                        return
                     if not self.sale_account_id:
-                        return rx.toast("请选择收款资金账户", level="error")
+                        yield rx.toast("请选择收款资金账户", level="error")
+                        return
                         
                     mode = "sale"
                     s_info = {
@@ -326,9 +330,11 @@ class ConsumableState(AppState):
     def submit_edit_item(self):
         """保存耗材修改数据"""
         if not self.edit_name.strip():
-            return rx.toast("项目名称不能为空", level="error")
+            yield rx.toast("项目名称不能为空", level="error")
+            return
         if self.edit_unit_price < 0 or self.edit_remaining_qty < 0:
-            return rx.toast("单价或数量不能为负数", level="error")
+            yield rx.toast("单价或数量不能为负数", level="error")
+            return
 
         db = self.get_db()
         try:

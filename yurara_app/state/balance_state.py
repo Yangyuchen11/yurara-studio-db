@@ -258,7 +258,8 @@ class BalanceState(AppState):
     @rx.event
     def create_cash_account(self):
         if not self.new_acc_name.strip():
-            return rx.toast("请输入账户名称", level="error")
+            yield rx.toast("请输入账户名称", level="error")
+            return
         db = self.get_db()
         try:
             from services.balance_service import BalanceService

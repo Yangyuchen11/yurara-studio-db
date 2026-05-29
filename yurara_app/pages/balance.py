@@ -6,7 +6,7 @@
 import reflex as rx
 from ..state.balance_state import BalanceState, BalanceDisplayRow
 from ..components.layout import page_layout
-from ..components.editable_table import data_card, form_field, empty_state
+from ..components.editable_table import data_card, custom_form_field, empty_state
 
 
 def summary_card(title: str, cny_val: rx.Var, jpy_val: rx.Var, jpy_cny_val: rx.Var, total_val: rx.Var, color_scheme: str = "violet") -> rx.Component:
@@ -61,7 +61,7 @@ def create_account_accordion() -> rx.Component:
             content=rx.vstack(
                 rx.text("在此处可以开设备用金、独立银行卡等专属现金账户。", size="1", color=rx.color("slate", 9)),
                 rx.grid(
-                    form_field(
+                    custom_form_field(
                         "账户名称",
                         rx.input(
                             placeholder="如：日常备用金、三井住友银行",
@@ -70,7 +70,7 @@ def create_account_accordion() -> rx.Component:
                             size="2"
                         )
                     ),
-                    form_field(
+                    custom_form_field(
                         "币种",
                         rx.select(
                             ["CNY", "JPY"],

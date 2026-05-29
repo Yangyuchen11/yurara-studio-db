@@ -23,7 +23,7 @@ def page_header(title: str, subtitle: str = "") -> rx.Component:
     )
 
 
-def page_layout(*content, title: str = "", subtitle: str = "") -> rx.Component:
+def page_layout(*content, title: str = "", subtitle: str = "", **kwargs) -> rx.Component:
     """
     标准页面布局。
     用法：
@@ -73,6 +73,7 @@ def page_layout(*content, title: str = "", subtitle: str = "") -> rx.Component:
         width="100%",
         spacing="0",
         align_items="start",
+        **kwargs
     )
 
 

@@ -7,7 +7,7 @@ import reflex as rx
 from constants import PRODUCT_COST_CATEGORIES
 from ..state.finance_state import FinanceState, FinanceRecordItem, TempBatchItem
 from ..components.layout import page_layout
-from ..components.editable_table import data_card, form_field, empty_state, confirm_dialog
+from ..components.editable_table import data_card, custom_form_field, empty_state, confirm_dialog
 
 
 def stat_indicator_card(label: str, value: rx.Var, unit: str = "CNY", color_scheme: str = "violet", icon: str = "circle") -> rx.Component:
@@ -43,7 +43,7 @@ def common_single_form() -> rx.Component:
     
     return rx.vstack(
         rx.grid(
-            form_field(
+            custom_form_field(
                 "收支细分类型",
                 rx.select.root(
                     rx.select.trigger(),
@@ -59,7 +59,7 @@ def common_single_form() -> rx.Component:
                     size="2", width="100%"
                 )
             ),
-            form_field(
+            custom_form_field(
                 "金额",
                 rx.input(
                     type="number",
@@ -69,7 +69,7 @@ def common_single_form() -> rx.Component:
                     size="2", width="100%"
                 )
             ),
-            form_field(
+            custom_form_field(
                 "币种",
                 rx.select.root(
                     rx.select.trigger(),
@@ -88,7 +88,7 @@ def common_single_form() -> rx.Component:
         # 如果不是非现金操作，展现操作账户
         rx.cond(
             ~FinanceState.is_non_cash,
-            form_field(
+            custom_form_field(
                 rx.cond(FinanceState.rec_type == "收入", "入账账户", "操作账户"),
                 rx.select.root(
                     rx.select.trigger(),
@@ -108,7 +108,7 @@ def common_single_form() -> rx.Component:
         ),
         
         rx.grid(
-            form_field(
+            custom_form_field(
                 rx.cond(FinanceState.rec_type == "收入", "付款方/资金来源", "收款方/店铺名称"),
                 rx.input(
                     placeholder="如：某淘宝店、公司A (选填)",
@@ -117,7 +117,7 @@ def common_single_form() -> rx.Component:
                     size="2", width="100%"
                 )
             ),
-            form_field(
+            custom_form_field(
                 "相关页面网址 (选填)",
                 rx.input(
                     placeholder="如：淘宝或Booth宝贝链接",
@@ -128,7 +128,7 @@ def common_single_form() -> rx.Component:
             ),
             columns="2", spacing="4", width="100%"
         ),
-        form_field(
+        custom_form_field(
             "业务明细描述/其他备注",
             rx.input(
                 placeholder="如：顺丰快递费、购买打包纸箱等 (必填)",
@@ -182,11 +182,11 @@ def batch_editor_table() -> rx.Component:
         # 录入新明细条目的行表单
         rx.box(
             rx.grid(
-                form_field("明细物品名称", rx.input(placeholder="物品名称 (必填)", value=FinanceState.temp_name, on_change=FinanceState.set_temp_name, size="1")),
-                form_field("金额", rx.input(type="number", placeholder="金额 (必填)", value=FinanceState.temp_amount.to_string(), on_change=lambda v: FinanceState.set_temp_amount(rx.cond(v != "", v.to(float), 0.0)), size="1")),
-                form_field("数量", rx.input(type="number", placeholder="数量", value=FinanceState.temp_qty.to_string(), on_change=lambda v: FinanceState.set_temp_qty(rx.cond(v != "", v.to(float), 1.0)), size="1")),
-                form_field("具体备注 (选填)", rx.input(placeholder="如：款式规格", value=FinanceState.temp_desc, on_change=FinanceState.set_temp_desc, size="1")),
-                form_field("网址 (选填)", rx.input(placeholder="商品链接", value=FinanceState.temp_url, on_change=FinanceState.set_temp_url, size="1")),
+                custom_form_field("明细物品名称", rx.input(placeholder="物品名称 (必填)", value=FinanceState.temp_name, on_change=FinanceState.set_temp_name, size="1")),
+                custom_form_field("金额", rx.input(type="number", placeholder="金额 (必填)", value=FinanceState.temp_amount.to_string(), on_change=lambda v: FinanceState.set_temp_amount(rx.cond(v != "", v.to(float), 0.0)), size="1")),
+                custom_form_field("数量", rx.input(type="number", placeholder="数量", value=FinanceState.temp_qty.to_string(), on_change=lambda v: FinanceState.set_temp_qty(rx.cond(v != "", v.to(float), 1.0)), size="1")),
+                custom_form_field("具体备注 (选填)", rx.input(placeholder="如：款式规格", value=FinanceState.temp_desc, on_change=FinanceState.set_temp_desc, size="1")),
+                custom_form_field("网址 (选填)", rx.input(placeholder="商品链接", value=FinanceState.temp_url, on_change=FinanceState.set_temp_url, size="1")),
                 rx.center(
                     rx.button(
                         rx.icon("plus", size=13), "添加物品",
@@ -227,14 +227,14 @@ def batch_expense_form() -> rx.Component:
     """场景 B: 批量购入（成本、固定资产、其他资产）表单驱动的明细追加组件"""
     return rx.vstack(
         rx.grid(
-            form_field(
+            custom_form_field(
                 "操作大类(已锁定)",
                 rx.input(value=FinanceState.f_category, disabled=True, size="2", width="100%")
             ),
             # 商品成本特有归属商品和分类
             rx.cond(
                 FinanceState.f_category == "商品成本",
-                form_field(
+                custom_form_field(
                     "归属商品",
                     rx.select.root(
                         rx.select.trigger(),
@@ -251,7 +251,7 @@ def batch_expense_form() -> rx.Component:
                 ),
                 rx.cond(
                     FinanceState.f_category == "其他资产购入",
-                    form_field(
+                    custom_form_field(
                         "资产子分类",
                         rx.select.root(
                             rx.select.trigger(),
@@ -273,7 +273,7 @@ def batch_expense_form() -> rx.Component:
             ),
             rx.cond(
                 FinanceState.f_category == "商品成本",
-                form_field(
+                custom_form_field(
                     "共同成本分类",
                     rx.select.root(
                         rx.select.trigger(),
@@ -293,7 +293,7 @@ def batch_expense_form() -> rx.Component:
         # 联动加载预算匹配选择
         rx.cond(
             FinanceState.f_category == "商品成本",
-            form_field(
+            custom_form_field(
                 "🎯 预算项目匹配",
                 rx.select.root(
                     rx.select.trigger(),
@@ -321,7 +321,7 @@ def batch_expense_form() -> rx.Component:
         
         # 共同店铺与操作账户
         rx.grid(
-            form_field(
+            custom_form_field(
                 "付款现金账户",
                 rx.select.root(
                     rx.select.trigger(),
@@ -336,7 +336,7 @@ def batch_expense_form() -> rx.Component:
                     size="2", width="100%"
                 )
             ),
-            form_field(
+            custom_form_field(
                 "付款店铺/收款方",
                 rx.input(
                     placeholder="如：某工厂、淘宝商家",
@@ -345,7 +345,7 @@ def batch_expense_form() -> rx.Component:
                     size="2", width="100%"
                 )
             ),
-            form_field(
+            custom_form_field(
                 "交易币种",
                 rx.select.root(
                     rx.select.trigger(),
@@ -364,7 +364,7 @@ def batch_expense_form() -> rx.Component:
         # 共同邮费录入 (不匹配预算时显示)
         rx.cond(
             FinanceState.batch_selected_budget_id == "",
-            form_field(
+            custom_form_field(
                 "订单共同邮费",
                 rx.input(
                     type="number",
@@ -388,7 +388,7 @@ def exchange_form() -> rx.Component:
     return rx.vstack(
         rx.callout("💱 货币资金互转 (此操作不会改变总净资产，只调整账户余额分布)", icon="info", color_scheme="violet", size="1", width="100%"),
         rx.grid(
-            form_field(
+            custom_form_field(
                 "扣款侧源币种",
                 rx.select.root(
                     rx.select.trigger(),
@@ -401,7 +401,7 @@ def exchange_form() -> rx.Component:
                     size="2", width="100%"
                 )
             ),
-            form_field(
+            custom_form_field(
                 "扣款现金账户",
                 rx.select.root(
                     rx.select.trigger(),
@@ -419,11 +419,11 @@ def exchange_form() -> rx.Component:
             columns="2", spacing="4", width="100%"
         ),
         rx.grid(
-            form_field(
+            custom_form_field(
                 "入账侧目标币种",
                 rx.input(value=FinanceState.ex_target_curr, disabled=True, size="2", width="100%")
             ),
-            form_field(
+            custom_form_field(
                 "入账现金账户",
                 rx.select.root(
                     rx.select.trigger(),
@@ -441,7 +441,7 @@ def exchange_form() -> rx.Component:
             columns="2", spacing="4", width="100%"
         ),
         rx.grid(
-            form_field(
+            custom_form_field(
                 "转出/流出金额",
                 rx.input(
                     type="number",
@@ -451,7 +451,7 @@ def exchange_form() -> rx.Component:
                     size="2", width="100%"
                 )
             ),
-            form_field(
+            custom_form_field(
                 "转入/入账金额",
                 rx.input(
                     type="number",
@@ -464,7 +464,7 @@ def exchange_form() -> rx.Component:
             ),
             columns="2", spacing="4", width="100%"
         ),
-        form_field(
+        custom_form_field(
             "兑换备注说明",
             rx.input(
                 placeholder="如：购汇、信用卡日元结算扣款等 (选填)",
@@ -480,7 +480,7 @@ def exchange_form() -> rx.Component:
 def debt_form() -> rx.Component:
     """场景 D: 债务管理"""
     return rx.vstack(
-        form_field(
+        custom_form_field(
             "债务操作类型",
             rx.select.root(
                 rx.select.trigger(),
@@ -499,8 +499,8 @@ def debt_form() -> rx.Component:
             # 新增债务子表单
             rx.vstack(
                 rx.grid(
-                    form_field("债务名称/欠款事由", rx.input(placeholder="如：工厂挂账货款、借款 (必填)", value=FinanceState.debt_name, on_change=FinanceState.set_debt_name, size="2")),
-                    form_field("借入价值去向", rx.select.root(
+                    custom_form_field("债务名称/欠款事由", rx.input(placeholder="如：工厂挂账货款、借款 (必填)", value=FinanceState.debt_name, on_change=FinanceState.set_debt_name, size="2")),
+                    custom_form_field("借入价值去向", rx.select.root(
                         rx.select.trigger(),
                         rx.select.content(
                             rx.select.item("存入流动资金 (拿到现金)", value="存入流动资金 (拿到现金)"),
@@ -512,12 +512,12 @@ def debt_form() -> rx.Component:
                 ),
                 rx.cond(
                     FinanceState.debt_dest != "存入流动资金 (拿到现金)",
-                    form_field("新增挂账资产名称", rx.input(placeholder="如：未付款的打包机 (必填)", value=FinanceState.debt_rel_content, on_change=FinanceState.set_debt_rel_content, size="2")),
+                    custom_form_field("新增挂账资产名称", rx.input(placeholder="如：未付款的打包机 (必填)", value=FinanceState.debt_rel_content, on_change=FinanceState.set_debt_rel_content, size="2")),
                     rx.fragment()
                 ),
                 rx.grid(
-                    form_field("债务金额", rx.input(type="number", placeholder="金额", value=FinanceState.debt_amount.to_string(), on_change=lambda v: FinanceState.set_debt_amount(rx.cond(v != "", v.to(float), 0.0)), size="2")),
-                    form_field("币种", rx.select.root(
+                    custom_form_field("债务金额", rx.input(type="number", placeholder="金额", value=FinanceState.debt_amount.to_string(), on_change=lambda v: FinanceState.set_debt_amount(rx.cond(v != "", v.to(float), 0.0)), size="2")),
+                    custom_form_field("币种", rx.select.root(
                         rx.select.trigger(),
                         rx.select.content(
                             rx.select.item("CNY", value="CNY"),
@@ -529,7 +529,7 @@ def debt_form() -> rx.Component:
                 ),
                 rx.cond(
                     FinanceState.debt_dest == "存入流动资金 (拿到现金)",
-                    form_field("收款现金账户", rx.select.root(
+                    custom_form_field("收款现金账户", rx.select.root(
                         rx.select.trigger(),
                         rx.select.content(
                             rx.foreach(
@@ -542,8 +542,8 @@ def debt_form() -> rx.Component:
                     rx.fragment()
                 ),
                 rx.grid(
-                    form_field("债权方/资金来源", rx.input(placeholder="如：工商银行、加工厂A", value=FinanceState.debt_source, on_change=FinanceState.set_debt_source, size="2")),
-                    form_field("备注说明", rx.input(placeholder="其他说明", value=FinanceState.debt_remark, on_change=FinanceState.set_debt_remark, size="2")),
+                    custom_form_field("债权方/资金来源", rx.input(placeholder="如：工商银行、加工厂A", value=FinanceState.debt_source, on_change=FinanceState.set_debt_source, size="2")),
+                    custom_form_field("备注说明", rx.input(placeholder="其他说明", value=FinanceState.debt_remark, on_change=FinanceState.set_debt_remark, size="2")),
                     columns="2", spacing="4", width="100%"
                 ),
                 spacing="3", width="100%"
@@ -554,7 +554,7 @@ def debt_form() -> rx.Component:
                     FinanceState.unsettled_debts.length() == 0,
                     rx.callout("✅ 当前无未结负债记录，债务清结完毕！", icon="check_check", color_scheme="green", size="1", width="100%"),
                     rx.vstack(
-                        form_field(
+                        custom_form_field(
                             "选择目标债务",
                             rx.select.root(
                                 rx.select.trigger(),
@@ -570,7 +570,7 @@ def debt_form() -> rx.Component:
                                 size="2", width="100%"
                             )
                         ),
-                        form_field(
+                        custom_form_field(
                             "偿还方式",
                             rx.select.root(
                                 rx.select.trigger(),
@@ -588,8 +588,8 @@ def debt_form() -> rx.Component:
                             # 资金偿还
                             rx.vstack(
                                 rx.grid(
-                                    form_field("偿还金额", rx.input(type="number", placeholder="金额", value=FinanceState.debt_repay_amount.to_string(), on_change=lambda v: FinanceState.set_debt_repay_amount(rx.cond(v != "", v.to(float), 0.0)), size="2")),
-                                    form_field("付款现金账户", rx.select.root(
+                                    custom_form_field("偿还金额", rx.input(type="number", placeholder="金额", value=FinanceState.debt_repay_amount.to_string(), on_change=lambda v: FinanceState.set_debt_repay_amount(rx.cond(v != "", v.to(float), 0.0)), size="2")),
+                                    custom_form_field("付款现金账户", rx.select.root(
                                         rx.select.trigger(),
                                         rx.select.content(
                                             rx.foreach(
@@ -605,7 +605,7 @@ def debt_form() -> rx.Component:
                             ),
                             # 资产抵消
                             rx.grid(
-                                form_field("抵消账面资产项", rx.select.root(
+                                custom_form_field("抵消账面资产项", rx.select.root(
                                     rx.select.trigger(),
                                     rx.select.content(
                                         rx.foreach(
@@ -615,11 +615,11 @@ def debt_form() -> rx.Component:
                                     ),
                                     value=FinanceState.debt_repay_offset_asset_id, on_change=FinanceState.set_debt_repay_offset_asset_id, size="2"
                                 )),
-                                form_field("抵消挂账金额", rx.input(type="number", placeholder="金额", value=FinanceState.debt_repay_amount.to_string(), on_change=lambda v: FinanceState.set_debt_repay_amount(rx.cond(v != "", v.to(float), 0.0)), size="2")),
+                                custom_form_field("抵消挂账金额", rx.input(type="number", placeholder="金额", value=FinanceState.debt_repay_amount.to_string(), on_change=lambda v: FinanceState.set_debt_repay_amount(rx.cond(v != "", v.to(float), 0.0)), size="2")),
                                 columns="2", spacing="4", width="100%"
                             )
                         ),
-                        form_field("偿还备注", rx.input(placeholder="其他还款说明 (选填)", value=FinanceState.debt_repay_remark, on_change=FinanceState.set_debt_repay_remark, size="2")),
+                        custom_form_field("偿还备注", rx.input(placeholder="其他还款说明 (选填)", value=FinanceState.debt_repay_remark, on_change=FinanceState.set_debt_repay_remark, size="2")),
                         spacing="3", width="100%"
                     )
                 ),
@@ -639,7 +639,7 @@ def fund_transfer_form() -> rx.Component:
             rx.callout("⚠️ 当前系统中的现金账户不足 2 个，无法执行内部划拨。", icon="triangle_alert", color_scheme="orange", size="1", width="100%"),
             rx.vstack(
                 rx.grid(
-                    form_field("转出账户 (From)", rx.select.root(
+                    custom_form_field("转出账户 (From)", rx.select.root(
                         rx.select.trigger(),
                         rx.select.content(
                             rx.foreach(
@@ -649,7 +649,7 @@ def fund_transfer_form() -> rx.Component:
                         ),
                         value=FinanceState.move_from_asset_id, on_change=FinanceState.set_move_from_asset_id, size="2"
                     )),
-                    form_field("转入账户 (To)", rx.select.root(
+                    custom_form_field("转入账户 (To)", rx.select.root(
                         rx.select.trigger(),
                         rx.select.content(
                             rx.foreach(
@@ -661,7 +661,7 @@ def fund_transfer_form() -> rx.Component:
                     )),
                     columns="2", spacing="4", width="100%"
                 ),
-                form_field(
+                custom_form_field(
                     "划拨金额",
                     rx.input(
                         type="number",
@@ -671,7 +671,7 @@ def fund_transfer_form() -> rx.Component:
                         size="2"
                     )
                 ),
-                form_field("划转备注", rx.input(placeholder="如：转入日常备用金账户 (选填)", value=FinanceState.move_desc, on_change=FinanceState.set_move_desc, size="2")),
+                custom_form_field("划转备注", rx.input(placeholder="如：转入日常备用金账户 (选填)", value=FinanceState.move_desc, on_change=FinanceState.set_move_desc, size="2")),
                 spacing="3", width="100%"
             )
         ),
@@ -691,8 +691,8 @@ def add_transaction_accordion() -> rx.Component:
             ),
             content=rx.vstack(
                 rx.grid(
-                    form_field("流水录入日期", rx.input(type="date", value=FinanceState.f_date, on_change=FinanceState.set_f_date, size="2")),
-                    form_field(
+                    custom_form_field("流水录入日期", rx.input(type="date", value=FinanceState.f_date, on_change=FinanceState.set_f_date, size="2")),
+                    custom_form_field(
                         "业务大类",
                         rx.select.root(
                             rx.select.trigger(),
@@ -865,7 +865,7 @@ def edit_transaction_accordion() -> rx.Component:
                 align="center",
             ),
             content=rx.vstack(
-                form_field(
+                custom_form_field(
                     "选择要修改的当页记录",
                     rx.select.root(
                         rx.select.trigger(),
@@ -888,8 +888,8 @@ def edit_transaction_accordion() -> rx.Component:
                     FinanceState.edit_selected_id != "",
                     rx.vstack(
                         rx.grid(
-                            form_field("日期", rx.input(type="date", value=FinanceState.edit_date, on_change=FinanceState.set_edit_date, size="2")),
-                            form_field("收支大类", rx.select.root(
+                            custom_form_field("日期", rx.input(type="date", value=FinanceState.edit_date, on_change=FinanceState.set_edit_date, size="2")),
+                            custom_form_field("收支大类", rx.select.root(
                                 rx.select.trigger(),
                                 rx.select.content(
                                     rx.select.item("收入", value="收入"),
@@ -900,11 +900,11 @@ def edit_transaction_accordion() -> rx.Component:
                             columns="2", spacing="4", width="100%"
                         ),
                         rx.grid(
-                            form_field("金额", rx.input(type="number", value=FinanceState.edit_amount.to_string(), on_change=lambda v: FinanceState.set_edit_amount(rx.cond(v != "", v.to(float), 0.0)), size="2")),
-                            form_field("具体分类", rx.input(value=FinanceState.edit_category, on_change=FinanceState.set_edit_category, size="2")),
+                            custom_form_field("金额", rx.input(type="number", value=FinanceState.edit_amount.to_string(), on_change=lambda v: FinanceState.set_edit_amount(rx.cond(v != "", v.to(float), 0.0)), size="2")),
+                            custom_form_field("具体分类", rx.input(value=FinanceState.edit_category, on_change=FinanceState.set_edit_category, size="2")),
                             columns="2", spacing="4", width="100%"
                         ),
-                        form_field("操作关联现金账户", rx.select.root(
+                        custom_form_field("操作关联现金账户", rx.select.root(
                             rx.select.trigger(),
                             rx.select.content(
                                 rx.foreach(
@@ -914,8 +914,8 @@ def edit_transaction_accordion() -> rx.Component:
                             ),
                             value=FinanceState.edit_acc_id, on_change=FinanceState.set_edit_acc_id, size="2"
                         )),
-                        form_field("相关页面网址", rx.input(value=FinanceState.edit_url, on_change=FinanceState.set_edit_url, size="2")),
-                        form_field("具体备注/明细说明", rx.input(value=FinanceState.edit_desc, on_change=FinanceState.set_edit_desc, size="2")),
+                        custom_form_field("相关页面网址", rx.input(value=FinanceState.edit_url, on_change=FinanceState.set_edit_url, size="2")),
+                        custom_form_field("具体备注/明细说明", rx.input(value=FinanceState.edit_desc, on_change=FinanceState.set_edit_desc, size="2")),
                         rx.button(
                             rx.icon("save", size=13), "保存修改内容",
                             on_click=FinanceState.submit_edit_record,
@@ -945,7 +945,7 @@ def delete_transaction_accordion() -> rx.Component:
                 align="center",
             ),
             content=rx.vstack(
-                form_field(
+                custom_form_field(
                     "选择要删除的流水记录",
                     rx.select.root(
                         rx.select.trigger(),

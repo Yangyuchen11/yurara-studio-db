@@ -116,7 +116,7 @@ def confirm_dialog(
     )
 
 
-def form_field(
+def custom_form_field(
     label: str,
     *inputs,
     required: bool = False,
@@ -125,27 +125,24 @@ def form_field(
     """
     表单字段包装器，提供统一的 label + input + helper text 布局。
     """
-    return rx.form.field(
-        rx.vstack(
-            rx.hstack(
-                rx.form.label(
-                    label,
-                    rx.cond(required, rx.text(" *", color="red", as_="span"), rx.fragment()),
-                    size="2",
-                    weight="medium",
-                ),
-                spacing="0",
+    return rx.vstack(
+        rx.hstack(
+            rx.text(
+                label,
+                rx.cond(required, rx.text(" *", color="red", as_="span"), rx.fragment()),
+                size="2",
+                weight="medium",
             ),
-            *inputs,
-            rx.cond(
-                helper != "",
-                rx.text(helper, size="1", color=rx.color("slate", 10)),
-                rx.fragment(),
-            ),
-            spacing="1",
-            align_items="start",
-            width="100%",
+            spacing="0",
         ),
+        *inputs,
+        rx.cond(
+            helper != "",
+            rx.text(helper, size="1", color=rx.color("slate", 10)),
+            rx.fragment(),
+        ),
+        spacing="1",
+        align_items="start",
         width="100%",
     )
 

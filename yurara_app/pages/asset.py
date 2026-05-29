@@ -6,7 +6,7 @@
 import reflex as rx
 from ..state.asset_state import AssetState, AssetItem, AssetLogItem
 from ..components.layout import page_layout
-from ..components.editable_table import data_card, form_field, empty_state
+from ..components.editable_table import data_card, custom_form_field, empty_state
 
 
 def asset_metric_card(label: str, value: rx.Var, description: str, icon: str, color_scheme: str = "violet") -> rx.Component:
@@ -46,9 +46,9 @@ def edit_asset_dialog() -> rx.Component:
                 margin_bottom="1rem"
             ),
             rx.vstack(
-                form_field("店名 / 来源 (必填)", rx.input(value=AssetState.edit_shop_name, on_change=AssetState.set_edit_shop_name, size="2")),
-                form_field("相关链接 / 网址", rx.input(value=AssetState.edit_url, on_change=AssetState.set_edit_url, size="2")),
-                form_field("备注说明", rx.input(value=AssetState.edit_remarks, on_change=AssetState.set_edit_remarks, size="2")),
+                custom_form_field("店名 / 来源 (必填)", rx.input(value=AssetState.edit_shop_name, on_change=AssetState.set_edit_shop_name, size="2")),
+                custom_form_field("相关链接 / 网址", rx.input(value=AssetState.edit_url, on_change=AssetState.set_edit_url, size="2")),
+                custom_form_field("备注说明", rx.input(value=AssetState.edit_remarks, on_change=AssetState.set_edit_remarks, size="2")),
                 rx.hstack(
                     rx.dialog.close(
                         rx.button("取消", variant="soft", color_scheme="gray", on_click=AssetState.close_edit_dialog)
@@ -80,7 +80,7 @@ def asset_write_off_card() -> rx.Component:
                 rx.callout("ℹ️ 当前没有可核销的资产 (剩余数量均为 0)", icon="info", color_scheme="blue", size="1", width="100%"),
                 rx.vstack(
                     rx.grid(
-                        form_field(
+                        custom_form_field(
                             "选择要核销的资产",
                             rx.select.root(
                                 rx.select.trigger(),
@@ -96,7 +96,7 @@ def asset_write_off_card() -> rx.Component:
                                 size="2"
                             )
                         ),
-                        form_field(
+                        custom_form_field(
                             "核销数量",
                             rx.input(
                                 type="number",
@@ -105,7 +105,7 @@ def asset_write_off_card() -> rx.Component:
                                 size="2"
                             )
                         ),
-                        form_field(
+                        custom_form_field(
                             "核销原因 (必填)",
                             rx.input(
                                 placeholder="如：损坏、折旧、丢失",
