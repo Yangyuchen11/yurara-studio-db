@@ -9,8 +9,7 @@ services:
     container_name: yurara-web-reflex
     restart: always
     ports:
-      - "8080:8080"  # Reflex 后端 + WebSocket
-      - "3000:3000"  # Reflex 前端（开发模式）
+      - "8080:8080"  # Reflex 统一生产端口（合并前后端）
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - APP_CREDENTIALS=${APP_CREDENTIALS}
@@ -18,11 +17,6 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
     networks:
       - yurara-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
 
   # ========================================
@@ -39,9 +33,6 @@ services:
       - DISCORD_ALLOWED_CHANNEL_ID=${DISCORD_ALLOWED_CHANNEL_ID}
     networks:
       - yurara-net
-    healthcheck:
-      disable: true
-
 networks:
   yurara-net:
     driver: bridge
