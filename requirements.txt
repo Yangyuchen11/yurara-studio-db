@@ -23,11 +23,3 @@ httpx
 
 # === Discord Bot (保持不变) ===
 discord.py
-
-# ============================================================
-# 以下为 Streamlit 版本依赖（并行运行期间保留）
-# 完全迁移到 Reflex 后可删除
-# ============================================================
-streamlit
-streamlit-option-menu
-streamlit-cookies-controller

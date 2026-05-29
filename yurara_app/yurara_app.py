@@ -32,34 +32,6 @@ from .state.sales_order_state import SalesOrderState
 from .state.presale_state import PresaleState
 from .state.product_state import ProductState
 
-
-# ---- 占位页面（后续逐步替换） ----
-
-def placeholder_page(title: str, icon: str = "construction") -> rx.Component:
-    """迁移进行中的临时占位页面。"""
-    from .components.layout import page_layout
-    return page_layout(
-        rx.center(
-            rx.vstack(
-                rx.icon(icon, size=48, color=rx.color("violet", 8)),
-                rx.heading(title, size="5"),
-                rx.badge("迁移进行中...", color_scheme="orange", variant="soft"),
-                rx.text(
-                    "此页面正在从 Streamlit 迁移到 Reflex，暂时使用占位页面。",
-                    size="2",
-                    color=rx.color("slate", 10),
-                    text_align="center",
-                ),
-                spacing="3",
-                align="center",
-            ),
-            padding="4rem",
-        ),
-        title=title,
-    )
-
-
-
 # ---- 全局样式 ----
 
 GLOBAL_STYLE = """
