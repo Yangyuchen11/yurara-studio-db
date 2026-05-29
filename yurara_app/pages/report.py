@@ -220,21 +220,36 @@ def report_dashboard() -> rx.Component:
             rx.card(
                 rx.vstack(
                     rx.text("收支流向绝对金额排行 (元)", size="2", weight="bold"),
-                    rx.recharts.responsive_container(
-                        rx.recharts.bar_chart(
-                            rx.recharts.bar(
-                                data_key="绝对金额(元)",
-                                stroke=rx.color("violet", 9),
-                                fill=rx.color("violet", 8),
-                            ),
-                            rx.recharts.x_axis(data_key="name", style={"fontSize": "9px"}),
-                            rx.recharts.y_axis(style={"fontSize": "9px"}),
-                            rx.recharts.tooltip(),
-                            rx.recharts.cartesian_grid(stroke_dasharray="3 3"),
-                            data=ReportState.chart_bar_data,
+                    rx.vstack(
+                        rx.foreach(
+                            ReportState.chart_bar_data,
+                            lambda item: rx.vstack(
+                                rx.hstack(
+                                    rx.text(item["name"], size="1", weight="medium"),
+                                    rx.spacer(),
+                                    rx.text(item["amount_str"], size="1", weight="bold", color=rx.color("violet", 11)),
+                                    width="100%",
+                                ),
+                                rx.box(
+                                    rx.box(
+                                        width=item["width_pct"],
+                                        height="6px",
+                                        background="linear-gradient(90deg, var(--violet-9), var(--fuchsia-9))",
+                                        border_radius="3px",
+                                    ),
+                                    width="100%",
+                                    height="6px",
+                                    background="var(--slate-4)",
+                                    border_radius="3px",
+                                    overflow="hidden",
+                                ),
+                                width="100%",
+                                spacing="1",
+                            )
                         ),
                         width="100%",
-                        height=250,
+                        spacing="3",
+                        padding="0.5rem 0",
                     ),
                     width="100%",
                     spacing="3"
@@ -280,21 +295,43 @@ def report_dashboard() -> rx.Component:
                 rx.card(
                     rx.vstack(
                         rx.text("按月份净利润走势图 (CNY)", size="2", weight="bold"),
-                        rx.recharts.responsive_container(
-                            rx.recharts.line_chart(
-                                rx.recharts.line(
-                                    data_key="净利润",
-                                    stroke=rx.color("violet", 9),
-                                    fill=rx.color("violet", 8),
-                                ),
-                                rx.recharts.x_axis(data_key="month", style={"fontSize": "9px"}),
-                                rx.recharts.y_axis(style={"fontSize": "9px"}),
-                                rx.recharts.tooltip(),
-                                rx.recharts.cartesian_grid(stroke_dasharray="3 3"),
-                                data=ReportState.trend_chart_data,
+                        rx.hstack(
+                            rx.foreach(
+                                ReportState.trend_chart_data,
+                                lambda item: rx.vstack(
+                                    rx.center(
+                                        rx.tooltip(
+                                            rx.box(
+                                                height=item["height_str"],
+                                                width="14px",
+                                                background=rx.cond(
+                                                    item["is_positive"],
+                                                    "linear-gradient(180deg, var(--green-9), var(--emerald-10))",
+                                                    "linear-gradient(180deg, var(--red-9), var(--crimson-10))",
+                                                ),
+                                                border_radius="4px 4px 0 0",
+                                                transition="all 0.2s ease",
+                                                _hover={
+                                                    "opacity": 0.8,
+                                                    "transform": "scaleY(1.05)",
+                                                },
+                                            ),
+                                            content=item["profit_str"],
+                                        ),
+                                        height="100px",
+                                        align_items="end",
+                                        width="100%",
+                                    ),
+                                    rx.text(item["month"], size="1", color=rx.color("slate", 10), weight="medium"),
+                                    spacing="1",
+                                    align="center",
+                                    width="32px",
+                                )
                             ),
                             width="100%",
-                            height=250,
+                            justify="between",
+                            align_items="end",
+                            padding="1.5rem 0.5rem 0.5rem 0.5rem",
                         ),
                         width="100%",
                         spacing="3"
