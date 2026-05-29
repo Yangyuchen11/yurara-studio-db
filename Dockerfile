@@ -25,6 +25,7 @@ COPY . .
 # 初始化并构建前端静态资源
 RUN reflex init --loglevel debug || true
 RUN reflex export --frontend-only --no-zip 2>/dev/null || true
+RUN mkdir -p /app/.web
 
 
 # ==========================================
@@ -54,8 +55,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制应用代码
 COPY . .
 
-# 复制前端构建产物（如果有）
-COPY --from=frontend-builder /app/.web /app/.web 2>/dev/null || true
+# 复制前端构建产物
+COPY --from=frontend-builder /app/.web /app/.web
 
 # 暴露端口
 # 8080: Reflex 后端（API + WebSocket）
