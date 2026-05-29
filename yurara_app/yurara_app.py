@@ -224,8 +224,11 @@ app._api.add_route("/backup", download_backup, methods=["GET"])
 # ==========================================
 # 自动数据库结构建立与迁移 (正式环境 / SQLite)
 # ==========================================
-try:
-    from database import Base, engine
-    Base.metadata.create_all(bind=engine)
-except Exception as e:
-    print(f"[Reflex App] Database auto-migration / init failed: {e}")
+import sys
+# 编译与构建阶段（如 reflex init 或 reflex export）无需连接真实数据库，防止云端 Build 环境网络隔离导致连接超时失败
+if not any(arg in sys.argv for arg in ["init", "export"]):
+    try:
+        from database import Base, engine
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        print(f"[Reflex App] Database auto-migration / init failed: {e}")
