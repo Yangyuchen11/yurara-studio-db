@@ -95,10 +95,12 @@ COPY --from=frontend-builder /app/.web /app/.web
 # 复制 Caddy 配置
 COPY Caddyfile /etc/caddy/Caddyfile
 
+# 复制启动脚本
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
 # 暴露对外端口（Caddy 监听）
 EXPOSE 8080
 
-# 启动脚本：同时启动 Reflex 后端 + Caddy 反向代理
-CMD reflex run --env prod --backend-only --backend-host 0.0.0.0 --backend-port ${BACKEND_PORT} & \
-    sleep 3 && \
-    caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+# 使用启动脚本（输出详细日志，方便 Zeabur 调试）
+CMD ["/app/start.sh"]
