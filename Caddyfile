@@ -1,0 +1,23 @@
+:{$PORT:8080}
+
+encode gzip
+
+# WebSocket 和 API 请求 → 后端
+@backend {
+    path /_event/*
+    path /ping
+    path /_ping
+    path /upload
+    path /backup
+}
+
+handle @backend {
+    reverse_proxy localhost:8000
+}
+
+# 静态前端资源（由 reflex export 生成）
+handle {
+    root * /app/.web/_static
+    try_files {path} /index.html
+    file_server
+}
