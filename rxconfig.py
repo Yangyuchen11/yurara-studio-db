@@ -15,20 +15,23 @@ is_prod = (
 )
 
 if is_prod:
-    # 生产环境：后端统一监听 PORT（8080），前端通过后端 serve，不设 frontend_port
-    backend_port = int(os.getenv("PORT", "8080"))
-    api_url = os.getenv("API_URL", f"http://localhost:{backend_port}")
-    extra = {}
+    # 生产模式：前后端必须用同一端口（Reflex 要求）
+    # Zeabur 对外暴露 PORT（默认 8080）
+    port = int(os.getenv("PORT", "8080"))
+    backend_port = port
+    frontend_port = port          # 必须和 backend_port 相同
+    api_url = os.getenv("API_URL", f"http://localhost:{port}")
 else:
-    # 开发环境：后端 8000，前端 3000（Reflex 默认双端口开发模式）
+    # 开发模式：后端 8000，前端 3000（Reflex 默认双端口）
     backend_port = int(os.getenv("BACKEND_PORT", "8000"))
+    frontend_port = 3000
     api_url = os.getenv("API_URL", "http://localhost:8000")
-    extra = {"frontend_port": 3000}
 
 config = rx.Config(
     app_name="yurara_app",
     api_url=api_url,
     backend_port=backend_port,
+    frontend_port=frontend_port,
     telemetry_enabled=False,
     disable_plugins=[SitemapPlugin],
     plugins=[
@@ -42,5 +45,4 @@ config = rx.Config(
             )
         ),
     ],
-    **extra,
 )
