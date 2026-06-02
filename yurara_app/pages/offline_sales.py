@@ -114,6 +114,25 @@ def ledger_order_row(o: POSOrderRow) -> rx.Component:
         rx.table.cell(rx.text(o.original_amount.to_string(), size="1")),
         rx.table.cell(rx.text(o.received_amount.to_string(), size="1", weight="bold", color="green")),
         rx.table.cell(rx.text(o.notes, size="1", line_clamp=1, color=rx.color("slate", 9))),
+        rx.table.cell(
+            confirm_dialog(
+                trigger=rx.button(
+                    rx.icon("trash-2", size=14),
+                    "删除并回滚",
+                    color_scheme="red",
+                    size="1",
+                    variant="soft",
+                ),
+                title="确定要删除此订单并回滚吗？",
+                description=rx.fragment(
+                    "此操作将永久删除展会订单 ",
+                    o.order_no,
+                    "，回滚已扣减的模板分配额度、还原出货仓库对应的实物库存，并全额扣减已记账的现金流水与资产！是否确定？"
+                ),
+                confirm_label="确定删除",
+                on_confirm=OfflineSalesState.delete_offline_order(o.order_no),
+            )
+        ),
     )
 
 
@@ -208,6 +227,13 @@ def cashier_pos_tab() -> rx.Component:
                     variant="soft",
                     color_scheme="violet"
                 ),
+                rx.button(
+                    rx.cond(OfflineSalesState.is_fullscreen, "📴 退出专注全屏", "📺 开启收银全屏"),
+                    on_click=OfflineSalesState.toggle_fullscreen,
+                    size="2",
+                    variant="soft",
+                    color_scheme=rx.cond(OfflineSalesState.is_fullscreen, "orange", "blue")
+                ),
                 spacing="2",
                 align="center",
                 width="100%"
@@ -229,6 +255,7 @@ def cashier_pos_tab() -> rx.Component:
                                 rx.table.column_header_cell("交易额", size="1"),
                                 rx.table.column_header_cell("实收记账额", size="1"),
                                 rx.table.column_header_cell("流向备注", size="1"),
+                                rx.table.column_header_cell("操作", size="1"),
                             )
                         ),
                         rx.table.body(
@@ -264,28 +291,35 @@ def cashier_pos_tab() -> rx.Component:
                         ),
                         
                         # 非全屏模式下：原版底部交易记录
-                        rx.divider(margin_top="1.5rem"),
-                        rx.text("📋 近期本地模板成交流水 (快捷对账)", size="1", weight="bold", color="slate"),
-                        rx.scroll_area(
-                            rx.table.root(
-                                rx.table.header(
-                                    rx.table.row(
-                                        rx.table.column_header_cell("交易单号", size="1"),
-                                        rx.table.column_header_cell("成交日期", size="1"),
-                                        rx.table.column_header_cell("商品明细", size="1"),
-                                        rx.table.column_header_cell("原价小计", size="1"),
-                                        rx.table.column_header_cell("实收净额", size="1"),
-                                        rx.table.column_header_cell("备注", size="1"),
-                                    )
+                        rx.cond(
+                            ~OfflineSalesState.is_fullscreen,
+                            rx.fragment(
+                                rx.divider(margin_top="1.5rem"),
+                                rx.text("📋 近期本地模板成交流水 (快捷对账)", size="1", weight="bold", color="slate"),
+                                rx.scroll_area(
+                                    rx.table.root(
+                                        rx.table.header(
+                                            rx.table.row(
+                                                rx.table.column_header_cell("交易单号", size="1"),
+                                                rx.table.column_header_cell("成交日期", size="1"),
+                                                rx.table.column_header_cell("商品明细", size="1"),
+                                                rx.table.column_header_cell("原价小计", size="1"),
+                                                rx.table.column_header_cell("实收净额", size="1"),
+                                                rx.table.column_header_cell("备注", size="1"),
+                                                rx.table.column_header_cell("操作", size="1"),
+                                            )
+                                        ),
+                                        rx.table.body(
+                                            rx.foreach(OfflineSalesState.pos_orders, ledger_order_row)
+                                        ),
+                                        size="1",
+                                        width="100%"
+                                    ),
+                                    max_height="220px",
+                                    width="100%"
                                 ),
-                                rx.table.body(
-                                    rx.foreach(OfflineSalesState.pos_orders, ledger_order_row)
-                                ),
-                                size="1",
-                                width="100%"
                             ),
-                            max_height="220px",
-                            width="100%"
+                            rx.fragment()
                         ),
                         spacing="3",
                         width="100%"
@@ -604,14 +638,18 @@ def offline_sales_page() -> rx.Component:
     """线下销售POS主页面入口"""
     return page_layout(
         rx.vstack(
-            rx.tabs.root(
-                rx.tabs.list(
-                    rx.tabs.trigger("💻 POS 收银台", value="pos"),
-                    rx.tabs.trigger("⚙️ 模板配置", value="template"),
+            rx.cond(
+                OfflineSalesState.is_fullscreen,
+                rx.fragment(),
+                rx.tabs.root(
+                    rx.tabs.list(
+                        rx.tabs.trigger("💻 POS 收银台", value="pos"),
+                        rx.tabs.trigger("⚙️ 模板配置", value="template"),
+                    ),
+                    value=OfflineSalesState.active_tab,
+                    on_change=OfflineSalesState.select_tab,
+                    width="100%",
                 ),
-                value=OfflineSalesState.active_tab,
-                on_change=OfflineSalesState.select_tab,
-                width="100%",
             ),
             
             rx.card(
@@ -626,5 +664,7 @@ def offline_sales_page() -> rx.Component:
             spacing="4",
             width="100%"
         ),
-        title="🏪 线下展会模式"
+        title="🏪 线下展会模式",
+        hide_sidebar=OfflineSalesState.is_fullscreen,
+        hide_header=OfflineSalesState.is_fullscreen,
     )

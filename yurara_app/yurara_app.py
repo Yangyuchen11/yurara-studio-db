@@ -130,6 +130,62 @@ html {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--gray-7);
 }
+
+/* 输入框与下拉选择框的UI样式一致性：白色背景，黑色文本，灰色提示字，紫色高亮 */
+.rt-TextFieldRoot, .rt-SelectTrigger {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    border: 1px solid var(--gray-5) !important;
+}
+
+.rt-TextFieldRoot:focus-within, .rt-SelectTrigger:focus {
+    border-color: var(--violet-8) !important;
+    box-shadow: 0 0 0 2px var(--violet-4) !important;
+}
+
+/* 提示用字（Placeholder）保持为灰色 */
+.rt-TextFieldInput::placeholder, 
+.rt-SelectTrigger[data-placeholder] > span {
+    color: var(--gray-8) !important;
+}
+
+/* 下拉菜单弹出框与选项样式 */
+.rt-SelectContent {
+    background-color: #ffffff !important;
+    border: 1px solid var(--gray-4) !important;
+}
+
+.rt-SelectItem {
+    color: #000000 !important;
+}
+
+.rt-SelectItem:hover, .rt-SelectItem[data-highlighted] {
+    background-color: var(--violet-9) !important;
+    color: #ffffff !important;
+}
+
+/* 解决折叠面板内部所有 Callout 提示框字体在深色背景下不清晰的问题（显示为白字与半透明白框） */
+.rt-AccordionContent .rt-CalloutRoot {
+    background-color: rgba(255, 255, 255, 0.06) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+.rt-AccordionContent .rt-CalloutRoot * {
+    color: #ffffff !important;
+    font-weight: 500 !important;
+}
+
+/* 解决折叠面板内部表格标头和内容呈现黑色无法看清规整的问题，并左对齐表头与单元格以完美对齐下方输入框 */
+.rt-AccordionContent .rt-TableRoot,
+.rt-AccordionContent .rt-TableColumnHeaderCell,
+.rt-AccordionContent .rt-TableCell,
+.rt-AccordionContent .rt-TableColumnHeaderCell *,
+.rt-AccordionContent .rt-TableCell * {
+    color: #ffffff !important;
+}
+.rt-AccordionContent .rt-TableColumnHeaderCell,
+.rt-AccordionContent .rt-TableCell {
+    text-align: left !important;
+}
 """
 
 
@@ -180,43 +236,50 @@ app.add_page(index_page, route="/", on_load=rx.redirect("/finance"))
 
 # === 自定义 API：全量数据备份 ZIP 下载接口 ===
 def download_backup(request):
-    from yurara_app.state.app_state import get_cached_engine, TABLES_MAP
-    from sqlalchemy.orm import sessionmaker
-    from starlette.responses import StreamingResponse
-    import io
-    import zipfile
-    import pandas as pd
-    from datetime import datetime
-
-    test_mode = request.query_params.get("test_mode", "false")
-    is_test = test_mode.lower() == "true"
-    engine = get_cached_engine(is_test)
-    Session = sessionmaker(bind=engine)
-    db = Session()
+    import traceback
     try:
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w") as zf:
-            for file_name, table_name, model_cls in TABLES_MAP:
-                try:
-                    df_export = pd.read_sql(db.query(model_cls).statement, db.bind)
-                    csv_bytes = df_export.to_csv(index=False).encode('utf-8-sig')
-                    zf.writestr(file_name, csv_bytes)
-                except Exception:
-                    pass
-        zip_buffer.seek(0)
-        current_time = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        env_suffix = "test" if is_test else "prod"
-        filename = f"yurara-db-backup_{env_suffix}_{current_time}.zip"
-        return StreamingResponse(
-            zip_buffer,
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": f"attachment; filename={filename}",
-                "Access-Control-Expose-Headers": "Content-Disposition"
-            }
-        )
-    finally:
-        db.close()
+        from yurara_app.state.app_state import get_cached_engine, TABLES_MAP
+        from sqlalchemy.orm import sessionmaker
+        from starlette.responses import Response
+        import io
+        import zipfile
+        import pandas as pd
+        from datetime import datetime
+
+        test_mode = request.query_params.get("test_mode", "false")
+        is_test = test_mode.lower() == "true"
+        engine = get_cached_engine(is_test)
+        Session = sessionmaker(bind=engine)
+        db = Session()
+        try:
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w") as zf:
+                for file_name, table_name, model_cls in TABLES_MAP:
+                    try:
+                        df_export = pd.read_sql(db.query(model_cls).statement, db.bind)
+                        csv_bytes = df_export.to_csv(index=False).encode('utf-8-sig')
+                        zf.writestr(file_name, csv_bytes)
+                    except Exception as e_table:
+                        print(f"[Backup API] Failed to export table {table_name}: {e_table}")
+            zip_buffer.seek(0)
+            current_time = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+            env_suffix = "test" if is_test else "prod"
+            filename = f"yurara-db-backup_{env_suffix}_{current_time}.zip"
+            return Response(
+                zip_buffer.getvalue(),
+                media_type="application/zip",
+                headers={
+                    "Content-Disposition": f"attachment; filename={filename}",
+                    "Access-Control-Expose-Headers": "Content-Disposition"
+                }
+            )
+        finally:
+            db.close()
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[Backup API] Critical Error: {e}\n{tb}")
+        from starlette.responses import PlainTextResponse
+        return PlainTextResponse(f"Backup Error: {e}\n{tb}", status_code=500)
 
 app._api.add_route("/backup", download_backup, methods=["GET"])
 

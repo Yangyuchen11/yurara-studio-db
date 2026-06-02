@@ -63,6 +63,7 @@ class OfflineSalesState(AppState):
     selected_account_id: int = 0
     show_history_only: bool = False
     pos_orders: list[POSOrderRow] = []
+    is_fullscreen: bool = False
     
     # 模板配置/编辑状态
     is_edit_mode: bool = False
@@ -460,6 +461,41 @@ class OfflineSalesState(AppState):
     @rx.event
     def toggle_history_only(self):
         self.show_history_only = not self.show_history_only
+
+    @rx.event
+    def toggle_fullscreen(self):
+        self.is_fullscreen = not self.is_fullscreen
+        if self.is_fullscreen:
+            return rx.call_script(
+                "if (!document.fullscreenElement) { document.documentElement.requestFullscreen().catch(err => console.log(err)); }"
+            )
+        else:
+            return rx.call_script(
+                "if (document.fullscreenElement) { document.exitFullscreen().catch(err => console.log(err)); }"
+            )
+
+    @rx.event
+    def delete_offline_order(self, order_no: str):
+        """删除线下POS订单，回滚模板余量、还原实物库存、流水与资金"""
+        db = self.get_db()
+        try:
+            service = OfflineSalesService(db)
+            msg = service.delete_offline_order(order_no)
+            
+            # 重新加载列表和数据
+            self.load_templates_list(service)
+            self.load_template_orders(service)
+            
+            # 同步缓存
+            from cache_manager import sync_all_caches
+            sync_all_caches()
+            
+            return rx.toast(f"成功: {msg}")
+        except Exception as e:
+            db.rollback()
+            return rx.toast(f"删除回滚失败: {e}", level="error")
+        finally:
+            db.close()
 
     # --- 模板配置新建/修改 Setter 与动作 ---
     @rx.event

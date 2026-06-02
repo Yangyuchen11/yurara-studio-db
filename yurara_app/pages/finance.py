@@ -149,29 +149,30 @@ def batch_editor_table() -> rx.Component:
         rx.table.root(
             rx.table.header(
                 rx.table.row(
-                    rx.table.column_header_cell("内容/名称", size="1"),
-                    rx.table.column_header_cell("金额", size="1"),
-                    rx.table.column_header_cell("数量", size="1"),
-                    rx.table.column_header_cell("具体备注", size="1"),
-                    rx.table.column_header_cell("网址", size="1"),
-                    rx.table.column_header_cell("", size="1"),
+                    rx.table.column_header_cell("内容/名称", size="1", style={"width": "16.66%"}),
+                    rx.table.column_header_cell("金额", size="1", style={"width": "16.66%"}),
+                    rx.table.column_header_cell("数量", size="1", style={"width": "16.66%"}),
+                    rx.table.column_header_cell("具体备注", size="1", style={"width": "16.66%"}),
+                    rx.table.column_header_cell("网址", size="1", style={"width": "16.66%"}),
+                    rx.table.column_header_cell("", size="1", style={"width": "16.66%"}),
                 )
             ),
             rx.table.body(
                 rx.foreach(
                     FinanceState.batch_items,
                     lambda item: rx.table.row(
-                        rx.table.cell(rx.text(item.name, size="1")),
-                        rx.table.cell(rx.text(item.amount.to_string(), size="1")),
-                        rx.table.cell(rx.text(item.qty.to_string(), size="1")),
-                        rx.table.cell(rx.text(item.desc, size="1")),
-                        rx.table.cell(rx.text(item.url, size="1", line_clamp=1)),
+                        rx.table.cell(rx.text(item.name, size="1"), style={"width": "16.66%"}),
+                        rx.table.cell(rx.text(item.amount.to_string(), size="1"), style={"width": "16.66%"}),
+                        rx.table.cell(rx.text(item.qty.to_string(), size="1"), style={"width": "16.66%"}),
+                        rx.table.cell(rx.text(item.desc, size="1"), style={"width": "16.66%"}),
+                        rx.table.cell(rx.text(item.url, size="1", line_clamp=1), style={"width": "16.66%"}),
                         rx.table.cell(
                             rx.icon_button(
                                 rx.icon("trash_2", size=12),
                                 on_click=lambda: FinanceState.remove_batch_item(item.key),
                                 size="1", variant="ghost", color_scheme="red"
-                            )
+                            ),
+                            style={"width": "16.66%"}
                         )
                     )
                 )
@@ -191,27 +192,26 @@ def batch_editor_table() -> rx.Component:
                     rx.button(
                         rx.icon("plus", size=13), "添加物品",
                         on_click=FinanceState.add_batch_item,
-                        size="1", color_scheme="violet"
+                        size="1",
+                        style={"background": "#10b981", "color": "white", "font-weight": "bold"}
                     ),
                     margin_top="1rem"
                 ),
                 columns="6", spacing="3", width="100%"
             ),
-            padding="0.75rem",
-            background=rx.color("slate", 2),
-            border_radius="6px",
-            width="100%"
+            padding="0.75rem 0",
+            width="100%",
         ),
         
         # 结算面板
         rx.hstack(
             rx.spacer(),
             rx.vstack(
-                rx.hstack(rx.text("物品小计:", size="1"), rx.text(FinanceState.batch_items_subtotal_str, weight="bold", size="1"), spacing="1"),
-                rx.hstack(rx.text("共同邮费:", size="1"), rx.text(FinanceState.batch_shipping_fee.to_string(), weight="bold", size="1"), spacing="1"),
+                rx.hstack(rx.text("物品小计:", size="1", color="white"), rx.text(FinanceState.batch_items_subtotal_str, weight="bold", size="1", color="white"), spacing="1"),
+                rx.hstack(rx.text("共同邮费:", size="1", color="white"), rx.text(FinanceState.batch_shipping_fee.to_string(), weight="bold", size="1", color="white"), spacing="1"),
                 rx.hstack(
-                    rx.text("订单扣款总计:", size="2", weight="bold", color=rx.color("violet", 11)),
-                    rx.text(FinanceState.batch_total_with_shipping_str, size="3", weight="bold", color=rx.color("violet", 11)),
+                    rx.text("订单扣款总计:", size="2", weight="bold", color="white"),
+                    rx.text(FinanceState.batch_total_with_shipping_str, size="3", weight="bold", color="#d8b4fe"),
                     spacing="1"
                 ),
                 align_items="end", spacing="1"
@@ -237,7 +237,7 @@ def batch_expense_form() -> rx.Component:
                 custom_form_field(
                     "归属商品",
                     rx.select.root(
-                        rx.select.trigger(),
+                        rx.select.trigger(width="400px"),
                         rx.select.content(
                             rx.foreach(
                                 FinanceState.products_list,
@@ -276,7 +276,7 @@ def batch_expense_form() -> rx.Component:
                 custom_form_field(
                     "共同成本分类",
                     rx.select.root(
-                        rx.select.trigger(),
+                        rx.select.trigger(width="400px"),
                         rx.select.content(
                             rx.foreach(PRODUCT_COST_CATEGORIES, lambda cat: rx.select.item(cat, value=cat))
                         ),
@@ -296,7 +296,7 @@ def batch_expense_form() -> rx.Component:
             custom_form_field(
                 "🎯 预算项目匹配",
                 rx.select.root(
-                    rx.select.trigger(),
+                    rx.select.trigger(width="400px"),
                     rx.select.content(
                         rx.foreach(
                             FinanceState.budgets_list,
@@ -314,8 +314,8 @@ def batch_expense_form() -> rx.Component:
         
         # 匹配预算警告提示
         rx.cond(
-            FinanceState.batch_selected_budget_id != "",
-            rx.callout("✅ 当前已匹配特定预算项：此模式下仅支持添加一条物品明细用于累加实付成本，且共同邮费将设为0。", icon="info", size="1", color_scheme="green", width="100%"),
+            (FinanceState.batch_selected_budget_id != "") & (FinanceState.batch_selected_budget_id != "0"),
+            rx.callout("✅ 当前已匹配特定预算项：此模式下仅支持添加一条物品明细用于累加实付成本，且共同邮费将设为0。", icon="info", size="1", color_scheme="blue", width="100%"),
             rx.fragment()
         ),
         
@@ -690,12 +690,12 @@ def add_transaction_accordion() -> rx.Component:
                 align="center",
             ),
             content=rx.vstack(
-                rx.grid(
-                    custom_form_field("流水录入日期", rx.input(type="date", value=FinanceState.f_date, on_change=FinanceState.set_f_date, size="2")),
+                rx.hstack(
+                    custom_form_field("流水录入日期", rx.input(type="date", value=FinanceState.f_date, on_change=FinanceState.set_f_date, size="2"), width="auto"),
                     custom_form_field(
                         "业务大类",
                         rx.select.root(
-                            rx.select.trigger(),
+                            rx.select.trigger(width="220px"),
                             rx.select.content(
                                 rx.select.item("支出", value="支出"),
                                 rx.select.item("收入", value="收入"),
@@ -706,9 +706,12 @@ def add_transaction_accordion() -> rx.Component:
                             value=FinanceState.rec_type,
                             on_change=FinanceState.set_rec_type,
                             size="2"
-                        )
+                        ),
+                        width="auto"
                     ),
-                    columns="2", spacing="4", width="100%", padding_bottom="0.5rem"
+                    spacing="3",
+                    align="end",
+                    padding_bottom="0.5rem"
                 ),
                 rx.divider(),
                 
@@ -740,7 +743,10 @@ def add_transaction_accordion() -> rx.Component:
                     style={"background": "linear-gradient(135deg, #6366f1, #8b5cf6)", "color": "white"},
                     width="100%",
                 ),
-                spacing="4", width="100%"
+                spacing="4",
+                padding="1.5rem 0",
+                width="100%",
+                align_items="start"
             ),
             value="add-transaction"
         ),
@@ -868,7 +874,7 @@ def edit_transaction_accordion() -> rx.Component:
                 custom_form_field(
                     "选择要修改的当页记录",
                     rx.select.root(
-                        rx.select.trigger(),
+                        rx.select.trigger(width="400px"),
                         rx.select.content(
                             rx.foreach(
                                 FinanceState.records,
@@ -887,25 +893,27 @@ def edit_transaction_accordion() -> rx.Component:
                 rx.cond(
                     FinanceState.edit_selected_id != "",
                     rx.vstack(
-                        rx.grid(
-                            custom_form_field("日期", rx.input(type="date", value=FinanceState.edit_date, on_change=FinanceState.set_edit_date, size="2")),
+                        rx.hstack(
+                            custom_form_field("日期", rx.input(type="date", value=FinanceState.edit_date, on_change=FinanceState.set_edit_date, size="2"), width="auto"),
                             custom_form_field("收支大类", rx.select.root(
-                                rx.select.trigger(),
+                                rx.select.trigger(width="220px"),
                                 rx.select.content(
                                     rx.select.item("收入", value="收入"),
                                     rx.select.item("支出", value="支出")
                                 ),
                                 value=FinanceState.edit_type, on_change=FinanceState.set_edit_type, size="2"
-                            )),
-                            columns="2", spacing="4", width="100%"
+                            ), width="auto"),
+                            spacing="3",
+                            align="end"
                         ),
-                        rx.grid(
-                            custom_form_field("金额", rx.input(type="number", value=FinanceState.edit_amount.to_string(), on_change=lambda v: FinanceState.set_edit_amount(rx.cond(v != "", v.to(float), 0.0)), size="2")),
-                            custom_form_field("具体分类", rx.input(value=FinanceState.edit_category, on_change=FinanceState.set_edit_category, size="2")),
-                            columns="2", spacing="4", width="100%"
+                        rx.hstack(
+                            custom_form_field("金额", rx.input(type="number", value=FinanceState.edit_amount.to_string(), on_change=lambda v: FinanceState.set_edit_amount(rx.cond(v != "", v.to(float), 0.0)), size="2"), width="auto"),
+                            custom_form_field("具体分类", rx.input(value=FinanceState.edit_category, on_change=FinanceState.set_edit_category, size="2"), width="auto"),
+                            spacing="3",
+                            align="end"
                         ),
                         custom_form_field("操作关联现金账户", rx.select.root(
-                            rx.select.trigger(),
+                            rx.select.trigger(width="220px"),
                             rx.select.content(
                                 rx.foreach(
                                     FinanceState.cash_accounts,
@@ -913,7 +921,7 @@ def edit_transaction_accordion() -> rx.Component:
                                 )
                             ),
                             value=FinanceState.edit_acc_id, on_change=FinanceState.set_edit_acc_id, size="2"
-                        )),
+                        ), width="auto"),
                         custom_form_field("相关页面网址", rx.input(value=FinanceState.edit_url, on_change=FinanceState.set_edit_url, size="2")),
                         custom_form_field("具体备注/明细说明", rx.input(value=FinanceState.edit_desc, on_change=FinanceState.set_edit_desc, size="2")),
                         rx.button(
@@ -925,7 +933,10 @@ def edit_transaction_accordion() -> rx.Component:
                     ),
                     rx.fragment()
                 ),
-                spacing="3", width="100%"
+                spacing="3",
+                padding="1.5rem 0",
+                width="100%",
+                align_items="start"
             ),
             value="edit-transaction"
         ),
@@ -948,7 +959,7 @@ def delete_transaction_accordion() -> rx.Component:
                 custom_form_field(
                     "选择要删除的流水记录",
                     rx.select.root(
-                        rx.select.trigger(),
+                        rx.select.trigger(width="400px"),
                         rx.select.content(
                             rx.foreach(
                                 FinanceState.records,
@@ -979,7 +990,10 @@ def delete_transaction_accordion() -> rx.Component:
                     ),
                     rx.fragment()
                 ),
-                spacing="3", width="100%"
+                spacing="3",
+                padding="1.5rem 0",
+                width="100%",
+                align_items="start"
             ),
             value="delete-transaction"
         ),

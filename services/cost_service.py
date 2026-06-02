@@ -107,6 +107,10 @@ class CostService:
         if not item_to_del:
             raise ValueError("项目不存在")
 
+        # 如果是预算设定项且实际花费大于 0，禁止直接删除
+        if item_to_del.supplier == "预算设定" and (item_to_del.actual_cost or 0.0) > 0.01:
+            raise ValueError("⚠️ 无法删除：该预算项已包含实际付款（实付金额大于 0）。如需删除，请先在财务流水模块中删除对应的实付记录。")
+
         product_id = item_to_del.product_id
 
         if item_to_del.finance_record_id:

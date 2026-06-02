@@ -59,29 +59,35 @@ def create_account_accordion() -> rx.Component:
                 align="center",
             ),
             content=rx.vstack(
-                rx.text("在此处可以开设备用金、独立银行卡等专属现金账户。", size="1", color=rx.color("slate", 9)),
-                rx.grid(
+                rx.text("在此处可以开设备用金、独立银行卡等专属现金账户。", size="1", color=rx.color("slate", 10)),
+                rx.hstack(
                     custom_form_field(
                         "账户名称",
                         rx.input(
                             placeholder="如：日常备用金、三井住友银行",
                             value=BalanceState.new_acc_name,
                             on_change=BalanceState.set_new_acc_name,
-                            size="2"
-                        )
+                            size="2",
+                            width="250px"
+                        ),
+                        width="auto"
                     ),
                     custom_form_field(
                         "币种",
-                        rx.select(
-                            ["CNY", "JPY"],
+                        rx.select.root(
+                            rx.select.trigger(width="120px"),
+                            rx.select.content(
+                                rx.select.item("CNY", value="CNY"),
+                                rx.select.item("JPY", value="JPY")
+                            ),
                             value=BalanceState.new_acc_curr,
                             on_change=BalanceState.set_new_acc_curr,
                             size="2"
-                        )
+                        ),
+                        width="auto"
                     ),
-                    columns="2",
-                    spacing="4",
-                    width="100%"
+                    spacing="3",
+                    align="end"
                 ),
                 rx.button(
                     rx.icon("check", size=13),
@@ -91,7 +97,9 @@ def create_account_accordion() -> rx.Component:
                     color_scheme="violet"
                 ),
                 spacing="3",
-                padding_top="0.5rem"
+                padding="1.5rem 0",
+                width="100%",
+                align_items="start"
             ),
             value="create-acc"
         ),

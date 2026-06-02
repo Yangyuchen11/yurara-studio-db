@@ -121,10 +121,12 @@ def custom_form_field(
     *inputs,
     required: bool = False,
     helper: str = "",
+    **kwargs,
 ) -> rx.Component:
     """
     表单字段包装器，提供统一的 label + input + helper text 布局。
     """
+    width = kwargs.pop("width", "100%")
     return rx.vstack(
         rx.hstack(
             rx.text(
@@ -143,8 +145,10 @@ def custom_form_field(
         ),
         spacing="1",
         align_items="start",
-        width="100%",
+        width=width,
+        **kwargs,
     )
+
 
 
 def inline_list_table(

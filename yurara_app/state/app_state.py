@@ -210,7 +210,7 @@ class AppState(rx.State):
     @rx.event
     def download_backup_zip(self):
         """触发客户端从后端自定义 API 路由下载全量备份 ZIP。"""
-        url = f"{rx.config.get().api_url}/backup?test_mode={str(self.test_mode).lower()}"
+        url = f"/backup?test_mode={str(self.test_mode).lower()}"
         return rx.download(url)
 
     @rx.event

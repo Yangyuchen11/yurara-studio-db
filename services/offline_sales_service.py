@@ -217,3 +217,40 @@ class OfflineSalesService:
 
         self.db.commit()
         return order.order_no, net_amount
+
+    def delete_offline_order(self, order_no):
+        """
+        删除线下POS结账订单并回滚相关数据（模板分配额度、实物库存、资金流水等）
+        """
+        order = self.db.query(SalesOrder).filter(
+            SalesOrder.order_no == order_no,
+            SalesOrder.order_type == "线下"
+        ).first()
+        if not order:
+            raise ValueError("该展会订单不存在")
+
+        # 1. 回滚模板剩余数量
+        try:
+            tpl_code = order.order_no.split("-")[0]
+            tpl = self.db.query(OfflineTemplate).filter(OfflineTemplate.code == tpl_code).first()
+            if tpl:
+                for item in order.items:
+                    tpl_item = self.db.query(OfflineTemplateItem).filter(
+                        OfflineTemplateItem.template_id == tpl.id,
+                        OfflineTemplateItem.product_name == item.product_name,
+                        OfflineTemplateItem.variant == item.variant
+                    ).with_for_update().first()
+                    if tpl_item:
+                        tpl_item.remaining_quantity += item.quantity
+                        if tpl_item.remaining_quantity > tpl_item.quantity:
+                            tpl_item.remaining_quantity = tpl_item.quantity
+        except Exception:
+            # 记录异常但继续，避免因模板已被删除等原因导致无法删除订单
+            pass
+
+        # 2. 调用 SalesOrderService 的删除方法执行级联回滚（实物库存、流水、资产等）
+        from services.sales_order_service import SalesOrderService
+        so_service = SalesOrderService(self.db)
+        msg = so_service.delete_order(order.id)
+        
+        return msg

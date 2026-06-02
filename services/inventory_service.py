@@ -440,7 +440,7 @@ class InventoryService:
         cost_service = CostService(self.db)
         current_offset = cost_service.get_wip_offset(product_id)
         all_items = self.db.query(CostItem).filter(CostItem.product_id == product_id).all()
-        current_total_cost = sum([i.actual_cost for i in all_items])
+        current_total_cost = sum([(i.actual_cost or 0.0) for i in all_items])
         return current_total_cost + current_offset
 
     def clear_wip_for_product(self, product_id):

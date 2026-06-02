@@ -23,7 +23,7 @@ def page_header(title: str, subtitle: str = "") -> rx.Component:
     )
 
 
-def page_layout(*content, title: str = "", subtitle: str = "", **kwargs) -> rx.Component:
+def page_layout(*content, title: str = "", subtitle: str = "", hide_sidebar: rx.Var | bool = False, hide_header: rx.Var | bool = False, padding: str = "1.5rem 2rem", **kwargs) -> rx.Component:
     """
     标准页面布局。
     用法：
@@ -36,26 +36,34 @@ def page_layout(*content, title: str = "", subtitle: str = "", **kwargs) -> rx.C
     """
     return rx.hstack(
         # 左侧侧边栏
-        sidebar(),
+        rx.cond(
+            hide_sidebar,
+            rx.fragment(),
+            sidebar(),
+        ),
 
         # 右侧主内容区
         rx.box(
             # 顶部面包屑 / 环境徽章
-            rx.hstack(
-                rx.spacer(),
-                rx.badge(
-                    AppState.env_label,
-                    color_scheme=rx.cond(AppState.test_mode, "orange", "green"),
-                    variant="soft",
-                    size="1",
+            rx.cond(
+                hide_header,
+                rx.fragment(),
+                rx.hstack(
+                    rx.spacer(),
+                    rx.badge(
+                        AppState.env_label,
+                        color_scheme=rx.cond(AppState.test_mode, "orange", "green"),
+                        variant="soft",
+                        size="1",
+                    ),
+                    width="100%",
+                    padding_bottom="0.5rem",
                 ),
-                width="100%",
-                padding_bottom="0.5rem",
             ),
 
             # 页面标题
             rx.cond(
-                title != "",
+                (title != "") & ~hide_header,
                 page_header(title, subtitle),
                 rx.fragment(),
             ),
@@ -63,7 +71,7 @@ def page_layout(*content, title: str = "", subtitle: str = "", **kwargs) -> rx.C
             # 主内容
             *content,
 
-            padding="1.5rem 2rem",
+            padding=rx.cond(hide_sidebar, "0.5rem", padding),
             flex="1",
             overflow_y="auto",
             min_height="100vh",

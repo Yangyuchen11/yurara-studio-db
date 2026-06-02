@@ -113,7 +113,7 @@ class FinanceState(AppState):
     
     # === 批量商品成本专属 ===
     batch_product_id: str = ""
-    batch_cost_cat: str = "材料购置"
+    batch_cost_cat: str = "大货材料费"
     batch_asset_cat: str = "包装材"
     batch_selected_budget_id: str = ""  # 0 / 空 表示不匹配预算
     batch_shipping_fee: float = 0.0
@@ -137,6 +137,8 @@ class FinanceState(AppState):
     edit_url: str = ""
     
     delete_selected_id: str = ""
+    is_selected_delete_budget_related: bool = False
+    delete_include_budget: bool = False
     
     # === 下拉菜单缓存资源 ===
     cash_accounts: list[CashAccountOption] = []
@@ -379,7 +381,29 @@ class FinanceState(AppState):
     def set_edit_url(self, val: str): self.edit_url = val
 
     @rx.event
-    def set_delete_selected_id(self, val: str): self.delete_selected_id = val
+    def set_delete_selected_id(self, val: str):
+        self.delete_selected_id = val
+        self.is_selected_delete_budget_related = False
+        self.delete_include_budget = False
+        if val:
+            rec_id = int(val)
+            db = self.get_db()
+            try:
+                from services.finance_service import FinanceService
+                from models import CostItem
+                rec = FinanceService.get_record_by_id(db, rec_id)
+                if rec and rec.category == "商品成本" and rec.related_item_id:
+                    target_cost = db.query(CostItem).filter(CostItem.id == rec.related_item_id).first()
+                    if target_cost and target_cost.supplier == "预算设定":
+                        self.is_selected_delete_budget_related = True
+            except Exception:
+                pass
+            finally:
+                db.close()
+
+    @rx.event
+    def set_delete_include_budget(self, val: bool):
+        self.delete_include_budget = val
 
     # ===================== 业务计算辅助 =====================
 
@@ -777,7 +801,7 @@ class FinanceState(AppState):
             from cache_manager import sync_all_caches
             
             # 服务端删除逻辑，内置核心销售流水拦截保护
-            msg = FinanceService.delete_record(db, rec_id)
+            msg = FinanceService.delete_record(db, rec_id, include_budget=self.delete_include_budget)
             if msg is not False:
                 yield rx.toast(f"🗑️ 删除流水成功，级联撤销: {msg}")
                 self.delete_selected_id = ""

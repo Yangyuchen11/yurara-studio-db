@@ -701,7 +701,7 @@ class FinanceService:
         return True
 
     @staticmethod
-    def delete_record(db, record_id):
+    def delete_record(db, record_id, include_budget=False):
         """删除流水并回滚关联数据（全面使用外键替换正则）"""
         rec = FinanceService.get_record_by_id(db, record_id)
         if not rec: return False
@@ -852,8 +852,16 @@ class FinanceService:
                 if target_cost:
                     target_cost.actual_cost -= abs(rec.amount)
                     if target_cost.actual_cost < 0: target_cost.actual_cost = 0
+                    if target_cost.original_amount is not None:
+                        target_cost.original_amount -= abs(rec.amount)
+                        if target_cost.original_amount < 0: target_cost.original_amount = 0
                     product_id_to_sync = target_cost.product_id # ✨ 捕捉
-                    msg_list.append(f"已从预算项【{target_cost.item_name}】扣除实付回滚")
+                    
+                    if include_budget and target_cost.supplier == "预算设定":
+                        db.delete(target_cost)
+                        msg_list.append(f"预算成本项【{target_cost.item_name}】已一并删除")
+                    else:
+                        msg_list.append(f"已从预算项【{target_cost.item_name}】扣除实付回滚(保留预算)")
             else:
                 # 记录要被删除的成本项对应的 product_id
                 cost = db.query(CostItem).filter(CostItem.finance_record_id == record_id).first()
