@@ -102,5 +102,4 @@ RUN chmod +x /app/start.sh
 # 暴露对外端口（Caddy 监听）
 EXPOSE 8080
 
-# 使用启动脚本（输出详细日志，方便 Zeabur 调试）
-CMD ["/app/start.sh"]
+CMD ["python", "-m", "reflex", "run", "--env", "prod"]
