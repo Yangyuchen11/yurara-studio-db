@@ -98,23 +98,46 @@ class ReportState(AppState):
 
     @rx.var
     def chart_bar_data(self) -> list[dict[str, Any]]:
-        """收支构成直方图数据 (JSON 序列)。"""
+        """收支构成直方图数据 (适配 CSS 柱状图)。"""
         data = []
+        if not self.flow_summary:
+            return data
+            
+        max_val = max(abs(r.total_cny_equiv) for r in self.flow_summary)
+        if max_val == 0:
+            max_val = 1.0
+            
         for r in self.flow_summary:
+            abs_val = abs(r.total_cny_equiv)
+            pct = (abs_val / max_val) * 100
             data.append({
                 "name": r.category,
-                "绝对金额(元)": abs(r.total_cny_equiv)
+                "amount_str": f"¥ {abs_val:,.2f}",
+                "width_pct": f"{pct}%"
             })
         return data
 
     @rx.var
     def trend_chart_data(self) -> list[dict[str, Any]]:
-        """年报利润走势折线图数据。"""
+        """年报利润走势数据 (适配 CSS 柱状图)。"""
         data = []
+        if not self.trend_rows:
+            return data
+            
+        max_abs_profit = max(abs(r.net_profit) for r in self.trend_rows)
+        if max_abs_profit == 0:
+            max_abs_profit = 1.0
+            
         for r in self.trend_rows:
+            abs_val = abs(r.net_profit)
+            # 柱子高度百分比，最高 100px
+            height_px = int((abs_val / max_abs_profit) * 100)
             data.append({
                 "month": f"{r.month}月",
-                "净利润": r.net_profit
+                "net_profit": r.net_profit,
+                "profit_str": f"¥ {r.net_profit:,.2f}" if r.net_profit >= 0 else f"-¥ {abs(r.net_profit):,.2f}",
+                "height_str": f"{height_px}px",
+                "is_positive": r.net_profit >= 0
             })
         return data
 

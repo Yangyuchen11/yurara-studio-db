@@ -148,27 +148,50 @@ def pivot_analysis_table() -> rx.Component:
 def visualization_chart() -> rx.Component:
     """销量构成直方图组件 (Stacked Bar Chart)"""
     return rx.vstack(
-        rx.recharts.responsive_container(
-            rx.recharts.bar_chart(
-                rx.recharts.cartesian_grid(stroke_dasharray="3 3", stroke=rx.color("slate", 4)),
-                rx.recharts.x_axis(data_key="variant", stroke=rx.color("slate", 9), style={"fontSize": "10px"}),
-                rx.recharts.y_axis(stroke=rx.color("slate", 9), style={"fontSize": "10px"}),
-                rx.recharts.tooltip(content_style={"backgroundColor": "var(--slate-2)", "borderRadius": "6px", "fontSize": "11px"}),
-                rx.recharts.legend(vertical_align="top", height=36, icon_size=10, style={"fontSize": "11px"}),
-                
-                # 各平台销量色彩映射 (自适应 HSL 高彩亮边)
-                rx.recharts.bar(data_key="微店", stack_id="platform_stack", fill=rx.color("violet", 9)),
-                rx.recharts.bar(data_key="Booth", stack_id="platform_stack", fill=rx.color("crimson", 9)),
-                rx.recharts.bar(data_key="国内线下", stack_id="platform_stack", fill=rx.color("blue", 9)),
-                rx.recharts.bar(data_key="日本线下", stack_id="platform_stack", fill=rx.color("jade", 9)),
-                rx.recharts.bar(data_key="Instagram", stack_id="platform_stack", fill=rx.color("pink", 9)),
-                rx.recharts.bar(data_key="其他(CNY)", stack_id="platform_stack", fill=rx.color("amber", 9)),
-                rx.recharts.bar(data_key="其他(JPY)", stack_id="platform_stack", fill=rx.color("orange", 9)),
-                
-                data=SalesState.chart_data,
+        rx.vstack(
+            rx.foreach(
+                SalesState.chart_data,
+                lambda item: rx.vstack(
+                    rx.hstack(
+                        rx.text(item.variant, size="1", weight="bold"),
+                        rx.spacer(),
+                        rx.badge(
+                            rx.fragment(item.total_qty.to_string(), " 件"),
+                            color_scheme="violet",
+                            variant="soft",
+                            size="1",
+                        ),
+                        width="100%",
+                        align="center",
+                    ),
+                    rx.hstack(
+                        rx.foreach(
+                            item.platforms,
+                            lambda plat: rx.tooltip(
+                                rx.box(
+                                    width=plat.pct_str,
+                                    height="12px",
+                                    background=plat.color,
+                                    transition="all 0.15s ease",
+                                    _hover={"opacity": 0.85, "transform": "scaleY(1.15)"},
+                                ),
+                                content=plat.name + ": " + plat.qty.to_string() + " 件",
+                            )
+                        ),
+                        width="100%",
+                        height="12px",
+                        background="var(--slate-3)",
+                        border_radius="6px",
+                        overflow="hidden",
+                        spacing="0",
+                    ),
+                    width="100%",
+                    spacing="2",
+                )
             ),
             width="100%",
-            height=300
+            spacing="4",
+            padding="0.5rem 0",
         ),
         padding="0.5rem",
         width="100%"

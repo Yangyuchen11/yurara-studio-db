@@ -36,6 +36,19 @@ class VariantPivotRow(BaseModel):
     qtys: list[int] = []  # 分列对齐值
 
 
+class PlatformSale(BaseModel):
+    name: str = ""
+    qty: int = 0
+    pct_str: str = ""
+    color: str = ""
+
+
+class VariantSaleChartData(BaseModel):
+    variant: str = ""
+    total_qty: int = 0
+    platforms: list[PlatformSale] = []
+
+
 class SalesState(AppState):
     active_tab: str = "v2"  # "v2" 或 "v1"
     is_loading: bool = True
@@ -61,8 +74,8 @@ class SalesState(AppState):
     pivot_headers: list[str] = []
     pivot_rows: list[VariantPivotRow] = []
     
-    # 堆叠直方图数据 (List of dicts for recharts)
-    chart_data: list[dict[str, Any]] = []
+    # 堆叠直方图数据 (List of VariantSaleChartData)
+    chart_data: list[VariantSaleChartData] = []
     
     # 变动日志及真分页状态
     logs: list[SalesLogItem] = []
@@ -252,19 +265,40 @@ class SalesState(AppState):
             
             self.pivot_rows = p_rows
 
-            # 3. 产生适用于 `<rx.recharts.bar_chart>` 的数据字典序列
+            # 3. 产生适用于 CSS 堆叠条形图的数据字典序列
             c_data = []
+            colors = {
+                "weidian": "var(--violet-9)",
+                "booth": "var(--crimson-9)",
+                "offline_cn": "var(--blue-9)",
+                "offline_jp": "var(--jade-9)",
+                "instagram": "var(--pink-9)",
+                "other": "var(--amber-9)",
+                "other_jpy": "var(--orange-9)"
+            }
             for var in df_p['variant'].unique():
                 var_df = df_p[df_p['variant'] == var]
-                var_dict = {"variant": str(var)}
-                has_vals = False
+                total_qty = int(var_df['qty'].sum())
+                if total_qty <= 0:
+                    continue
+                    
+                platform_list = []
                 for p in platform_keys:
                     qty = int(var_df[var_df['platform'] == p]['qty'].sum())
-                    if qty != 0:
-                        var_dict[PLATFORM_CODES.get(p, p)] = qty
-                        has_vals = True
-                if has_vals:
-                    c_data.append(var_dict)
+                    if qty > 0:
+                        pct = (qty / total_qty) * 100
+                        platform_list.append(PlatformSale(
+                            name=PLATFORM_CODES.get(p, p),
+                            qty=qty,
+                            pct_str=f"{pct}%",
+                            color=colors.get(p, "var(--slate-9)")
+                        ))
+                if platform_list:
+                    c_data.append(VariantSaleChartData(
+                        variant=str(var),
+                        total_qty=total_qty,
+                        platforms=platform_list
+                    ))
             self.chart_data = c_data
 
             # 4. 产生 paginated 变动流水明细
