@@ -17,6 +17,19 @@ class FinanceService:
     # ✨ 定义不需要操作现金账户的分类集合
     NON_CASH_CATEGORIES = {"现有资产增加", "新资产增加", "现有资产减少", "其他资产增加"}
 
+    @staticmethod
+    def extract_qty_from_desc(description):
+        if not description:
+            return 1.0
+        import re
+        match = re.search(r'\(x([\d\.]+)\)', description)
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                pass
+        return 1.0
+
     # ================= 辅助查询方法 =================
 
     @staticmethod
@@ -377,6 +390,14 @@ class FinanceService:
                         target_cost.currency = 'CNY'
                         target_cost.original_amount = target_cost.actual_cost
                     
+                    # 录入/累加实际数量和实付单价
+                    qty_added = link_config.get('qty', 1.0)
+                    target_cost.actual_qty = (target_cost.actual_qty or 0.0) + qty_added
+                    if target_cost.actual_qty > 0:
+                        target_cost.actual_unit_price = target_cost.original_amount / target_cost.actual_qty
+                    else:
+                        target_cost.actual_unit_price = 0.0
+                    
                     new_record.related_item_id = target_cost.id
                     link_msg += f" + 累加实付至预算[{target_cost.item_name}]"
                     
@@ -391,7 +412,9 @@ class FinanceService:
                     unit_price=unit_price_cny, quantity=link_config['qty'], 
                     remarks=final_remark, finance_record_id=new_record.id,
                     url=base_data.get('url', ''),
-                    currency=base_data['currency'], original_amount=base_data['amount']
+                    currency=base_data['currency'], original_amount=base_data['amount'],
+                    actual_qty=link_config['qty'],
+                    actual_unit_price=base_data['amount'] / link_config['qty'] if link_config['qty'] > 0 else 0.0
                 )
                 db.add(new_cost)
                 
@@ -502,7 +525,9 @@ class FinanceService:
                         actual_cost=val_cny, supplier=base_data['shop'], category=batch_config['cost_cat'],
                         unit_price=unit_price_cny, quantity=item['qty'], remarks=item['desc'],
                         finance_record_id=main_rec.id, url=item.get('url', ''),
-                        currency=base_data['currency'], original_amount=item['amount']
+                        currency=base_data['currency'], original_amount=item['amount'],
+                        actual_qty=item['qty'],
+                        actual_unit_price=item['amount'] / item['qty'] if item['qty'] > 0 else 0.0
                     )
                     db.add(new_cost)
                 
@@ -565,7 +590,9 @@ class FinanceService:
                     actual_cost=ship_cny, supplier=base_data['shop'], category="物流邮费",
                     unit_price=ship_cny, quantity=1, remarks="批量购入共用邮费",
                     finance_record_id=ship_rec.id,
-                    currency=base_data['currency'], original_amount=shipping_fee
+                    currency=base_data['currency'], original_amount=shipping_fee,
+                    actual_qty=1.0,
+                    actual_unit_price=shipping_fee
                 )
                 db.add(new_cost)
                 db.flush()
@@ -664,6 +691,11 @@ class FinanceService:
                     target_cost.original_amount = updates['amount_abs']
                     
                 target_cost.remarks = f"{updates['desc']} (已修)"
+                # 重新计算实付单价
+                if getattr(target_cost, 'actual_qty', None) and target_cost.actual_qty > 0:
+                    target_cost.actual_unit_price = target_cost.original_amount / target_cost.actual_qty
+                else:
+                    target_cost.actual_unit_price = 0.0
                 product_id_to_sync = target_cost.product_id 
         else:
             # 修改：只有在明细数量为1时，才同步更新金额；否则只更新备注
@@ -673,6 +705,10 @@ class FinanceService:
                     cost.actual_cost = updates['amount_abs']
                     # 👇 新增：同样同步更新 original_amount 字段
                     cost.original_amount = updates['amount_abs']
+                    if getattr(cost, 'actual_qty', None) and cost.actual_qty > 0:
+                        cost.actual_unit_price = cost.original_amount / cost.actual_qty
+                    else:
+                        cost.actual_unit_price = updates['amount_abs']
                     
                 cost.remarks = f"{updates['desc']} (已修)"
                 product_id_to_sync = cost.product_id
@@ -855,6 +891,17 @@ class FinanceService:
                     if target_cost.original_amount is not None:
                         target_cost.original_amount -= abs(rec.amount)
                         if target_cost.original_amount < 0: target_cost.original_amount = 0
+                    
+                    # 回滚实际数量与实付单价
+                    qty_to_sub = FinanceService.extract_qty_from_desc(rec.description)
+                    target_cost.actual_qty = (target_cost.actual_qty or 0.0) - qty_to_sub
+                    if target_cost.actual_qty < 0: target_cost.actual_qty = 0.0
+                    
+                    if target_cost.actual_qty > 0:
+                        target_cost.actual_unit_price = target_cost.original_amount / target_cost.actual_qty
+                    else:
+                        target_cost.actual_unit_price = 0.0
+                        
                     product_id_to_sync = target_cost.product_id # ✨ 捕捉
                     
                     if include_budget and target_cost.supplier == "预算设定":

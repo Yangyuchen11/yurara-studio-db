@@ -977,16 +977,34 @@ def delete_transaction_accordion() -> rx.Component:
                 ),
                 rx.cond(
                     FinanceState.delete_selected_id != "",
-                    confirm_dialog(
-                        trigger=rx.button(
-                            rx.icon("trash_2", size=13), "执行删除流水记录",
-                            size="2", color_scheme="red", width="100%"
+                    rx.vstack(
+                        rx.cond(
+                            FinanceState.is_selected_delete_budget_related,
+                            rx.hstack(
+                                rx.checkbox(
+                                    checked=FinanceState.delete_include_budget,
+                                    on_change=FinanceState.set_delete_include_budget,
+                                ),
+                                rx.text("一并物理删除绑定的预算项目记录 (Cascade Delete)", size="2", color=rx.color("orange", 11)),
+                                spacing="2",
+                                align="center",
+                                margin_bottom="0.5rem"
+                            ),
+                            rx.fragment()
                         ),
-                        title="确认删除该流水？",
-                        description="警告：删除流水会将关联的资产、负债、或库存成本明细一并安全级联撤回！如果是【销售收入】流水请必须去线上订单列表删除，严禁在此直接删除核心流水。",
-                        confirm_label="确认安全回滚删除",
-                        on_confirm=FinanceState.submit_delete_record,
-                        confirm_color="red"
+                        confirm_dialog(
+                            trigger=rx.button(
+                                rx.icon("trash_2", size=13), "执行删除流水记录",
+                                size="2", color_scheme="red", width="100%"
+                            ),
+                            title="确认删除该流水？",
+                            description="警告：删除流水会将关联的资产、负债、或库存成本明细一并安全级联撤回！如果是【销售收入】流水请必须去线上订单列表删除，严禁在此直接删除核心流水。",
+                            confirm_label="确认安全回滚删除",
+                            on_confirm=FinanceState.submit_delete_record,
+                            confirm_color="red"
+                        ),
+                        spacing="2",
+                        width="100%"
                     ),
                     rx.fragment()
                 ),

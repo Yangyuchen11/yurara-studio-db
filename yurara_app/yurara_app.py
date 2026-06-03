@@ -291,7 +291,11 @@ import sys
 # 编译与构建阶段（如 reflex init 或 reflex export）无需连接真实数据库，防止云端 Build 环境网络隔离导致连接超时失败
 if not any(arg in sys.argv for arg in ["init", "export"]):
     try:
-        from database import Base, engine
+        from database import Base, engine, migrate_db
+        try:
+            migrate_db(engine)
+        except Exception as migrate_err:
+            print(f"[Reflex App] Database migration check failed: {migrate_err}")
         Base.metadata.create_all(bind=engine)
     except Exception as e:
         print(f"[Reflex App] Database auto-migration / init failed: {e}")

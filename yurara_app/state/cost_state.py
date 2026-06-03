@@ -26,6 +26,8 @@ class CostItemModel(BaseModel):
     url: str = ""
     remarks: str = ""
     is_budget: bool = False
+    actual_qty: float = 0.0
+    actual_unit_price: float = 0.0
 
 
 class ProfitReferenceRow(BaseModel):
@@ -171,9 +173,9 @@ class CostState(AppState):
             budget_qty = item.quantity if is_budget_item else None
             budget_unit_price = item.unit_price if is_budget_item else None
             budget_total = (item.unit_price * item.quantity) if is_budget_item else None
-            actual_qty = item.quantity if not is_budget_item else None
+            actual_qty = item.actual_qty if is_budget_item else item.quantity
             actual_total = item.original_amount
-            actual_unit_price = (item.original_amount / item.quantity) if (not is_budget_item and item.quantity > 0) else None
+            actual_unit_price = item.actual_unit_price if is_budget_item else (item.original_amount / item.quantity if item.quantity > 0 else None)
 
             grouped[cat].append({
                 "id": item.id,
@@ -370,7 +372,9 @@ class CostState(AppState):
                 supplier=i.supplier or "",
                 url=i.url or "",
                 remarks=i.remarks or "",
-                is_budget=(i.supplier == "预算设定")
+                is_budget=(i.supplier == "预算设定"),
+                actual_qty=getattr(i, 'actual_qty', 0.0) or 0.0,
+                actual_unit_price=getattr(i, 'actual_unit_price', 0.0) or 0.0
             ))
         self.cost_items = cost_list
 

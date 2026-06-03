@@ -32,3 +32,22 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def migrate_db(engine):
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    if "cost_items" in inspector.get_table_names():
+        columns = [c["name"] for c in inspector.get_columns("cost_items")]
+        with engine.begin() as conn:
+            if "actual_qty" not in columns:
+                try:
+                    conn.execute(text("ALTER TABLE cost_items ADD COLUMN actual_qty FLOAT DEFAULT 0.0;"))
+                    print("[Migration] Added column actual_qty to cost_items")
+                except Exception as e:
+                    print(f"[Migration] Failed to add actual_qty: {e}")
+            if "actual_unit_price" not in columns:
+                try:
+                    conn.execute(text("ALTER TABLE cost_items ADD COLUMN actual_unit_price FLOAT DEFAULT 0.0;"))
+                    print("[Migration] Added column actual_unit_price to cost_items")
+                except Exception as e:
+                    print(f"[Migration] Failed to add actual_unit_price: {e}")
