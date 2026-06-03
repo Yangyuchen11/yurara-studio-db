@@ -1,0 +1,151 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+* {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    box-sizing: border-box;
+}
+
+body {
+    background-color: #0d1117;
+}
+
+/* 侧边栏导航项 */
+.nav-item {
+    display: flex;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 6px;
+    text-decoration: none !important;
+    color: var(--gray-11);
+    transition: all 0.15s ease;
+    font-size: 13px;
+}
+.nav-item:hover {
+    background-color: var(--violet-3);
+    color: var(--violet-11);
+}
+.nav-item[data-active="true"],
+.nav-item.active {
+    background-color: var(--violet-4);
+    color: var(--violet-11);
+    font-weight: 500;
+}
+.nav-icon {
+    flex-shrink: 0;
+    color: var(--gray-9);
+}
+.nav-item:hover .nav-icon {
+    color: var(--violet-9);
+}
+.nav-group-label {
+    color: var(--gray-9);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 10px;
+    padding: 0 10px;
+    margin-top: 0.5rem;
+}
+
+/* 卡片悬停效果 */
+.radix-themes .rt-Card {
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.radix-themes .rt-Card:hover {
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+}
+
+/* 解决所有紫色底色 Callout 中字体呈黑色难以看清的问题 */
+.rt-CalloutRoot[data-color="violet"] {
+    background-color: var(--violet-3) !important;
+}
+.rt-CalloutRoot[data-color="violet"] .rt-CalloutText {
+    color: var(--violet-11) !important;
+    font-weight: 500 !important;
+}
+.rt-CalloutRoot[data-color="violet"] .rt-CalloutIcon {
+    color: var(--violet-11) !important;
+}
+
+/* 解决所有紫色 Badge 字体难以看清的问题 */
+.rt-Badge[data-color="violet"] {
+    background-color: var(--violet-3) !important;
+    color: var(--violet-11) !important;
+    font-weight: 500 !important;
+}
+
+/* 平滑滚动 */
+html {
+    scroll-behavior: smooth;
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: var(--gray-5);
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--gray-7);
+}
+
+/* 输入框与下拉选择框的UI样式一致性：白色背景，黑色文本，灰色提示字，紫色高亮 */
+.rt-TextFieldRoot, .rt-SelectTrigger {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    border: 1px solid var(--gray-5) !important;
+}
+
+.rt-TextFieldRoot:focus-within, .rt-SelectTrigger:focus {
+    border-color: var(--violet-8) !important;
+    box-shadow: 0 0 0 2px var(--violet-4) !important;
+}
+
+/* 提示用字（Placeholder）保持为灰色 */
+.rt-TextFieldInput::placeholder, 
+.rt-SelectTrigger[data-placeholder] > span {
+    color: var(--gray-8) !important;
+}
+
+/* 下拉菜单弹出框与选项样式 */
+.rt-SelectContent {
+    background-color: #ffffff !important;
+    border: 1px solid var(--gray-4) !important;
+}
+
+.rt-SelectItem {
+    color: #000000 !important;
+}
+
+.rt-SelectItem:hover, .rt-SelectItem[data-highlighted] {
+    background-color: var(--violet-9) !important;
+    color: #ffffff !important;
+}
+
+/* 解决折叠面板内部所有 Callout 提示框字体在深色背景下不清晰的问题（显示为白字与半透明白框） */
+.rt-AccordionContent .rt-CalloutRoot {
+    background-color: rgba(255, 255, 255, 0.06) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+.rt-AccordionContent .rt-CalloutRoot * {
+    color: #ffffff !important;
+    font-weight: 500 !important;
+}
+
+/* 解决折叠面板内部表格标头和内容呈现黑色无法看清规整的问题，并左对齐表头与单元格以完美对齐下方输入框 */
+.rt-AccordionContent .rt-TableRoot,
+.rt-AccordionContent .rt-TableColumnHeaderCell,
+.rt-AccordionContent .rt-TableCell,
+.rt-AccordionContent .rt-TableColumnHeaderCell *,
+.rt-AccordionContent .rt-TableCell * {
+    color: #ffffff !important;
+}
+.rt-AccordionContent .rt-TableColumnHeaderCell,
+.rt-AccordionContent .rt-TableCell {
+    text-align: left !important;
+}
