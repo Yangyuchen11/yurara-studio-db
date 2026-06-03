@@ -124,7 +124,7 @@ def budget_form() -> rx.Component:
                 align="center",
             ),
             content=rx.vstack(
-                rx.text("在此处录入的条目仅作为预算参考，实付金额默认为0。", size="1", color=rx.color("slate", 9)),
+                rx.text("在此处录入的条目仅作为预算参考，实付金额默认为0。", size="1", color=rx.color("white", 9)),
                 rx.grid(
                     custom_form_field(
                         "预算分类",

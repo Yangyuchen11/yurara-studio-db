@@ -59,7 +59,7 @@ def create_account_accordion() -> rx.Component:
                 align="center",
             ),
             content=rx.vstack(
-                rx.text("在此处可以开设备用金、独立银行卡等专属现金账户。", size="1", color=rx.color("slate", 10)),
+                rx.text("在此处可以开设备用金、独立银行卡等专属现金账户。", size="1", color=rx.color("white", 10)),
                 rx.hstack(
                     custom_form_field(
                         "账户名称",
