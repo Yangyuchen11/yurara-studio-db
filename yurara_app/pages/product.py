@@ -11,9 +11,119 @@ from ..components.editable_table import data_card, confirm_dialog, empty_state, 
 
 # ===================== 可编辑行组件 =====================
 
+def color_image_cell(row: ColorRow, is_edit: bool = False) -> rx.Component:
+    mode = "edit" if is_edit else "create"
+    return rx.table.cell(
+        rx.hstack(
+            # 缩略图预览
+            rx.cond(
+                row.image_data != "",
+                rx.image(
+                    src=row.image_data,
+                    width="28px",
+                    height="28px",
+                    object_fit="cover",
+                    border_radius="4px",
+                    border="1px solid var(--slate-4)",
+                ),
+                rx.center(
+                    rx.icon("image", size=14, color=rx.color("slate", 8)),
+                    width="28px",
+                    height="28px",
+                    background=rx.color("slate", 3),
+                    border_radius="4px",
+                )
+            ),
+            rx.icon_button(
+                rx.icon("camera", size=12),
+                on_click=lambda: ProductState.open_upload_modal(row.key, mode, row.name),
+                size="1",
+                variant="soft",
+                cursor="pointer",
+            ),
+            spacing="2",
+            align="center",
+        ),
+        width="90px",
+    )
+
+
+def edit_part_row(row: PartRow) -> rx.Component:
+    return rx.table.row(
+        rx.table.cell(
+            rx.input(
+                default_value=row.part_name,
+                placeholder="如：外套",
+                size="1",
+                on_blur=lambda v: ProductState.update_edit_part_field(row.key, "part_name", v),
+                width="160px",
+            ),
+        ),
+        rx.table.cell(
+            rx.input(
+                default_value=row.quantity.to_string(),
+                type="number", size="1", min="1",
+                on_blur=lambda v: ProductState.update_edit_part_field(row.key, "quantity", v),
+                width="60px",
+            ),
+        ),
+        # 适用款式选择器
+        rx.table.cell(
+            rx.popover.root(
+                rx.popover.trigger(
+                    rx.button(
+                        rx.hstack(
+                            rx.icon("layers", size=12),
+                            rx.text(f"适用款式 ({row.target_colors.length()})"),
+                            spacing="1",
+                        ),
+                        size="1", variant="outline", cursor="pointer"
+                    )
+                ),
+                rx.popover.content(
+                    rx.vstack(
+                        rx.text("选择适用的颜色规格：", size="1", weight="bold", color=rx.color("slate", 10)),
+                        rx.cond(
+                            ProductState.edit_color_names,
+                            rx.vstack(
+                                rx.foreach(
+                                    ProductState.edit_color_names,
+                                    lambda c: rx.hstack(
+                                        rx.checkbox(
+                                            checked=row.target_colors.contains(c),
+                                            on_change=lambda _: ProductState.toggle_edit_part_color(row.key, c),
+                                            size="1",
+                                        ),
+                                        rx.text(c, size="1"),
+                                        spacing="2",
+                                        align="center",
+                                    )
+                                ),
+                                spacing="2",
+                                align_items="start",
+                            ),
+                            rx.text("请先添加并命名颜色规格", size="1", color="red")
+                        ),
+                        spacing="2",
+                        padding="4px",
+                    )
+                )
+            )
+        ),
+        rx.table.cell(
+            rx.icon_button(
+                rx.icon("x", size=11),
+                on_click=lambda: ProductState.remove_edit_part_row(row.key),
+                size="1", variant="ghost", color_scheme="red",
+            ),
+        ),
+    )
+
+
 def create_color_row(row: ColorRow) -> rx.Component:
     """新建模式：单行颜色规格输入。"""
     return rx.table.row(
+        color_image_cell(row, is_edit=False),
         rx.table.cell(
             rx.input(
                 default_value=row.name,
@@ -51,6 +161,7 @@ def create_color_row(row: ColorRow) -> rx.Component:
 def edit_color_row(row: ColorRow) -> rx.Component:
     """编辑模式：单行颜色规格输入。"""
     return rx.table.row(
+        color_image_cell(row, is_edit=True),
         rx.table.cell(
             rx.input(
                 default_value=row.name,
@@ -103,6 +214,49 @@ def create_part_row(row: PartRow) -> rx.Component:
                 width="60px",
             ),
         ),
+        # 适用款式选择器
+        rx.table.cell(
+            rx.popover.root(
+                rx.popover.trigger(
+                    rx.button(
+                        rx.hstack(
+                            rx.icon("layers", size=12),
+                            rx.text(f"适用款式 ({row.target_colors.length()})"),
+                            spacing="1",
+                        ),
+                        size="1", variant="outline", cursor="pointer"
+                    )
+                ),
+                rx.popover.content(
+                    rx.vstack(
+                        rx.text("选择适用的颜色规格：", size="1", weight="bold", color=rx.color("slate", 10)),
+                        rx.cond(
+                            ProductState.create_color_names,
+                            rx.vstack(
+                                rx.foreach(
+                                    ProductState.create_color_names,
+                                    lambda c: rx.hstack(
+                                        rx.checkbox(
+                                            checked=row.target_colors.contains(c),
+                                            on_change=lambda _: ProductState.toggle_create_part_color(row.key, c),
+                                            size="1",
+                                        ),
+                                        rx.text(c, size="1"),
+                                        spacing="2",
+                                        align="center",
+                                    )
+                                ),
+                                spacing="2",
+                                align_items="start",
+                            ),
+                            rx.text("请先添加并命名颜色规格", size="1", color="red")
+                        ),
+                        spacing="2",
+                        padding="4px",
+                    )
+                )
+            )
+        ),
         rx.table.cell(
             rx.icon_button(
                 rx.icon("x", size=11),
@@ -118,6 +272,7 @@ def color_matrix_table_create() -> rx.Component:
         rx.table.root(
             rx.table.header(
                 rx.table.row(
+                    rx.table.column_header_cell("缩略图", size="1"),
                     rx.table.column_header_cell("颜色", size="1"),
                     rx.table.column_header_cell("预计数量", size="1"),
                     rx.table.column_header_cell("微店", size="1"),
@@ -142,6 +297,7 @@ def color_matrix_table_edit() -> rx.Component:
         rx.table.root(
             rx.table.header(
                 rx.table.row(
+                    rx.table.column_header_cell("缩略图", size="1"),
                     rx.table.column_header_cell("颜色", size="1"),
                     rx.table.column_header_cell("库存/预计", size="1"),
                     rx.table.column_header_cell("微店", size="1"),
@@ -206,6 +362,7 @@ def create_tab() -> rx.Component:
                     rx.table.row(
                         rx.table.column_header_cell("部件名称", size="1"),
                         rx.table.column_header_cell("数量", size="1"),
+                        rx.table.column_header_cell("适用款式", size="1"),
                         rx.table.column_header_cell("", size="1"),
                     )
                 ),
@@ -277,17 +434,49 @@ def edit_tab() -> rx.Component:
                     size="1", variant="soft", margin_top="0.5rem",
                 ),
             ),
+            data_card(
+                "款式部件设置（可选）",
+                rx.table.root(
+                    rx.table.header(
+                        rx.table.row(
+                            rx.table.column_header_cell("部件名称", size="1"),
+                            rx.table.column_header_cell("数量", size="1"),
+                            rx.table.column_header_cell("适用款式", size="1"),
+                            rx.table.column_header_cell("", size="1"),
+                        )
+                    ),
+                    rx.table.body(rx.foreach(ProductState.edit_part_rows, edit_part_row)),
+                    size="1", width="100%",
+                ),
+                rx.button(
+                    rx.icon("plus", size=12), "添加部件",
+                    on_click=ProductState.add_edit_part_row,
+                    size="1", variant="soft", margin_top="0.5rem",
+                ),
+            ),
             rx.cond(
                 ProductState.edit_error != "",
                 rx.callout(ProductState.edit_error, icon="circle_x", color_scheme="red", size="1"),
                 rx.fragment(),
             ),
-            rx.button(
-                rx.icon("save", size=14), "确认修改",
-                on_click=ProductState.save_edit_product,
-                size="3",
-                style={"background": "linear-gradient(135deg, #6366f1, #8b5cf6)", "color": "white"},
+            rx.hstack(
+                rx.button(
+                    rx.icon("x", size=14), "取消并返回",
+                    on_click=lambda: ProductState.switch_tab("list"),
+                    size="3",
+                    variant="soft",
+                    color_scheme="gray",
+                    width="50%",
+                ),
+                rx.button(
+                    rx.icon("save", size=14), "确认修改",
+                    on_click=ProductState.save_edit_product,
+                    size="3",
+                    style={"background": "linear-gradient(135deg, #6366f1, #8b5cf6)", "color": "white"},
+                    width="50%",
+                ),
                 width="100%",
+                spacing="3",
             ),
             spacing="4", width="100%",
         ),
@@ -351,8 +540,10 @@ def product_card(product: ProductItem) -> rx.Component:
                 rx.table.root(
                     rx.table.header(
                         rx.table.row(
+                            rx.table.column_header_cell("图片", size="1"),
                             rx.table.column_header_cell("规格", size="1"),
                             rx.table.column_header_cell("数量", size="1"),
+                            rx.table.column_header_cell("部件规格", size="1"),
                             rx.table.column_header_cell("微店", size="1"),
                             rx.table.column_header_cell("Booth", size="1"),
                             rx.table.column_header_cell("国内线下", size="1"),
@@ -376,8 +567,29 @@ def product_card(product: ProductItem) -> rx.Component:
 def _product_color_table_row(color: ColorRow) -> rx.Component:
     """产品列表里的颜色定价行。"""
     return rx.table.row(
+        rx.table.cell(
+            rx.cond(
+                color.image_data != "",
+                rx.image(
+                    src=color.image_data,
+                    width="20px",
+                    height="20px",
+                    object_fit="cover",
+                    border_radius="3px",
+                    border="1px solid var(--slate-3)",
+                ),
+                rx.center(
+                    rx.icon("image", size=10, color=rx.color("slate", 8)),
+                    width="20px",
+                    height="20px",
+                    background=rx.color("slate", 2),
+                    border_radius="3px",
+                )
+            )
+        ),
         rx.table.cell(rx.text(color.name, size="1", weight="medium")),
         rx.table.cell(rx.text(color.quantity.to_string(), size="1")),
+        rx.table.cell(rx.text(color.parts_summary, size="1")),
         rx.table.cell(rx.cond(color.price_weidian > 0, rx.text(color.price_weidian.to_string(), size="1"), rx.text("-", size="1", color=rx.color("slate", 8)))),
         rx.table.cell(rx.cond(color.price_booth > 0, rx.text(color.price_booth.to_string(), size="1"), rx.text("-", size="1", color=rx.color("slate", 8)))),
         rx.table.cell(rx.cond(color.price_offline_cn > 0, rx.text(color.price_offline_cn.to_string(), size="1"), rx.text("-", size="1", color=rx.color("slate", 8)))),
@@ -403,33 +615,103 @@ def list_tab() -> rx.Component:
     )
 
 
+def image_upload_modal() -> rx.Component:
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.vstack(
+                rx.hstack(
+                    rx.heading(
+                        rx.fragment("上传规格图片 - ", ProductState.upload_target_color_name),
+                        size="3",
+                    ),
+                    rx.spacer(),
+                    rx.dialog.close(
+                        rx.icon_button(rx.icon("x", size=16), variant="ghost", color_scheme="gray")
+                    ),
+                    width="100%",
+                    align="center",
+                ),
+                rx.divider(),
+                rx.upload(
+                    rx.vstack(
+                        rx.button("选择图片文件", color_scheme="violet", variant="soft", size="2"),
+                        rx.text("或者拖拽文件至此", size="1", color=rx.color("slate", 9)),
+                        align="center",
+                        spacing="1",
+                        padding="1.5rem",
+                    ),
+                    id="product_color_image_upload",
+                    border="1px dashed var(--slate-6)",
+                    border_radius="6px",
+                    background=rx.color("slate", 2),
+                    width="100%",
+                    max_files=1,
+                    accept={
+                        "image/*": [".png", ".jpg", ".jpeg", ".webp"]
+                    },
+                ),
+                rx.cond(
+                    rx.selected_files("product_color_image_upload"),
+                    rx.hstack(
+                        rx.foreach(
+                            rx.selected_files("product_color_image_upload"),
+                            lambda file: rx.badge(f"📁 {file}", color_scheme="violet", variant="soft")
+                        ),
+                        spacing="2",
+                        flex_wrap="wrap",
+                        width="100%",
+                    )
+                ),
+                rx.hstack(
+                    rx.dialog.close(
+                        rx.button("取消", variant="soft", color_scheme="gray")
+                    ),
+                    rx.spacer(),
+                    rx.button(
+                        "确认上传",
+                        on_click=ProductState.handle_modal_upload(
+                            rx.upload_files(upload_id="product_color_image_upload")
+                        ),
+                        color_scheme="violet",
+                    ),
+                    width="100%",
+                ),
+                spacing="4",
+                width="100%",
+            ),
+            max_width="400px",
+        ),
+        open=ProductState.upload_modal_open,
+        on_open_change=ProductState.set_upload_modal_open,
+    )
+
+
 # ===================== 主页面 =====================
 
 def product_page() -> rx.Component:
     return page_layout(
-        rx.tabs.root(
-            rx.tabs.list(
-                rx.tabs.trigger(
-                    rx.hstack(rx.icon("list", size=13), rx.text("产品列表"), spacing="1"),
-                    value="list",
+        rx.fragment(
+            rx.tabs.root(
+                rx.tabs.list(
+                    rx.tabs.trigger(
+                        rx.hstack(rx.icon("list", size=13), rx.text("产品列表"), spacing="1"),
+                        value="list",
+                    ),
+                    rx.tabs.trigger(
+                        rx.hstack(rx.icon("circle_plus", size=13), rx.text("新建产品"), spacing="1"),
+                        value="create",
+                        on_click=ProductState.init_create_form,
+                    ),
+                    size="2",
                 ),
-                rx.tabs.trigger(
-                    rx.hstack(rx.icon("circle_plus", size=13), rx.text("新建产品"), spacing="1"),
-                    value="create",
-                    on_click=ProductState.init_create_form,
-                ),
-                rx.tabs.trigger(
-                    rx.hstack(rx.icon("pencil", size=13), rx.text("编辑产品"), spacing="1"),
-                    value="edit",
-                ),
-                size="2",
+                rx.tabs.content(list_tab(), value="list", padding_top="1.5rem"),
+                rx.tabs.content(create_tab(), value="create", padding_top="1.5rem"),
+                rx.tabs.content(edit_tab(), value="edit", padding_top="1.5rem"),
+                default_value="list",
+                value=ProductState.active_tab,
+                on_change=ProductState.switch_tab,
             ),
-            rx.tabs.content(list_tab(), value="list", padding_top="1.5rem"),
-            rx.tabs.content(create_tab(), value="create", padding_top="1.5rem"),
-            rx.tabs.content(edit_tab(), value="edit", padding_top="1.5rem"),
-            default_value="list",
-            value=ProductState.active_tab,
-            on_change=ProductState.switch_tab,
+            image_upload_modal(),
         ),
         title="商品管理",
     )
