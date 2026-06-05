@@ -33,14 +33,14 @@ def stat_indicator_card(label: str, value: rx.Var, unit: str = "CNY", color_sche
         width="100%",
     )
 
+CATS_INCOME = ["销售收入", "退款", "投资", "现有资产增加", "其他资产增加", "新资产增加", "其他现金收入"]
+CATS_EXPENSE = ["商品成本", "固定资产购入", "其他资产购入", "撤资", "分红", "现有资产减少", "其他"]
+
 
 # ===================== 表单场景子组件 =====================
 
 def common_single_form() -> rx.Component:
     """场景 A: 普通收入与普通支出（单项）"""
-    cats_income = ["销售收入", "退款", "投资", "现有资产增加", "其他资产增加", "新资产增加", "其他现金收入"]
-    cats_expense = ["商品成本", "固定资产购入", "其他资产购入", "撤资", "分红", "现有资产减少", "其他"]
-    
     return rx.vstack(
         rx.grid(
             custom_form_field(
@@ -50,8 +50,8 @@ def common_single_form() -> rx.Component:
                     rx.select.content(
                         rx.cond(
                             FinanceState.rec_type == "收入",
-                            rx.foreach(cats_income, lambda c: rx.select.item(c, value=c)),
-                            rx.foreach(cats_expense, lambda c: rx.select.item(c, value=c))
+                            rx.foreach(CATS_INCOME, lambda c: rx.select.item(c, value=c)),
+                            rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
                         )
                     ),
                     value=FinanceState.f_category,
@@ -228,8 +228,16 @@ def batch_expense_form() -> rx.Component:
     return rx.vstack(
         rx.grid(
             custom_form_field(
-                "操作大类(已锁定)",
-                rx.input(value=FinanceState.f_category, disabled=True, size="2", width="100%")
+                "操作大类",
+                rx.select.root(
+                    rx.select.trigger(),
+                    rx.select.content(
+                        rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
+                    ),
+                    value=FinanceState.f_category,
+                    on_change=FinanceState.set_f_category,
+                    size="2", width="100%"
+                )
             ),
             # 商品成本特有归属商品和分类
             rx.cond(
