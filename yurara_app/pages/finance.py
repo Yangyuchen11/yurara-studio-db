@@ -149,23 +149,23 @@ def batch_editor_table() -> rx.Component:
         rx.table.root(
             rx.table.header(
                 rx.table.row(
-                    rx.table.column_header_cell("内容/名称", size="1", style={"width": "16.66%"}),
-                    rx.table.column_header_cell("金额", size="1", style={"width": "16.66%"}),
-                    rx.table.column_header_cell("数量", size="1", style={"width": "16.66%"}),
-                    rx.table.column_header_cell("具体备注", size="1", style={"width": "16.66%"}),
-                    rx.table.column_header_cell("网址", size="1", style={"width": "16.66%"}),
-                    rx.table.column_header_cell("", size="1", style={"width": "16.66%"}),
+                    rx.table.column_header_cell("内容/名称", size="1", style={"width": "16.66%", "color": "white"}),
+                    rx.table.column_header_cell("金额", size="1", style={"width": "16.66%", "color": "white"}),
+                    rx.table.column_header_cell("数量", size="1", style={"width": "16.66%", "color": "white"}),
+                    rx.table.column_header_cell("具体备注", size="1", style={"width": "16.66%", "color": "white"}),
+                    rx.table.column_header_cell("网址", size="1", style={"width": "16.66%", "color": "white"}),
+                    rx.table.column_header_cell("", size="1", style={"width": "16.66%", "color": "white"}),
                 )
             ),
             rx.table.body(
                 rx.foreach(
                     FinanceState.batch_items,
                     lambda item: rx.table.row(
-                        rx.table.cell(rx.text(item.name, size="1"), style={"width": "16.66%"}),
-                        rx.table.cell(rx.text(item.amount.to_string(), size="1"), style={"width": "16.66%"}),
-                        rx.table.cell(rx.text(item.qty.to_string(), size="1"), style={"width": "16.66%"}),
-                        rx.table.cell(rx.text(item.desc, size="1"), style={"width": "16.66%"}),
-                        rx.table.cell(rx.text(item.url, size="1", line_clamp=1), style={"width": "16.66%"}),
+                        rx.table.cell(rx.text(item.name, size="1", color="white"), style={"width": "16.66%"}),
+                        rx.table.cell(rx.text(item.amount.to_string(), size="1", color="white"), style={"width": "16.66%"}),
+                        rx.table.cell(rx.text(item.qty.to_string(), size="1", color="white"), style={"width": "16.66%"}),
+                        rx.table.cell(rx.text(item.desc, size="1", color="white"), style={"width": "16.66%"}),
+                        rx.table.cell(rx.text(item.url, size="1", line_clamp=1, color="white"), style={"width": "16.66%"}),
                         rx.table.cell(
                             rx.icon_button(
                                 rx.icon("trash_2", size=12),

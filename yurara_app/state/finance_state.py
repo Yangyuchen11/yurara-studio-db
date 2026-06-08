@@ -34,6 +34,7 @@ class TempBatchItem(BaseModel):
 class CashAccountOption(BaseModel):
     id: str = ""
     label: str = ""
+    currency: str = ""
 
 class DebtOption(BaseModel):
     id: str = ""
@@ -211,7 +212,13 @@ class FinanceState(AppState):
     @rx.event
     def set_f_url(self, val: str): self.f_url = val
     @rx.event
-    def set_f_account_id(self, val: str): self.f_account_id = val
+    def set_f_account_id(self, val: str):
+        self.f_account_id = val
+        if val:
+            for acc in self.cash_accounts:
+                if acc.id == val:
+                    self.f_currency = acc.currency
+                    break
 
     # 货币兑换专属事件
     @rx.event
@@ -416,6 +423,7 @@ class FinanceState(AppState):
 
     def reset_subform_variables(self):
         """重置各分类的变量"""
+        self.f_date = date.today().strftime("%Y-%m-%d")
         self.f_amount = 0.0
         self.f_desc = ""
         self.f_shop = ""
@@ -437,6 +445,7 @@ class FinanceState(AppState):
 
     @rx.event
     def load_finance_page(self):
+        self.f_date = date.today().strftime("%Y-%m-%d")
         self.is_loading = True
         yield
         db = self.get_db()
@@ -482,7 +491,11 @@ class FinanceState(AppState):
             # A. 现金账户
             cash_list = FinanceService.get_transferable_assets(db)
             self.cash_accounts = [
-                CashAccountOption(id=str(a.id), label=f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})")
+                CashAccountOption(
+                    id=str(a.id),
+                    label=f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})",
+                    currency=a.currency
+                )
                 for a in cash_list
             ]
             
@@ -509,7 +522,14 @@ class FinanceState(AppState):
             
             # 初始化默认的外键 ID
             if self.cash_accounts:
-                if not self.f_account_id: self.f_account_id = self.cash_accounts[0].id
+                if not self.f_account_id:
+                    self.f_account_id = self.cash_accounts[0].id
+                    self.f_currency = self.cash_accounts[0].currency
+                else:
+                    for acc in self.cash_accounts:
+                        if acc.id == self.f_account_id:
+                            self.f_currency = acc.currency
+                            break
                 if not self.ex_source_acc_id: self.ex_source_acc_id = self.cash_accounts[0].id
                 if not self.ex_target_acc_id: self.ex_target_acc_id = self.cash_accounts[0].id
                 if not self.debt_target_acc_id: self.debt_target_acc_id = self.cash_accounts[0].id
