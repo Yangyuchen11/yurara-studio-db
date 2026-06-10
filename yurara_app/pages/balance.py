@@ -94,7 +94,7 @@ def create_account_accordion() -> rx.Component:
                     "确认追加",
                     on_click=BalanceState.create_cash_account,
                     size="2",
-                    color_scheme="violet"
+                    style={"background": "#10b981", "color": "white", "font-weight": "bold", "cursor": "pointer"}
                 ),
                 spacing="3",
                 padding="1.5rem 0",

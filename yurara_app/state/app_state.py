@@ -86,6 +86,9 @@ class AppState(rx.State):
     # --- 危险操作：清空数据口令确认 ---
     delete_confirm_code: str = ""
 
+    # --- 导航栏折叠状态 ---
+    sidebar_collapsed: bool = False
+
     # ===================== 属性计算 =====================
 
     @rx.var
@@ -315,3 +318,7 @@ class AppState(rx.State):
             yield rx.toast(f"清空数据失败: {e}", level="error")
         finally:
             db.close()
+
+    @rx.event
+    def toggle_sidebar(self):
+        self.sidebar_collapsed = not self.sidebar_collapsed

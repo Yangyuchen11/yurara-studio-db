@@ -332,7 +332,7 @@ def batch_expense_form() -> rx.Component:
             custom_form_field(
                 "付款现金账户",
                 rx.select.root(
-                    rx.select.trigger(),
+                    rx.select.trigger(width="400px"),
                     rx.select.content(
                         rx.foreach(
                             FinanceState.cash_accounts,
@@ -350,7 +350,7 @@ def batch_expense_form() -> rx.Component:
                     placeholder="如：某工厂、淘宝商家",
                     value=FinanceState.f_shop,
                     on_change=FinanceState.set_f_shop,
-                    size="2", width="100%"
+                    size="2", width="400px"
                 )
             ),
             custom_form_field(

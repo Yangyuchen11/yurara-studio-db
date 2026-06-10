@@ -46,7 +46,7 @@ NAV_ITEMS = [
 
 def nav_item(label: str, icon: str, href: str) -> rx.Component:
     """单个导航项，带活跃状态高亮。"""
-    return rx.link(
+    expanded_item = rx.link(
         rx.hstack(
             rx.icon(icon, size=16, class_name="nav-icon"),
             rx.text(label, size="2"),
@@ -59,28 +59,61 @@ def nav_item(label: str, icon: str, href: str) -> rx.Component:
         class_name="nav-item",
         _hover={},  # 通过 CSS 处理 hover
     )
+    
+    collapsed_item = rx.tooltip(
+        rx.link(
+            rx.center(
+                rx.icon(icon, size=16, class_name="nav-icon"),
+                width="100%",
+                height="32px",
+            ),
+            href=href,
+            width="100%",
+            class_name="nav-item",
+            padding="6px 0",
+            _hover={},
+        ),
+        content=label,
+        side="right",
+    )
+    
+    return rx.cond(
+        AppState.sidebar_collapsed,
+        collapsed_item,
+        expanded_item,
+    )
 
 
 def nav_group(group: str, items: list) -> rx.Component:
     """导航分组。"""
-    return rx.vstack(
-        rx.text(
-            group,
-            size="1",
-            weight="bold",
-            class_name="nav-group-label",
+    return rx.cond(
+        AppState.sidebar_collapsed,
+        rx.vstack(
+            *[nav_item(**item) for item in items],
+            spacing="1",
+            width="100%",
+            align_items="center",
+            padding_bottom="0.75rem",
         ),
-        *[nav_item(**item) for item in items],
-        spacing="1",
-        width="100%",
-        align_items="start",
-        padding_bottom="0.75rem",
+        rx.vstack(
+            rx.text(
+                group,
+                size="1",
+                weight="bold",
+                class_name="nav-group-label",
+            ),
+            *[nav_item(**item) for item in items],
+            spacing="1",
+            width="100%",
+            align_items="start",
+            padding_bottom="0.75rem",
+        )
     )
 
 
 def exchange_rate_widget() -> rx.Component:
     """汇率设置小组件。"""
-    return rx.vstack(
+    expanded_widget = rx.vstack(
         rx.hstack(
             rx.icon("refresh_cw", size=13),
             rx.text("全局汇率", size="1", weight="bold"),
@@ -107,10 +140,50 @@ def exchange_rate_widget() -> rx.Component:
         border_radius="8px",
     )
 
+    collapsed_widget = rx.popover.root(
+        rx.popover.trigger(
+            rx.tooltip(
+                rx.icon_button(
+                    rx.icon("refresh_cw", size=16),
+                    variant="soft",
+                    color_scheme="gray",
+                    cursor="pointer",
+                ),
+                content="设置全局汇率",
+                side="right",
+            )
+        ),
+        rx.popover.content(
+            rx.vstack(
+                rx.text("全局汇率 (100 JPY)", size="1", weight="bold", color=rx.color("slate", 10)),
+                rx.hstack(
+                    rx.input(
+                        default_value=AppState.exchange_rate_100.to_string(),
+                        type="number",
+                        size="1",
+                        width="80px",
+                        on_blur=AppState.set_exchange_rate,
+                    ),
+                    rx.text("CNY", size="1", color=rx.color("slate", 10)),
+                    spacing="2",
+                    align="center",
+                ),
+                spacing="2",
+            ),
+            style={"maxWidth": "220px"},
+        ),
+    )
+
+    return rx.cond(
+        AppState.sidebar_collapsed,
+        collapsed_widget,
+        expanded_widget,
+    )
+
 
 def test_mode_toggle() -> rx.Component:
     """测试模式切换。"""
-    return rx.hstack(
+    expanded_toggle = rx.hstack(
         rx.cond(
             AppState.test_mode,
             rx.badge("🧪 测试模式", color_scheme="orange", variant="soft"),
@@ -128,24 +201,70 @@ def test_mode_toggle() -> rx.Component:
         justify="between",
     )
 
+    collapsed_toggle = rx.center(
+        rx.cond(
+            AppState.test_mode,
+            rx.tooltip(
+                rx.switch(
+                    checked=AppState.test_mode,
+                    on_change=AppState.toggle_test_mode,
+                    size="1",
+                    color_scheme="orange",
+                ),
+                content="当前：测试模式 (点击切换)",
+                side="right",
+            ),
+            rx.tooltip(
+                rx.switch(
+                    checked=AppState.test_mode,
+                    on_change=AppState.toggle_test_mode,
+                    size="1",
+                    color_scheme="orange",
+                ),
+                content="当前：正式环境 (点击切换)",
+                side="right",
+            ),
+        ),
+        width="100%",
+    )
+
+    return rx.cond(
+        AppState.sidebar_collapsed,
+        collapsed_toggle,
+        expanded_toggle,
+    )
+
 
 def data_management_popover() -> rx.Component:
     """全局数据备份与恢复、清空的弹出控制面板。"""
-    return rx.popover.root(
-        rx.popover.trigger(
-            rx.button(
-                rx.hstack(
-                    rx.icon("database", size=14),
-                    rx.text("数据管理与备份", size="1"),
-                    spacing="2",
-                    align="center",
-                ),
+    trigger_btn = rx.cond(
+        AppState.sidebar_collapsed,
+        rx.tooltip(
+            rx.icon_button(
+                rx.icon("database", size=16),
                 variant="soft",
                 color_scheme="violet",
-                width="100%",
                 cursor="pointer",
-            )
+            ),
+            content="数据管理与备份",
+            side="right",
         ),
+        rx.button(
+            rx.hstack(
+                rx.icon("database", size=14),
+                rx.text("数据管理与备份", size="1"),
+                spacing="2",
+                align="center",
+            ),
+            variant="soft",
+            color_scheme="violet",
+            width="100%",
+            cursor="pointer",
+        ),
+    )
+
+    return rx.popover.root(
+        rx.popover.trigger(trigger_btn),
         rx.popover.content(
             rx.vstack(
                 # === 备份区域 ===
@@ -225,67 +344,154 @@ def data_management_popover() -> rx.Component:
     )
 
 
+def sidebar_toggle_button() -> rx.Component:
+    """侧边栏收起/展开切换按钮。"""
+    btn = rx.icon_button(
+        rx.cond(
+            AppState.sidebar_collapsed,
+            rx.icon("chevron_right", size=16),
+            rx.icon("chevron_left", size=16),
+        ),
+        on_click=AppState.toggle_sidebar,
+        variant="ghost",
+        color_scheme="gray",
+        cursor="pointer",
+    )
+    
+    collapsed_btn = rx.center(
+        rx.tooltip(btn, content="展开侧边栏", side="right"),
+        width="100%",
+        padding="0.5rem 0",
+    )
+    
+    expanded_btn = rx.hstack(
+        rx.spacer(),
+        rx.tooltip(btn, content="收起侧边栏", side="right"),
+        width="100%",
+        padding="0.5rem 0.75rem",
+        align_items="center",
+    )
+    
+    return rx.cond(
+        AppState.sidebar_collapsed,
+        collapsed_btn,
+        expanded_btn,
+    )
+
+
 def sidebar() -> rx.Component:
     """主侧边栏组件。"""
     return rx.box(
         # === 顶部 Logo 区域 ===
-        rx.vstack(
-            rx.hstack(
-                rx.box(
-                    rx.text("Y", weight="bold", size="5", color="white"),
-                    width="32px",
-                    height="32px",
-                    background="linear-gradient(135deg, #6366f1, #8b5cf6)",
-                    border_radius="8px",
-                    display="flex",
-                    align_items="center",
-                    justify_content="center",
+        rx.cond(
+            AppState.sidebar_collapsed,
+            rx.vstack(
+                rx.center(
+                    rx.box(
+                        rx.text("Y", weight="bold", size="5", color="white"),
+                        width="32px",
+                        height="32px",
+                        background="linear-gradient(135deg, #6366f1, #8b5cf6)",
+                        border_radius="8px",
+                        display="flex",
+                        align_items="center",
+                        justify_content="center",
+                    ),
+                    width="100%",
+                    padding="1rem 0",
                 ),
-                rx.vstack(
-                    rx.text("Yurara Studio", weight="bold", size="3"),
-                    rx.text("综合管理系统", size="1", color=rx.color("slate", 10)),
-                    spacing="0",
-                    align_items="start",
+                rx.divider(margin="0"),
+                spacing="0",
+                width="100%",
+            ),
+            rx.vstack(
+                rx.hstack(
+                    rx.box(
+                        rx.text("Y", weight="bold", size="5", color="white"),
+                        width="32px",
+                        height="32px",
+                        background="linear-gradient(135deg, #6366f1, #8b5cf6)",
+                        border_radius="8px",
+                        display="flex",
+                        align_items="center",
+                        justify_content="center",
+                    ),
+                    rx.vstack(
+                        rx.text("Yurara Studio", weight="bold", size="3"),
+                        rx.text("综合管理系统", size="1", color=rx.color("slate", 10)),
+                        spacing="0",
+                        align_items="start",
+                    ),
+                    spacing="2",
+                    align="center",
+                    width="100%",
+                    padding="1rem 1.25rem",
+                ),
+                rx.divider(margin="0"),
+                spacing="0",
+                width="100%",
+            )
+        ),
+
+        # === 用户信息栏 ===
+        rx.cond(
+            AppState.sidebar_collapsed,
+            rx.vstack(
+                rx.tooltip(
+                    rx.avatar(
+                        fallback=AuthState.current_user[:1].upper(),
+                        size="1",
+                        radius="full",
+                        color_scheme="violet",
+                    ),
+                    content=AuthState.current_user,
+                    side="right",
+                ),
+                rx.tooltip(
+                    rx.icon_button(
+                        rx.icon("log_out", size=14),
+                        on_click=AuthState.logout,
+                        variant="ghost",
+                        size="1",
+                        color_scheme="red",
+                    ),
+                    content="退出登录",
+                    side="right",
                 ),
                 spacing="2",
                 align="center",
                 width="100%",
-                padding="1rem 1.25rem",
+                padding="0.75rem 0",
             ),
-            rx.divider(margin="0"),
-            spacing="0",
-            width="100%",
-        ),
-
-        # === 用户信息栏 ===
-        rx.hstack(
-            rx.avatar(
-                fallback=AuthState.current_user[:1].upper(),
-                size="1",
-                radius="full",
-                color_scheme="violet",
-            ),
-            rx.vstack(
-                rx.text(AuthState.current_user, size="2", weight="medium"),
-                rx.text("管理员", size="1", color=rx.color("slate", 10)),
-                spacing="0",
-                align_items="start",
-            ),
-            rx.spacer(),
-            rx.tooltip(
-                rx.icon_button(
-                    rx.icon("log_out", size=14),
-                    on_click=AuthState.logout,
-                    variant="ghost",
+            rx.hstack(
+                rx.avatar(
+                    fallback=AuthState.current_user[:1].upper(),
                     size="1",
-                    color_scheme="red",
+                    radius="full",
+                    color_scheme="violet",
                 ),
-                content="退出登录",
-            ),
-            spacing="2",
-            align="center",
-            width="100%",
-            padding="0.75rem 1rem",
+                rx.vstack(
+                    rx.text(AuthState.current_user, size="2", weight="medium"),
+                    rx.text("管理员", size="1", color=rx.color("slate", 10)),
+                    spacing="0",
+                    align_items="start",
+                ),
+                rx.spacer(),
+                rx.tooltip(
+                    rx.icon_button(
+                        rx.icon("log_out", size=14),
+                        on_click=AuthState.logout,
+                        variant="ghost",
+                        size="1",
+                        color_scheme="red",
+                    ),
+                    content="退出登录",
+                ),
+                spacing="2",
+                align="center",
+                width="100%",
+                padding="0.75rem 1rem",
+            )
         ),
 
         rx.divider(margin="0"),
@@ -293,24 +499,50 @@ def sidebar() -> rx.Component:
         # === 测试模式警告 ===
         rx.cond(
             AppState.test_mode,
-            rx.callout(
-                "测试模式已开启，操作不影响线上数据",
-                icon="triangle_alert",
-                color_scheme="orange",
-                size="1",
-                margin="0.5rem",
+            rx.cond(
+                AppState.sidebar_collapsed,
+                rx.center(
+                    rx.tooltip(
+                        rx.icon(
+                            "triangle_alert",
+                            color=rx.color("orange", 10),
+                            size=18,
+                        ),
+                        content="测试模式已开启，操作不影响线上数据",
+                        side="right",
+                    ),
+                    width="100%",
+                    padding="0.5rem 0",
+                ),
+                rx.callout(
+                    "测试模式已开启，操作不影响线上数据",
+                    icon="triangle_alert",
+                    color_scheme="orange",
+                    size="1",
+                    margin="0.5rem",
+                ),
             ),
             rx.fragment(),
         ),
 
         # === 主导航区域 ===
         rx.scroll_area(
-            rx.vstack(
-                *[nav_group(**grp) for grp in NAV_ITEMS],
-                spacing="0",
-                width="100%",
-                padding="0.75rem",
-                align_items="start",
+            rx.cond(
+                AppState.sidebar_collapsed,
+                rx.vstack(
+                    *[nav_group(**grp) for grp in NAV_ITEMS],
+                    spacing="0",
+                    width="100%",
+                    padding="0.75rem 0",
+                    align_items="center",
+                ),
+                rx.vstack(
+                    *[nav_group(**grp) for grp in NAV_ITEMS],
+                    spacing="0",
+                    width="100%",
+                    padding="0.75rem",
+                    align_items="start",
+                ),
             ),
             flex="1",
             overflow_y="auto",
@@ -319,26 +551,41 @@ def sidebar() -> rx.Component:
         rx.divider(margin="0"),
 
         # === 底部工具区 ===
-        rx.vstack(
-            exchange_rate_widget(),
-            rx.box(height="0.25rem"),
-            test_mode_toggle(),
-            rx.box(height="0.25rem"),
-            data_management_popover(),
-            spacing="2",
-            padding="0.75rem",
-            width="100%",
+        rx.cond(
+            AppState.sidebar_collapsed,
+            rx.vstack(
+                exchange_rate_widget(),
+                test_mode_toggle(),
+                data_management_popover(),
+                rx.divider(margin="0"),
+                sidebar_toggle_button(),
+                spacing="3",
+                padding="0.75rem 0",
+                width="100%",
+                align_items="center",
+            ),
+            rx.vstack(
+                exchange_rate_widget(),
+                test_mode_toggle(),
+                data_management_popover(),
+                rx.divider(margin="0"),
+                sidebar_toggle_button(),
+                spacing="2",
+                padding="0.75rem",
+                width="100%",
+            ),
         ),
 
         # === 侧边栏容器样式 ===
         display="flex",
         flex_direction="column",
         height="100vh",
-        width="240px",
-        min_width="240px",
+        width=rx.cond(AppState.sidebar_collapsed, "68px", "240px"),
+        min_width=rx.cond(AppState.sidebar_collapsed, "68px", "240px"),
         background=rx.color("slate", 1),
         border_right=f"1px solid {rx.color('slate', 4)}",
         position="sticky",
         top="0",
         overflow="hidden",
+        style={"transition": "width 0.2s ease, min-width 0.2s ease"},
     )

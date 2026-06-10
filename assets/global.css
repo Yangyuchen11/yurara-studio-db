@@ -101,6 +101,19 @@ html {
     border: 1px solid var(--gray-5) !important;
 }
 
+.rt-TextFieldInput:-webkit-autofill,
+.rt-TextFieldInput:-webkit-autofill:hover, 
+.rt-TextFieldInput:-webkit-autofill:focus, 
+.rt-TextFieldInput:-webkit-autofill:active,
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus, 
+input:-webkit-autofill:active {
+    -webkit-text-fill-color: #000000 !important;
+    box-shadow: 0 0 0px 1000px #ffffff inset !important;
+    transition: background-color 5000s ease-in-out 0s;
+}
+
 .rt-TextFieldRoot:focus-within, .rt-SelectTrigger:focus {
     border-color: var(--violet-8) !important;
     box-shadow: 0 0 0 2px var(--violet-4) !important;

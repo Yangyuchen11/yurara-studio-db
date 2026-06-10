@@ -108,6 +108,25 @@ class OfflineSalesState(AppState):
         return ""
 
     @rx.var
+    def edit_template_selected_value(self) -> str:
+        for t in self.templates:
+            if t.id == self.tpl_id:
+                return f"{t.name} ({t.code})"
+        if self.is_edit_mode and self.templates:
+            return f"{self.templates[0].name} ({self.templates[0].code})"
+        return ""
+
+    @rx.var
+    def cart_qty_map(self) -> dict[str, int]:
+        res = {}
+        if self.active_template:
+            for item in self.active_template.template_items:
+                res[f"{item.product_name}_{item.variant}"] = 0
+        for ci in self.cart:
+            res[f"{ci.product_name}_{ci.variant}"] = ci.qty
+        return res
+
+    @rx.var
     def cart_total(self) -> float:
         return sum(ci.qty * ci.unit_price for ci in self.cart)
 
@@ -201,10 +220,13 @@ class OfflineSalesState(AppState):
             self.open_create_template()
         finally:
             db.close()
+        self.auto_match_cash_account()
 
     @rx.event
     def select_tab(self, tab_name: str):
         self.active_tab = tab_name
+        if tab_name == "pos":
+            self.auto_match_cash_account()
 
     @rx.event
     def select_template(self, tpl_id: int):

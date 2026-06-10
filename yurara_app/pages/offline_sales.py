@@ -44,27 +44,68 @@ def cashier_product_card(item: POSTemplateItemModel) -> rx.Component:
                 rx.badge("🚫 已售罄", color_scheme="red", variant="solid", size="1", width="100%", justify="center"),
                 rx.badge(rx.fragment("📦 余量: ", item.remaining_quantity.to_string()), color_scheme="green", variant="soft", size="1", width="100%", justify="center")
             ),
-            
-            rx.button(
-                rx.cond(
-                    is_out_of_stock,
-                    "无库存",
-                    rx.fragment("¥ ", item.preset_price.to_string(), " ➕")
+            # 价格展示静态块
+            rx.center(
+                rx.text(
+                    rx.cond(
+                        is_out_of_stock,
+                        "无库存",
+                        rx.fragment("¥ ", item.preset_price.to_string())
+                    ),
+                    weight="bold",
+                    size="1",
+                    color=rx.cond(is_out_of_stock, "var(--red-11)", "var(--violet-11)")
                 ),
-                on_click=lambda: OfflineSalesState.add_to_cart(
-                    item.product_name, item.variant, item.preset_price, item.max_limit, item.image_data
-                ),
-                disabled=is_out_of_stock,
-                size="1",
-                color_scheme="violet",
-                width="100%"
+                width="100%",
+                padding="4px 0",
+                background=rx.cond(is_out_of_stock, rx.color("red", 3), rx.color("violet", 3)),
+                border_radius="4px"
             ),
             spacing="2",
             align_items="center",
             width="100%"
         ),
+        # 购物车数量半透明覆盖层
+        rx.cond(
+            OfflineSalesState.cart_qty_map[f"{item.product_name}_{item.variant}"] > 0,
+            rx.center(
+                rx.vstack(
+                    rx.icon("shopping_cart", size=20, color="white"),
+                    rx.text(
+                        rx.fragment("已加购 ", OfflineSalesState.cart_qty_map[f"{item.product_name}_{item.variant}"].to_string(), " 件"),
+                        size="1",
+                        weight="bold",
+                        color="white"
+                    ),
+                    spacing="1",
+                    align="center"
+                ),
+                position="absolute",
+                top="0",
+                left="0",
+                width="100%",
+                height="100%",
+                background_color="rgba(15, 23, 42, 0.75)",
+                backdrop_filter="blur(2px)",
+                border_radius="inherit",
+                pointer_events="none"
+            ),
+            rx.fragment()
+        ),
         padding="0.5rem",
-        style={"minWidth": "110px"}
+        style={
+            "minWidth": "110px",
+            "position": "relative",
+            "cursor": rx.cond(is_out_of_stock, "default", "pointer"),
+            "transition": "transform 0.15s ease, box-shadow 0.15s ease"
+        },
+        _hover={
+            "transform": rx.cond(is_out_of_stock, "none", "translateY(-2px)"),
+            "box_shadow": rx.cond(is_out_of_stock, "none", "0 8px 24px rgba(99, 102, 241, 0.2)"),
+        },
+        on_click=lambda: OfflineSalesState.add_to_cart(
+            item.product_name, item.variant, item.preset_price, item.max_limit, item.image_data
+        )
     )
 
 
@@ -118,7 +159,7 @@ def ledger_order_row(o: POSOrderRow) -> rx.Component:
             confirm_dialog(
                 trigger=rx.button(
                     rx.icon("trash-2", size=14),
-                    "删除并回滚",
+                    "撤销",
                     color_scheme="red",
                     size="1",
                     variant="soft",
@@ -499,6 +540,7 @@ def template_config_tab() -> rx.Component:
                             )
                         ),
                         placeholder="请选择模板进行编辑...",
+                        value=OfflineSalesState.edit_template_selected_value,
                         on_change=OfflineSalesState.select_template_for_edit_by_option,
                         size="2",
                         width="100%"
@@ -584,7 +626,8 @@ def template_config_tab() -> rx.Component:
                     on_click=OfflineSalesState.save_template,
                     size="3",
                     color_scheme="green",
-                    width="100%"
+                    width="100%",
+                    flex="1"
                 ),
                 rx.cond(
                     OfflineSalesState.is_edit_mode,
@@ -593,7 +636,8 @@ def template_config_tab() -> rx.Component:
                         on_click=lambda: OfflineSalesState.delete_template(OfflineSalesState.tpl_id),
                         size="3",
                         color_scheme="red",
-                        width="100%"
+                        width="100%",
+                        flex="1"
                     ),
                     rx.fragment()
                 ),
