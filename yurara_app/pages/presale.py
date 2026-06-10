@@ -1042,6 +1042,15 @@ def presale_page() -> rx.Component:
                         width="100%",
                     ),
                     
+                    # 查询输入框
+                    rx.input(
+                        placeholder="🔍 输入订单号、平台、备注、状态、款式或商品明细筛选...",
+                        value=PresaleState.search_query,
+                        on_change=PresaleState.set_search_query,
+                        width="100%",
+                        size="2",
+                    ),
+                    
                     rx.hstack(
                         rx.button("☑️ 全选", on_click=PresaleState.toggle_select_all, size="1", variant="soft", color_scheme="gray"),
                         rx.spacer(),
@@ -1055,31 +1064,58 @@ def presale_page() -> rx.Component:
                     # 预售表格
                     rx.cond(
                         PresaleState.has_orders,
-                        rx.scroll_area(
-                            rx.table.root(
-                                rx.table.header(
-                                    rx.table.row(
-                                        rx.table.column_header_cell("选择", size="1"),
-                                        rx.table.column_header_cell("定金订单号", size="1"),
-                                        rx.table.column_header_cell("尾款订单号", size="1"),
-                                        rx.table.column_header_cell("状态", size="1"),
-                                        rx.table.column_header_cell("商品明细", size="1"),
-                                        rx.table.column_header_cell("定金金额", size="1"),
-                                        rx.table.column_header_cell("尾款金额", size="1"),
-                                        rx.table.column_header_cell("已退款", size="1"),
-                                        rx.table.column_header_cell("优惠", size="1"),
-                                        rx.table.column_header_cell("平台", size="1"),
-                                        rx.table.column_header_cell("日期", size="1"),
-                                        rx.table.column_header_cell("备注", size="1"),
-                                    )
+                        rx.vstack(
+                            rx.scroll_area(
+                                rx.table.root(
+                                    rx.table.header(
+                                        rx.table.row(
+                                            rx.table.column_header_cell("选择", size="1"),
+                                            rx.table.column_header_cell("定金订单号", size="1"),
+                                            rx.table.column_header_cell("尾款订单号", size="1"),
+                                            rx.table.column_header_cell("状态", size="1"),
+                                            rx.table.column_header_cell("商品明细", size="1"),
+                                            rx.table.column_header_cell("定金金额", size="1"),
+                                            rx.table.column_header_cell("尾款金额", size="1"),
+                                            rx.table.column_header_cell("已退款", size="1"),
+                                            rx.table.column_header_cell("优惠", size="1"),
+                                            rx.table.column_header_cell("平台", size="1"),
+                                            rx.table.column_header_cell("日期", size="1"),
+                                            rx.table.column_header_cell("备注", size="1"),
+                                        )
+                                    ),
+                                    rx.table.body(
+                                        rx.foreach(PresaleState.paginated_orders, order_row_renderer)
+                                    ),
+                                    size="1",
+                                    width="100%"
                                 ),
-                                rx.table.body(
-                                    rx.foreach(PresaleState.orders, order_row_renderer)
-                                ),
-                                size="1",
                                 width="100%"
                             ),
-                            width="100%"
+                            # 分页控制栏
+                            rx.hstack(
+                                rx.button(
+                                    "上一页",
+                                    on_click=PresaleState.prev_page,
+                                    disabled=~PresaleState.has_prev_page,
+                                    size="1",
+                                    variant="soft",
+                                ),
+                                rx.text(PresaleState.page_info, size="1", color=rx.color("slate", 10)),
+                                rx.button(
+                                    "下一页",
+                                    on_click=PresaleState.next_page,
+                                    disabled=~PresaleState.has_next_page,
+                                    size="1",
+                                    variant="soft",
+                                ),
+                                spacing="3",
+                                align="center",
+                                justify="center",
+                                width="100%",
+                                padding_y="0.25rem",
+                            ),
+                            width="100%",
+                            spacing="3",
                         ),
                         empty_state("该筛选分类下无对应的预售销售订单记录数据")
                     ),
@@ -1090,7 +1126,7 @@ def presale_page() -> rx.Component:
                             rx.icon("check", size=14),
                             rx.fragment("📥 完成定金收款 (", PresaleState.selected_count.to_string(), ")"),
                             on_click=PresaleState.complete_selected_deposits,
-                            disabled=PresaleState.selected_count == 0,
+                            disabled=~PresaleState.can_complete_deposit,
                             size="2",
                             color_scheme="violet"
                         ),
@@ -1098,7 +1134,7 @@ def presale_page() -> rx.Component:
                             rx.icon("package", size=14),
                             rx.fragment("📦 发货 (", PresaleState.selected_count.to_string(), ")"),
                             on_click=PresaleState.ship_selected_orders,
-                            disabled=PresaleState.selected_count == 0,
+                            disabled=~PresaleState.can_ship,
                             size="2",
                             color_scheme="orange"
                         ),
@@ -1106,7 +1142,7 @@ def presale_page() -> rx.Component:
                             rx.icon("badge_check", size=14),
                             rx.fragment("✅ 收尾款完成对账 (", PresaleState.selected_count.to_string(), ")"),
                             on_click=PresaleState.complete_selected_orders,
-                            disabled=PresaleState.selected_count == 0,
+                            disabled=~PresaleState.can_complete,
                             size="2",
                             color_scheme="green"
                         ),
@@ -1114,7 +1150,7 @@ def presale_page() -> rx.Component:
                             rx.icon("wrench", size=14),
                             "🔧 售后处理",
                             on_click=lambda: PresaleState.open_refund_dialog(PresaleState.single_selected_id),
-                            disabled=~PresaleState.is_single_selected,
+                            disabled=~PresaleState.can_refund,
                             size="2",
                             color_scheme="red"
                         ),

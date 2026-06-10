@@ -71,6 +71,9 @@ class SalesOrderState(AppState):
     selected_order_ids: list[int] = []
     selected_product_filter: str = "全部商品"
     is_loading: bool = False
+    search_query: str = ""
+    page_index: int = 1
+    page_size: int = 50
 
     # --- 统计指标 ---
     stat_total: int = 0
@@ -149,7 +152,86 @@ class SalesOrderState(AppState):
 
     @rx.var
     def has_orders(self) -> bool:
-        return len(self.orders) > 0
+        return len(self.filtered_orders) > 0
+
+    @rx.var
+    def selected_orders_statuses(self) -> list[str]:
+        res = []
+        for o_id in self.selected_order_ids:
+            for o in self.orders:
+                if o.id == o_id:
+                    res.append(o.status)
+                    break
+        return res
+
+    @rx.var
+    def can_ship(self) -> bool:
+        statuses = self.selected_orders_statuses
+        if not statuses:
+            return False
+        return all(s == "📦 待发货" for s in statuses)
+
+    @rx.var
+    def can_complete(self) -> bool:
+        statuses = self.selected_orders_statuses
+        if not statuses:
+            return False
+        return all(s == "🚚 已发货" for s in statuses)
+
+    @rx.var
+    def can_refund(self) -> bool:
+        if self.selected_count != 1:
+            return False
+        statuses = self.selected_orders_statuses
+        if not statuses:
+            return False
+        return statuses[0] in ["🚚 已发货", "✅ 完成", "🔧 售后"]
+
+    @rx.var
+    def filtered_orders(self) -> list[SalesOrderRow]:
+        query = self.search_query.strip().lower()
+        if not query:
+            return self.orders
+        res = []
+        for o in self.orders:
+            if (query in o.order_no.lower() or 
+                query in o.platform.lower() or 
+                query in o.notes.lower() or 
+                query in o.items_summary.lower() or 
+                query in o.created_date.lower() or 
+                query in o.status.lower()):
+                res.append(o)
+        return res
+
+    @rx.var
+    def paginated_orders(self) -> list[SalesOrderRow]:
+        start = (self.page_index - 1) * self.page_size
+        end = start + self.page_size
+        return self.filtered_orders[start:end]
+
+    @rx.var
+    def total_pages(self) -> int:
+        n = len(self.filtered_orders)
+        if n == 0:
+            return 1
+        return math.ceil(n / self.page_size)
+
+    @rx.var
+    def page_info(self) -> str:
+        total = len(self.filtered_orders)
+        if total == 0:
+            return "0-0 of 0"
+        start = (self.page_index - 1) * self.page_size + 1
+        end = min(self.page_index * self.page_size, total)
+        return f"{start}-{end} of {total}"
+
+    @rx.var
+    def has_prev_page(self) -> bool:
+        return self.page_index > 1
+
+    @rx.var
+    def has_next_page(self) -> bool:
+        return self.page_index < self.total_pages
 
     @rx.var
     def is_select_all(self) -> bool:
@@ -378,13 +460,30 @@ class SalesOrderState(AppState):
     def select_tab(self, tab_name: str):
         self.active_tab = tab_name
         self.selected_order_ids = []
+        self.page_index = 1
         yield SalesOrderState.load_orders_page()
 
     @rx.event
     def select_product_filter(self, val: str):
         self.selected_product_filter = val
         self.selected_order_ids = []
+        self.page_index = 1
         yield SalesOrderState.load_orders_page()
+
+    @rx.event
+    def set_search_query(self, val: str):
+        self.search_query = val
+        self.page_index = 1
+
+    @rx.event
+    def prev_page(self):
+        if self.page_index > 1:
+            self.page_index -= 1
+
+    @rx.event
+    def next_page(self):
+        if self.page_index < self.total_pages:
+            self.page_index += 1
 
     @rx.event
     def select_p_name(self, val: str):

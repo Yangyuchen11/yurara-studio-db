@@ -903,6 +903,15 @@ def sales_order_page() -> rx.Component:
                         width="100%",
                     ),
                     
+                    # 查询输入框
+                    rx.input(
+                        placeholder="🔍 输入订单号、平台、备注、状态或商品明细筛选...",
+                        value=SalesOrderState.search_query,
+                        on_change=SalesOrderState.set_search_query,
+                        width="100%",
+                        size="2",
+                    ),
+                    
                     # 批量操作辅助栏
                     rx.hstack(
                         rx.button("☑️ 全选", on_click=SalesOrderState.toggle_select_all, size="1", variant="soft", color_scheme="gray"),
@@ -917,28 +926,55 @@ def sales_order_page() -> rx.Component:
                     # 订单表格
                     rx.cond(
                         SalesOrderState.has_orders,
-                        rx.scroll_area(
-                            rx.table.root(
-                                rx.table.header(
-                                    rx.table.row(
-                                        rx.table.column_header_cell("选择", size="1"),
-                                        rx.table.column_header_cell("订单号", size="1"),
-                                        rx.table.column_header_cell("状态", size="1"),
-                                        rx.table.column_header_cell("商品明细", size="1"),
-                                        rx.table.column_header_cell("金额", size="1"),
-                                        rx.table.column_header_cell("已退款", size="1"),
-                                        rx.table.column_header_cell("平台", size="1"),
-                                        rx.table.column_header_cell("日期", size="1"),
-                                        rx.table.column_header_cell("备注说明", size="1"),
-                                    )
+                        rx.vstack(
+                            rx.scroll_area(
+                                rx.table.root(
+                                    rx.table.header(
+                                        rx.table.row(
+                                            rx.table.column_header_cell("选择", size="1"),
+                                            rx.table.column_header_cell("订单号", size="1"),
+                                            rx.table.column_header_cell("状态", size="1"),
+                                            rx.table.column_header_cell("商品明细", size="1"),
+                                            rx.table.column_header_cell("金额", size="1"),
+                                            rx.table.column_header_cell("已退款", size="1"),
+                                            rx.table.column_header_cell("平台", size="1"),
+                                            rx.table.column_header_cell("日期", size="1"),
+                                            rx.table.column_header_cell("备注说明", size="1"),
+                                        )
+                                    ),
+                                    rx.table.body(
+                                        rx.foreach(SalesOrderState.paginated_orders, order_row_renderer)
+                                    ),
+                                    size="1",
+                                    width="100%",
                                 ),
-                                rx.table.body(
-                                    rx.foreach(SalesOrderState.orders, order_row_renderer)
-                                ),
-                                size="1",
                                 width="100%",
                             ),
+                            # 分页控制栏
+                            rx.hstack(
+                                rx.button(
+                                    "上一页",
+                                    on_click=SalesOrderState.prev_page,
+                                    disabled=~SalesOrderState.has_prev_page,
+                                    size="1",
+                                    variant="soft",
+                                ),
+                                rx.text(SalesOrderState.page_info, size="1", color=rx.color("slate", 10)),
+                                rx.button(
+                                    "下一页",
+                                    on_click=SalesOrderState.next_page,
+                                    disabled=~SalesOrderState.has_next_page,
+                                    size="1",
+                                    variant="soft",
+                                ),
+                                spacing="3",
+                                align="center",
+                                justify="center",
+                                width="100%",
+                                padding_y="0.25rem",
+                            ),
                             width="100%",
+                            spacing="3",
                         ),
                         empty_state("该筛选分类下无对应的线上销售订单数据")
                     ),
@@ -949,7 +985,7 @@ def sales_order_page() -> rx.Component:
                             rx.icon("package", size=14),
                             rx.fragment("📦 发货 (", SalesOrderState.selected_count.to_string(), ")"),
                             on_click=SalesOrderState.ship_selected_orders,
-                            disabled=SalesOrderState.selected_count == 0,
+                            disabled=~SalesOrderState.can_ship,
                             size="2",
                             color_scheme="orange",
                         ),
@@ -957,7 +993,7 @@ def sales_order_page() -> rx.Component:
                             rx.icon("badge_check", size=14),
                             rx.fragment("✅ 收款完成对账 (", SalesOrderState.selected_count.to_string(), ")"),
                             on_click=SalesOrderState.complete_selected_orders,
-                            disabled=SalesOrderState.selected_count == 0,
+                            disabled=~SalesOrderState.can_complete,
                             size="2",
                             color_scheme="green",
                         ),
@@ -965,7 +1001,7 @@ def sales_order_page() -> rx.Component:
                             rx.icon("wrench", size=14),
                             "🔧 售后处理",
                             on_click=lambda: SalesOrderState.open_refund_dialog(SalesOrderState.single_selected_id),
-                            disabled=~SalesOrderState.is_single_selected,
+                            disabled=~SalesOrderState.can_refund,
                             size="2",
                             color_scheme="red",
                         ),
