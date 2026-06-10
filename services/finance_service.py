@@ -1,5 +1,5 @@
 # services/finance_service.py
-from sqlalchemy import or_, func, case
+from sqlalchemy import or_, func, case, cast, String
 from datetime import date
 import pandas as pd
 import re
@@ -72,13 +72,11 @@ class FinanceService:
         return db.query(ConsumableItem).all()
 
     @staticmethod
-    def get_finance_records_page(db, page=1, page_size=100):
+    def get_finance_records_page(db, page=1, page_size=100, search_query=""):
         """
         🚀 真正的数据库级分页查询：只抓取当前页所需数据。
         通过 SQL 窗口函数在数据库层计算当前行余额，避免拉取全表到 Python 内存。
         """
-        total_count = db.query(func.count(FinanceRecord.id)).scalar()
-
         # 使用 SQL 窗口函数计算累计余额
         cny_case = case((FinanceRecord.currency == 'CNY', FinanceRecord.amount), else_=0)
         jpy_case = case((FinanceRecord.currency == 'JPY', FinanceRecord.amount), else_=0)
@@ -86,28 +84,61 @@ class FinanceService:
         cny_sum = func.sum(cny_case).over(order_by=(FinanceRecord.date.asc(), FinanceRecord.id.asc())).label('cny_bal')
         jpy_sum = func.sum(jpy_case).over(order_by=(FinanceRecord.date.asc(), FinanceRecord.id.asc())).label('jpy_bal')
 
-        # 分页查询
-        records_with_bal = db.query(FinanceRecord, cny_sum, jpy_sum)\
-            .order_by(FinanceRecord.date.desc(), FinanceRecord.id.desc())\
+        # 我们先定义计算了全量余额的子查询
+        subq = db.query(
+            FinanceRecord.id.label('id'),
+            FinanceRecord.date.label('date'),
+            FinanceRecord.currency.label('currency'),
+            FinanceRecord.amount.label('amount'),
+            FinanceRecord.category.label('category'),
+            FinanceRecord.description.label('description'),
+            FinanceRecord.url.label('url'),
+            FinanceRecord.account_id.label('account_id'),
+            cny_sum.label('cny_bal'),
+            jpy_sum.label('jpy_bal')
+        ).subquery()
+
+        # 对包含累计余额的子查询进行过滤和分页
+        q = db.query(subq)
+
+        search_query = search_query.strip()
+        if search_query:
+            like_pat = f"%{search_query}%"
+            conditions = [
+                subq.c.category.like(like_pat),
+                subq.c.description.like(like_pat),
+                subq.c.currency.like(like_pat),
+                cast(subq.c.date, String).like(like_pat),
+                cast(subq.c.amount, String).like(like_pat)
+            ]
+            if "收入" in search_query:
+                conditions.append(subq.c.amount > 0)
+            if "支出" in search_query:
+                conditions.append(subq.c.amount < 0)
+            q = q.filter(or_(*conditions))
+
+        total_count = q.count()
+
+        records_with_bal = q.order_by(subq.c.date.desc(), subq.c.id.desc())\
             .offset((page - 1) * page_size)\
             .limit(page_size)\
             .all()
 
         processed_data = []
         if records_with_bal:
-            for r, c_bal, j_bal in records_with_bal:
-                url_str = r.url.strip() if r.url else ""
+            for r_id, r_date, r_currency, r_amount, r_category, r_description, r_url, r_account_id, c_bal, j_bal in records_with_bal:
+                url_str = r_url.strip() if r_url else ""
                 if url_str and not url_str.startswith(("http://", "https://")):
                     url_str = "https://" + url_str
 
                 processed_data.append({
-                    "ID": r.id, 
-                    "日期": r.date, 
-                    "币种": r.currency, 
-                    "收支": "收入" if r.amount > 0 else "支出",
-                    "金额": abs(r.amount),
-                    "分类": r.category, 
-                    "备注": r.description or "",
+                    "ID": r_id, 
+                    "日期": r_date, 
+                    "币种": r_currency, 
+                    "收支": "收入" if r_amount > 0 else "支出",
+                    "金额": abs(r_amount),
+                    "分类": r_category, 
+                    "备注": r_description or "",
                     "网址": url_str,
                     "当前CNY余额": c_bal,
                     "当前JPY余额": j_bal

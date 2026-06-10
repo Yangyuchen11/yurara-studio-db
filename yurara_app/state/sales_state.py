@@ -52,6 +52,7 @@ class VariantSaleChartData(BaseModel):
 class SalesState(AppState):
     active_tab: str = "v2"  # "v2" 或 "v1"
     is_loading: bool = True
+    _cached_df: Any = None
     
     # 汇总卡片数值
     total_cny: float = 0.0
@@ -138,12 +139,14 @@ class SalesState(AppState):
         self.selected_product = ""
         self.leaderboard = []
         self.page = 1
+        self._cached_df = None  # 清除缓存以加载新 Tab 数据
         yield SalesState.load_sales_data()
 
     @rx.event
     def load_sales_data(self):
         """从后端服务加载全局销售指标和商品热卖榜单"""
         self.is_loading = True
+        self._cached_df = None  # 全量重新加载时清除缓存
         db = self.get_db()
         try:
             # 1. 抓取 pandas DataFrame 源数据 (基于缓存机制)
@@ -152,6 +155,8 @@ class SalesState(AppState):
             else:
                 raw_logs = SalesService.get_raw_sales_logs_v1(db)
                 df = SalesService.process_sales_data_v1(db, raw_logs)
+            
+            self._cached_df = df  # 缓存抓取到的数据
                 
             if df.empty:
                 self.total_cny = 0.0
@@ -202,11 +207,15 @@ class SalesState(AppState):
         """深度结算当前选中商品的一切销量构成"""
         db = self.get_db()
         try:
-            if self.active_tab == "v2":
-                df = SalesService.process_sales_data_v2(db)
+            if self._cached_df is not None:
+                df = self._cached_df
             else:
-                raw_logs = SalesService.get_raw_sales_logs_v1(db)
-                df = SalesService.process_sales_data_v1(db, raw_logs)
+                if self.active_tab == "v2":
+                    df = SalesService.process_sales_data_v2(db)
+                else:
+                    raw_logs = SalesService.get_raw_sales_logs_v1(db)
+                    df = SalesService.process_sales_data_v1(db, raw_logs)
+                self._cached_df = df
                 
             if df.empty or not self.selected_product:
                 return
@@ -242,7 +251,7 @@ class SalesState(AppState):
             for var in df_p['variant'].unique():
                 row_vals = []
                 for p in platform_keys:
-                    row_vals.append(int(var_sums.get((var, p), 0)))
+                    row_vals.append(int(var_sums.get((var, PLATFORM_CODES.get(p, p)), 0)))
                 # 添加该款式的横向总销量
                 row_vals.append(int(var_totals.get(var, 0)))
                 
@@ -254,7 +263,7 @@ class SalesState(AppState):
             # 追加底部的纵向列汇总（“总计”行）
             col_totals = []
             for p in platform_keys:
-                col_totals.append(int(df_p[df_p['platform'] == p]['qty'].sum()))
+                col_totals.append(int(df_p[df_p['platform'] == PLATFORM_CODES.get(p, p)]['qty'].sum()))
             # 右下角全局总销量
             col_totals.append(int(df_p['qty'].sum()))
             
@@ -284,7 +293,7 @@ class SalesState(AppState):
                     
                 platform_list = []
                 for p in platform_keys:
-                    qty = int(var_df[var_df['platform'] == p]['qty'].sum())
+                    qty = int(var_df[var_df['platform'] == PLATFORM_CODES.get(p, p)]['qty'].sum())
                     if qty > 0:
                         pct = (qty / total_qty) * 100
                         platform_list.append(PlatformSale(

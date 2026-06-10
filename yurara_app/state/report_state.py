@@ -252,7 +252,7 @@ class ReportState(AppState):
         # 准备数据流性质划分
         PL_INCOME = ["销售收入", "其他现金收入"]
         PL_EXPENSE = ["商品成本", "退款", "其他", "分红"]
-        ASSET_ADD = ["固定资产购入", "其他资产购入", "现有资产增加", "新资产增加"]
+        ASSET_ADD = ["固定资产购入", "其他资产购入", "现有资产增加", "新资产增加", "其他资产增加"]
         ASSET_SUB = ["现有资产减少"]
         LIAB_ADD = ["借入资金", "新增挂账资产"]
         LIAB_SUB = ["债务偿还", "资产抵消"]
@@ -279,7 +279,7 @@ class ReportState(AppState):
             else:
                 nature = "其他"
                 
-            is_cash_flow = r.category not in ["资产抵消", "取消/冲销", "新增挂账资产"]
+            is_cash_flow = r.category not in ["现有资产增加", "新资产增加", "现有资产减少", "其他资产增加", "资产抵消", "取消/冲销", "新增挂账资产"]
             
             dt = pd.to_datetime(r.date)
             data.append({
@@ -363,14 +363,28 @@ class ReportState(AppState):
         def equiv_cny(row):
             return row['amount'] * (rate if row['currency'] == 'JPY' else 1.0)
             
+        month_add = 0.0
+        month_sub = 0.0
+        
         if not df_asset_current.empty:
             df_asset_current = df_asset_current.copy()
             df_asset_current['cny_equiv'] = df_asset_current.apply(equiv_cny, axis=1)
-            self.month_asset_add = abs(df_asset_current[df_asset_current['cny_equiv'] < 0]['cny_equiv'].sum())
-            self.month_asset_sub = abs(df_asset_current[df_asset_current['cny_equiv'] > 0]['cny_equiv'].sum())
-        else:
-            self.month_asset_add = 0.0
-            self.month_asset_sub = 0.0
+            
+            for _, row in df_asset_current.iterrows():
+                val = abs(row['cny_equiv'])
+                cat = row['category']
+                if cat in ["现有资产增加", "新资产增加", "其他资产增加"]:
+                    month_add += val
+                elif cat in ["现有资产减少"]:
+                    month_sub += val
+                else:
+                    if row['cny_equiv'] < 0:
+                        month_add += val
+                    else:
+                        month_sub += val
+                        
+        self.month_asset_add = month_add
+        self.month_asset_sub = month_sub
         self.net_asset_change = self.month_asset_add - self.month_asset_sub
         
         # 3. 经营损益净利润结算

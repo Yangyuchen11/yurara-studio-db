@@ -258,27 +258,31 @@ def report_dashboard() -> rx.Component:
                 grid_column="span 5"
             ),
             # 明细表格
-            data_card(
-                "收支流水大类折合账表",
-                rx.table.root(
-                    rx.table.header(
-                        rx.table.row(
-                            rx.table.column_header_cell("大类分类", size="1"),
-                            rx.table.column_header_cell("资金流向", size="1"),
-                            rx.table.column_header_cell("CNY 变动", size="1"),
-                            rx.table.column_header_cell("JPY 变动", size="1"),
-                            rx.table.column_header_cell("折合 CNY 总计", size="1"),
-                        )
-                    ),
-                    rx.table.body(
-                        rx.foreach(
-                            ReportState.flow_summary,
-                            render_flow_row
-                        )
-                    ),
-                    size="1",
-                    width="100%"
-                )
+            rx.box(
+                data_card(
+                    "收支流水大类折合账表",
+                    rx.table.root(
+                        rx.table.header(
+                            rx.table.row(
+                                rx.table.column_header_cell("大类分类", size="1"),
+                                rx.table.column_header_cell("资金流向", size="1"),
+                                rx.table.column_header_cell("CNY 变动", size="1"),
+                                rx.table.column_header_cell("JPY 变动", size="1"),
+                                rx.table.column_header_cell("折合 CNY 总计", size="1"),
+                            )
+                        ),
+                        rx.table.body(
+                            rx.foreach(
+                                ReportState.flow_summary,
+                                render_flow_row
+                            )
+                        ),
+                        size="1",
+                        width="100%"
+                    )
+                ),
+                grid_column="span 7",
+                width="100%"
             ),
             columns="12",
             spacing="5",

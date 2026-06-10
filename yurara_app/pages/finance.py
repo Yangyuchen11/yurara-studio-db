@@ -804,9 +804,16 @@ def render_table_row(rec: FinanceRecordItem) -> rx.Component:
 def records_table_area() -> rx.Component:
     """真分页流水表格组件"""
     return rx.vstack(
+        rx.input(
+            placeholder="🔍 输入关键字搜索分类、说明备注、币种、金额、收支类型或日期...",
+            value=FinanceState.search_query,
+            on_change=FinanceState.set_search_query,
+            width="100%",
+            size="2",
+        ),
         rx.cond(
             FinanceState.records.length() == 0,
-            empty_state("暂无相关财务流水明细数据", "inbox"),
+            empty_state("暂无满足搜索条件的财务流水明细数据", "inbox"),
             rx.vstack(
                 rx.scroll_area(
                     rx.table.root(
@@ -827,7 +834,7 @@ def records_table_area() -> rx.Component:
                         ),
                         size="1", width="100%"
                     ),
-                    overflow_x="auto", width="100%", height="500px"
+                    overflow_x="auto", width="100%", height="800px"
                 ),
                 
                 # 真分页翻页按钮

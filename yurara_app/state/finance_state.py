@@ -63,6 +63,7 @@ class FinanceState(AppState):
     cur_cny: float = 0.0
     cur_jpy: float = 0.0
     is_loading: bool = False
+    search_query: str = ""
     
     # === 表单共用控制 ===
     active_tab: str = "list"  # list / add / edit / delete
@@ -187,6 +188,12 @@ class FinanceState(AppState):
     def batch_total_with_shipping_str(self) -> str: return f"{self.batch_total_with_shipping:,.2f}"
 
     # ===================== 事件处理器 =====================
+
+    @rx.event
+    def set_search_query(self, val: str):
+        self.search_query = val
+        self.page = 1
+        yield FinanceState.load_finance_page()
 
     @rx.event
     def set_rec_type(self, val: str):
@@ -453,15 +460,15 @@ class FinanceState(AppState):
             from services.finance_service import FinanceService
             import math
             
-            # 1. 抓取真分页明细 (100条/页)
-            df, total_rows = FinanceService.get_finance_records_page(db, page=self.page, page_size=100)
+            # 1. 抓取真分页明细 (50条/页)
+            df, total_rows = FinanceService.get_finance_records_page(db, page=self.page, page_size=50, search_query=self.search_query)
             self.total_records = total_rows
-            self.total_pages = max(1, math.ceil(total_rows / 100))
+            self.total_pages = max(1, math.ceil(total_rows / 50))
             
             # 页码溢出容错
             if self.page > self.total_pages:
                 self.page = self.total_pages
-                df, _ = FinanceService.get_finance_records_page(db, page=self.page, page_size=100)
+                df, _ = FinanceService.get_finance_records_page(db, page=self.page, page_size=50, search_query=self.search_query)
 
             # 解析为 Pydantic 强类型记录
             processed_records = []
