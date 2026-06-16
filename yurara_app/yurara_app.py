@@ -251,7 +251,6 @@ def download_backup(request):
     import traceback
     try:
         from yurara_app.state.app_state import get_cached_engine, TABLES_MAP
-        from sqlalchemy.orm import sessionmaker
         from starlette.responses import Response
         import io
         import zipfile
@@ -261,32 +260,31 @@ def download_backup(request):
         test_mode = request.query_params.get("test_mode", "false")
         is_test = test_mode.lower() == "true"
         engine = get_cached_engine(is_test)
-        Session = sessionmaker(bind=engine)
-        db = Session()
-        try:
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w") as zf:
+
+        zip_buffer = io.BytesIO()
+        # 使用 engine.connect() 直接建立连接，避免已废弃的 Session.bind
+        with engine.connect() as conn:
+            with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
                 for file_name, table_name, model_cls in TABLES_MAP:
                     try:
-                        df_export = pd.read_sql(db.query(model_cls).statement, db.bind)
+                        df_export = pd.read_sql_table(table_name, conn)
                         csv_bytes = df_export.to_csv(index=False).encode('utf-8-sig')
                         zf.writestr(file_name, csv_bytes)
+                        print(f"[Backup API] Exported {table_name}: {len(df_export)} rows")
                     except Exception as e_table:
                         print(f"[Backup API] Failed to export table {table_name}: {e_table}")
-            zip_buffer.seek(0)
-            current_time = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-            env_suffix = "test" if is_test else "prod"
-            filename = f"yurara-db-backup_{env_suffix}_{current_time}.zip"
-            return Response(
-                zip_buffer.getvalue(),
-                media_type="application/zip",
-                headers={
-                    "Content-Disposition": f"attachment; filename={filename}",
-                    "Access-Control-Expose-Headers": "Content-Disposition"
-                }
-            )
-        finally:
-            db.close()
+
+        current_time = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        env_suffix = "test" if is_test else "prod"
+        filename = f"yurara-db-backup_{env_suffix}_{current_time}.zip"
+        return Response(
+            zip_buffer.getvalue(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Access-Control-Expose-Headers": "Content-Disposition",
+            }
+        )
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[Backup API] Critical Error: {e}\n{tb}")

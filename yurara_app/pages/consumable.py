@@ -207,7 +207,7 @@ def valuation_metric_card() -> rx.Component:
             rx.foreach(
                 ConsumableState.dynamic_valuation_indicators,
                 lambda ind: rx.hstack(
-                    rx.text(rx.fragment(ind.currency, " 实物总值:"), size="1", color=rx.color("slate", 10)),
+                    rx.text(ind.currency, " 实物总值:", size="1", color=rx.color("slate", 10)),
                     rx.spacer(),
                     rx.text(ind.amount_str, size="2", weight="bold", color=rx.color(ind.color, 11)),
                     width="100%"

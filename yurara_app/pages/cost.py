@@ -124,7 +124,7 @@ def budget_form() -> rx.Component:
                 align="center",
             ),
             content=rx.vstack(
-                rx.text("在此处录入的条目仅作为预算参考，实付金额默认为0。", size="1", color=rx.color("white", 9)),
+                rx.text("在此处录入的条目仅作为预算参考，实付金额默认为0。", size="1", color=rx.color("slate", 9)),
                 rx.grid(
                     custom_form_field(
                         "预算分类",
@@ -213,8 +213,8 @@ def budget_form() -> rx.Component:
                 rx.cond(
                     CostState.is_detailed_b_cat,
                     rx.hstack(
-                        rx.text("💰 预算总价:", size="1", color="white"),
-                        rx.text(CostState.budget_total_val_str, size="2", weight="bold", color="white"),
+                        rx.text("💰 预算总价:", size="1", style={"color": "white"}),
+                        rx.text(CostState.budget_total_val_str, size="2", weight="bold", style={"color": "white"}),
                         spacing="1",
                         align="center"
                     ),

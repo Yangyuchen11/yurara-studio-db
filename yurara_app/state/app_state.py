@@ -421,9 +421,34 @@ class AppState(rx.State):
 
     @rx.event
     def download_backup_zip(self):
-        """触发客户端从后端自定义 API 路由下载全量备份 ZIP。"""
-        url = f"/backup?test_mode={str(self.test_mode).lower()}"
-        return rx.download(url)
+        """在 State 内直接生成全量备份 ZIP，通过 rx.download(data=...) 返回给客户端。
+        
+        使用 data= 而非 url= 以避免 Reflex 前端开发代理层破坏二进制数据。
+        """
+        import io
+        import zipfile
+        import pandas as pd
+        from datetime import datetime
+
+        engine = get_cached_engine(self.test_mode)
+        env_suffix = "test" if self.test_mode else "prod"
+        current_time = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        filename = f"yurara-db-backup_{env_suffix}_{current_time}.zip"
+
+        zip_buffer = io.BytesIO()
+        try:
+            with engine.connect() as conn:
+                with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                    for file_name, table_name, _ in TABLES_MAP:
+                        try:
+                            df = pd.read_sql_table(table_name, conn)
+                            zf.writestr(file_name, df.to_csv(index=False).encode("utf-8-sig"))
+                        except Exception as e_table:
+                            print(f"[Backup] Failed to export {table_name}: {e_table}")
+            return rx.download(data=zip_buffer.getvalue(), filename=filename)
+        except Exception as e:
+            self.toast_message = f"❌ 备份生成失败: {e}"
+            self.toast_icon = "❌"
 
     @rx.event
     async def handle_backup_restore(self, files: list[rx.UploadFile]):

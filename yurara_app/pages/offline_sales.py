@@ -130,7 +130,7 @@ def cashier_cart_item(ci: CartItemModel) -> rx.Component:
             align_items="start",
             flex="1"
         ),
-        rx.text(rx.fragment("x", ci.qty.to_string()), size="1", weight="bold"),
+        rx.text("x", ci.qty.to_string(), size="1", weight="bold"),
         rx.icon_button(
             rx.icon("minus", size=12),
             on_click=lambda: OfflineSalesState.remove_from_cart(ci.product_name, ci.variant),
@@ -194,7 +194,7 @@ def tpl_assign_product_card(r: dict) -> rx.Component:
                 ),
                 rx.vstack(
                     rx.text(r["product_name"], size="1", weight="bold", line_clamp=1),
-                    rx.text(rx.fragment(r["variant"], " (大货整套上限:", r["max_stock"].to_string(), ")"), size="1", color=rx.color("slate", 10)),
+                    rx.text(r["variant"], " (大货整套上限:", r["max_stock"].to_string(), ")", size="1", color=rx.color("slate", 10)),
                     spacing="0",
                     align_items="start"
                 ),

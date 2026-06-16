@@ -32,6 +32,11 @@ class AuthState(rx.State):
         return self.auth_user or "Unknown"
 
     @rx.var
+    def current_user_initial(self) -> str:
+        username = self.auth_user or "U"
+        return username[:1].upper() if username else "U"
+
+    @rx.var
     def is_authenticated(self) -> bool:
         return self.authenticated
 

@@ -379,7 +379,7 @@ def exchange_rate_widget() -> rx.Component:
 
 
 
-def test_mode_toggle() -> rx.Component:
+def test_mode_toggle(collapsed: bool = False) -> rx.Component:
     """测试模式切换。"""
     expanded_toggle = rx.hstack(
         rx.cond(
@@ -400,145 +400,148 @@ def test_mode_toggle() -> rx.Component:
     )
 
     collapsed_toggle = rx.center(
-        rx.cond(
-            AppState.test_mode,
-            rx.tooltip(
-                rx.switch(
-                    checked=AppState.test_mode,
-                    on_change=AppState.toggle_test_mode,
-                    size="1",
-                    color_scheme="orange",
-                ),
-                content="当前：测试模式 (点击切换)",
-                side="right",
+        rx.tooltip(
+            rx.switch(
+                checked=AppState.test_mode,
+                on_change=AppState.toggle_test_mode,
+                size="1",
+                color_scheme="orange",
             ),
-            rx.tooltip(
-                rx.switch(
-                    checked=AppState.test_mode,
-                    on_change=AppState.toggle_test_mode,
-                    size="1",
-                    color_scheme="orange",
-                ),
-                content="当前：正式环境 (点击切换)",
-                side="right",
+            content=rx.cond(
+                AppState.test_mode,
+                "当前：测试模式 (点击切换)",
+                "当前：正式环境 (点击切换)",
             ),
+            side="right",
         ),
         width="100%",
     )
 
-    return rx.cond(
-        AppState.sidebar_collapsed,
-        collapsed_toggle,
-        expanded_toggle,
+    return collapsed_toggle if collapsed else expanded_toggle
+
+
+def _data_management_popover_content() -> rx.Component:
+    """数据管理弹出面板的内容（复用于展开/收起两种触发器）。"""
+    return rx.popover.content(
+        rx.vstack(
+            # === 备份区域 ===
+            rx.heading("💾 数据备份与恢复", size="2"),
+            rx.text("下载或导入本系统所有的业务数据。", size="1", color=rx.color("slate", 9)),
+
+            rx.button(
+                rx.icon("download", size=13),
+                "下载全量备份 (ZIP)",
+                on_click=AppState.download_backup_zip,
+                color_scheme="green",
+                width="100%",
+                size="1",
+            ),
+
+            rx.divider(margin_y="0.25rem"),
+
+            # === 恢复区域 ===
+            rx.text("恢复/导入备份 ZIP:", size="1", weight="bold"),
+            rx.upload(
+                rx.center(
+                    rx.vstack(
+                        rx.icon("cloud_upload", size=16, color=rx.color("slate", 9)),
+                        rx.text("拖拽 ZIP 文件至此或点击选择", size="1", color=rx.color("slate", 9)),
+                        spacing="1",
+                    )
+                ),
+                id="backup_upload",
+                border=f"1px dashed {rx.color('slate', 5)}",
+                padding="0.75rem",
+                border_radius="6px",
+                width="100%",
+            ),
+
+            rx.button(
+                "🔴 确认导入并覆盖",
+                on_click=AppState.handle_backup_restore(
+                    rx.upload_files(upload_id="backup_upload")
+                ),
+                color_scheme="red",
+                width="100%",
+                size="1",
+            ),
+
+            rx.divider(margin_y="0.25rem"),
+
+            # === 危险操作：清空 ===
+            rx.heading("💣 危险：环境清空", size="2", color_scheme="red"),
+            rx.text(
+                rx.fragment("⚠️ 此操作将彻底删除【", AppState.env_label, "】的所有业务数据且无法撤销！"),
+                size="1",
+                color=rx.color("red", 10),
+            ),
+
+            rx.input(
+                placeholder="请输入 DELETE 以确认",
+                value=AppState.delete_confirm_code,
+                on_change=AppState.set_delete_confirm_code,
+                size="1",
+                width="100%",
+            ),
+
+            rx.button(
+                "确认清空所有数据",
+                on_click=AppState.clear_environment_data,
+                disabled=AppState.delete_confirm_code != "DELETE",
+                color_scheme="red",
+                width="100%",
+                size="1",
+            ),
+
+            spacing="3",
+            width="200px",
+        ),
+        style={"maxWidth": "220px"},
     )
 
 
 def data_management_popover() -> rx.Component:
     """全局数据备份与恢复、清空的弹出控制面板。"""
-    trigger_btn = rx.cond(
-        AppState.sidebar_collapsed,
-        rx.tooltip(
-            rx.icon_button(
-                rx.icon("database", size=16),
-                variant="soft",
-                color_scheme="violet",
-                cursor="pointer",
+    # 收起状态：图标按钮触发
+    collapsed_popover = rx.popover.root(
+        rx.popover.trigger(
+            rx.tooltip(
+                rx.icon_button(
+                    rx.icon("database", size=16),
+                    variant="soft",
+                    color_scheme="violet",
+                    cursor="pointer",
+                ),
+                content="数据管理与备份",
+                side="right",
             ),
-            content="数据管理与备份",
-            side="right",
         ),
-        rx.button(
-            rx.hstack(
-                rx.icon("database", size=14),
-                rx.text("数据管理与备份", size="1"),
-                spacing="2",
-                align="center",
-            ),
-            variant="soft",
-            color_scheme="violet",
-            width="100%",
-            cursor="pointer",
-        ),
+        _data_management_popover_content(),
     )
 
-    return rx.popover.root(
-        rx.popover.trigger(trigger_btn),
-        rx.popover.content(
-            rx.vstack(
-                # === 备份区域 ===
-                rx.heading("💾 数据备份与恢复", size="2"),
-                rx.text("下载或导入本系统所有的业务数据。", size="1", color=rx.color("slate", 9)),
-                
-                rx.button(
-                    rx.icon("download", size=13),
-                    "下载全量备份 (ZIP)",
-                    on_click=AppState.download_backup_zip,
-                    color_scheme="green",
-                    width="100%",
-                    size="1",
+    # 展开状态：文字按钮触发
+    expanded_popover = rx.popover.root(
+        rx.popover.trigger(
+            rx.button(
+                rx.hstack(
+                    rx.icon("database", size=14),
+                    rx.text("数据管理与备份", size="1"),
+                    spacing="2",
+                    align="center",
                 ),
-                
-                rx.divider(margin_y="0.25rem"),
-                
-                # === 恢复区域 ===
-                rx.text("恢复/导入备份 ZIP:", size="1", weight="bold"),
-                rx.upload(
-                    rx.center(
-                        rx.vstack(
-                            rx.icon("cloud_upload", size=16, color=rx.color("slate", 9)),
-                            rx.text("拖拽 ZIP 文件至此或点击选择", size="1", color=rx.color("slate", 9)),
-                            spacing="1",
-                        )
-                    ),
-                    id="backup_upload",
-                    border=f"1px dashed {rx.color('slate', 5)}",
-                    padding="0.75rem",
-                    border_radius="6px",
-                    width="100%",
-                ),
-                
-                rx.button(
-                    "🔴 确认导入并覆盖",
-                    on_click=AppState.handle_backup_restore(
-                        rx.upload_files(upload_id="backup_upload")
-                    ),
-                    color_scheme="red",
-                    width="100%",
-                    size="1",
-                ),
-                
-                rx.divider(margin_y="0.25rem"),
-                
-                # === 危险操作：清空 ===
-                rx.heading("💣 危险：环境清空", size="2", color_scheme="red"),
-                rx.text(
-                    rx.fragment("⚠️ 此操作将彻底删除【", AppState.env_label, "】的所有业务数据且无法撤销！"),
-                    size="1",
-                    color=rx.color("red", 10),
-                ),
-                
-                rx.input(
-                    placeholder="请输入 DELETE 以确认",
-                    value=AppState.delete_confirm_code,
-                    on_change=AppState.set_delete_confirm_code,
-                    size="1",
-                    width="100%",
-                ),
-                
-                rx.button(
-                    "确认清空所有数据",
-                    on_click=AppState.clear_environment_data,
-                    disabled=AppState.delete_confirm_code != "DELETE",
-                    color_scheme="red",
-                    width="100%",
-                    size="1",
-                ),
-                
-                spacing="3",
-                width="200px",
+                variant="soft",
+                color_scheme="violet",
+                width="100%",
+                cursor="pointer",
             ),
-            style={"maxWidth": "220px"},
         ),
+        _data_management_popover_content(),
+    )
+
+    return rx.cond(
+        AppState.sidebar_collapsed,
+        collapsed_popover,
+        expanded_popover,
     )
 
 
@@ -593,7 +596,7 @@ def view_rates_button(collapsed: bool) -> rx.Component:
                                 align="center",
                             )
                         ),
-                        rx.table.cell(rx.text(rx.fragment(rate["reverse_rate_str"], " ", rate["currency"]), size="2")),
+                        rx.table.cell(rx.text(rate["reverse_rate_str"], " ", rate["currency"], size="2")),
                         rx.table.cell(
                             rx.cond(
                                 rate["currency"] != "JPY",
@@ -810,7 +813,7 @@ def sidebar() -> rx.Component:
             rx.vstack(
                 rx.tooltip(
                     rx.avatar(
-                        fallback=AuthState.current_user[:1].upper(),
+                        fallback=AuthState.current_user_initial,
                         size="1",
                         radius="full",
                         color_scheme="violet",
@@ -836,7 +839,7 @@ def sidebar() -> rx.Component:
             ),
             rx.hstack(
                 rx.avatar(
-                    fallback=AuthState.current_user[:1].upper(),
+                    fallback=AuthState.current_user_initial,
                     size="1",
                     radius="full",
                     color_scheme="violet",
@@ -930,7 +933,7 @@ def sidebar() -> rx.Component:
                 rx.divider(margin="0", width="60%"),
                 exchange_rate_widget(),
                 view_rates_button(collapsed=True),
-                test_mode_toggle(),
+                test_mode_toggle(collapsed=True),
                 data_management_popover(),
                 rx.divider(margin="0"),
                 sidebar_toggle_button(),
@@ -945,7 +948,7 @@ def sidebar() -> rx.Component:
                 rx.divider(margin="0"),
                 exchange_rate_widget(),
                 view_rates_button(collapsed=False),
-                test_mode_toggle(),
+                test_mode_toggle(collapsed=False),
                 data_management_popover(),
                 rx.divider(margin="0"),
                 sidebar_toggle_button(),
