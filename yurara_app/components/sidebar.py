@@ -6,6 +6,7 @@
 import reflex as rx
 from ..state.auth_state import AuthState
 from ..state.app_state import AppState
+from ..state.memo_state import MemoState
 
 # --- 导航菜单定义 ---
 NAV_ITEMS = [
@@ -109,6 +110,225 @@ def nav_group(group: str, items: list) -> rx.Component:
             align_items="start",
             padding_bottom="0.75rem",
         )
+    )
+
+
+def memo_dialog() -> rx.Component:
+    """备忘录详情弹窗组件。"""
+
+    def memo_item_row(memo: dict) -> rx.Component:
+        """单条备忘录的编辑行。"""
+        return rx.vstack(
+            rx.hstack(
+                rx.icon("calendar", size=12, color=rx.color("violet", 9)),
+                rx.input(
+                    default_value=memo["date"],
+                    placeholder="日期 (YYYY-MM-DD)",
+                    size="1",
+                    width="130px",
+                    on_blur=lambda val: MemoState.update_memo_date(memo["id"], val),
+                ),
+                rx.spacer(),
+                rx.icon_button(
+                    rx.icon("trash_2", size=12),
+                    size="1",
+                    variant="ghost",
+                    color_scheme="red",
+                    cursor="pointer",
+                    on_click=MemoState.delete_memo(memo["id"]),
+                ),
+                spacing="2",
+                align="center",
+                width="100%",
+            ),
+            rx.text_area(
+                default_value=memo["content"],
+                placeholder="在此输入备忘内容…",
+                size="1",
+                width="100%",
+                min_height="60px",
+                resize="vertical",
+                on_blur=lambda val: MemoState.update_memo_content(memo["id"], val),
+            ),
+            rx.divider(),
+            spacing="2",
+            width="100%",
+            padding_bottom="0.5rem",
+        )
+
+    return rx.dialog.root(
+        rx.dialog.trigger(
+            rx.fragment(),  # 触发器由 memo_preview_widget 控制
+        ),
+        rx.dialog.content(
+            rx.vstack(
+                # 顶部标题行
+                rx.hstack(
+                    rx.icon("notebook_pen", size=18, color=rx.color("violet", 9)),
+                    rx.heading("📝 备忘录", size="3"),
+                    rx.spacer(),
+                    rx.dialog.close(
+                        rx.icon_button(
+                            rx.icon("x", size=16),
+                            variant="ghost",
+                            color_scheme="gray",
+                            cursor="pointer",
+                            on_click=MemoState.close_memo_dialog,
+                        )
+                    ),
+                    width="100%",
+                    align="center",
+                    margin_bottom="0.75rem",
+                ),
+                # 搜索框
+                rx.hstack(
+                    rx.icon("search", size=14, color=rx.color("slate", 9)),
+                    rx.input(
+                        placeholder="搜索备忘录内容或日期…",
+                        value=MemoState.memo_search_query,
+                        on_change=MemoState.set_memo_search_query,
+                        size="1",
+                        flex="1",
+                    ),
+                    rx.cond(
+                        MemoState.memo_search_query != "",
+                        rx.icon_button(
+                            rx.icon("x", size=12),
+                            size="1",
+                            variant="ghost",
+                            color_scheme="gray",
+                            cursor="pointer",
+                            on_click=MemoState.set_memo_search_query(""),
+                        ),
+                        rx.fragment(),
+                    ),
+                    spacing="2",
+                    align="center",
+                    width="100%",
+                    padding="0.5rem 0.75rem",
+                    background=rx.color("slate", 2),
+                    border_radius="8px",
+                    margin_bottom="0.75rem",
+                ),
+                # 备忘录列表
+                rx.scroll_area(
+                    rx.cond(
+                        MemoState.has_memos,
+                        rx.vstack(
+                            rx.foreach(MemoState.filtered_memos, memo_item_row),
+                            spacing="1",
+                            width="100%",
+                        ),
+                        rx.center(
+                            rx.vstack(
+                                rx.icon("notebook", size=32, color=rx.color("slate", 6)),
+                                rx.text("暂无备忘录", size="2", color=rx.color("slate", 9)),
+                                rx.text("点击下方按钮新增第一条备忘录", size="1", color=rx.color("slate", 8)),
+                                spacing="2",
+                                align="center",
+                            ),
+                            padding="2rem",
+                            width="100%",
+                        ),
+                    ),
+                    scrollbars="vertical",
+                    max_height="55vh",
+                    width="100%",
+                ),
+                # 底部新增按钮
+                rx.divider(margin_y="0.5rem"),
+                rx.button(
+                    rx.hstack(
+                        rx.icon("plus", size=14),
+                        rx.text("新增备忘录", size="1"),
+                        spacing="2",
+                        align="center",
+                    ),
+                    variant="soft",
+                    color_scheme="violet",
+                    width="100%",
+                    cursor="pointer",
+                    on_click=MemoState.add_memo,
+                ),
+                spacing="0",
+                width="100%",
+            ),
+            style={"maxWidth": "520px", "width": "90vw"},
+        ),
+        open=MemoState.memo_dialog_open,
+        on_open_change=MemoState.close_memo_dialog,
+    )
+
+
+def memo_preview_widget() -> rx.Component:
+    """侧边栏中的备忘录预览组件。展开时显示最新备忘录预览；收起时显示图标按钮。"""
+    # 收起状态：只显示图标按钮
+    collapsed_btn = rx.center(
+        rx.tooltip(
+            rx.icon_button(
+                rx.icon("notebook_pen", size=16),
+                variant="ghost",
+                color_scheme="violet",
+                cursor="pointer",
+                on_click=MemoState.open_memo_dialog,
+            ),
+            content="备忘录",
+            side="right",
+        ),
+        width="100%",
+    )
+
+    # 展开状态：标题行 + 预览内容卡片
+    expanded_widget = rx.vstack(
+        # 标题行
+        rx.hstack(
+            rx.icon("notebook_pen", size=13, color=rx.color("violet", 9)),
+            rx.text("备忘录", size="1", weight="bold", color=rx.color("slate", 10)),
+            rx.spacer(),
+            rx.icon_button(
+                rx.icon("pencil", size=12),
+                size="1",
+                variant="ghost",
+                color_scheme="violet",
+                cursor="pointer",
+                on_click=MemoState.open_memo_dialog,
+            ),
+            spacing="1",
+            align="center",
+            width="100%",
+        ),
+        # 预览内容区（固定高度 2 行）
+        rx.box(
+            rx.text(
+                MemoState.latest_memo_preview,
+                size="1",
+                color=rx.color("slate", 10),
+                style={
+                    "display": "-webkit-box",
+                    "WebkitLineClamp": "2",
+                    "WebkitBoxOrient": "vertical",
+                    "overflow": "hidden",
+                    "lineHeight": "1.4",
+                    "wordBreak": "break-all",
+                },
+            ),
+            width="100%",
+            cursor="pointer",
+            on_click=MemoState.open_memo_dialog,
+            _hover={"opacity": "0.8"},
+        ),
+        spacing="1",
+        width="100%",
+        padding="0.75rem",
+        background=rx.color("slate", 2),
+        border_radius="8px",
+        border=f"1px solid {rx.color('violet', 4)}",
+    )
+
+    return rx.cond(
+        AppState.sidebar_collapsed,
+        collapsed_btn,
+        expanded_widget,
     )
 
 
@@ -705,6 +925,9 @@ def sidebar() -> rx.Component:
         rx.cond(
             AppState.sidebar_collapsed,
             rx.vstack(
+                memo_dialog(),
+                memo_preview_widget(),
+                rx.divider(margin="0", width="60%"),
                 exchange_rate_widget(),
                 view_rates_button(collapsed=True),
                 test_mode_toggle(),
@@ -717,6 +940,9 @@ def sidebar() -> rx.Component:
                 align_items="center",
             ),
             rx.vstack(
+                memo_dialog(),
+                memo_preview_widget(),
+                rx.divider(margin="0"),
                 exchange_rate_widget(),
                 view_rates_button(collapsed=False),
                 test_mode_toggle(),

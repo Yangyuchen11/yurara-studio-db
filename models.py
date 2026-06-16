@@ -281,4 +281,12 @@ class SalesPlatform(Base):
     name = Column(String, unique=True, index=True)      # e.g., '微店', 'Booth', 'USD 商店'
     currency = Column(String, default="CNY")            # 结算币种
     fee_rate = Column(Float, default=0.0)               # 手续费率 (e.g., 0.056 for 5.6%)
-    fee_fixed = Column(Float, default=0.0)              # 单笔固定手续费 (e.g., 22.0 JPY)
+    fee_fixed = Column(Float, default=0.0)              # 单笔固定手续费 (e.g., 22.0 JPY)
+
+# --- N. 备忘录 ---
+class MemoNote(Base):
+    __tablename__ = "memo_notes"
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(String)           # 日期字符串，格式: "2026-06-16"，可被用户手动编辑
+    content = Column(String, default="")  # 备忘录内容
+    created_at = Column(String)     # ISO 时间戳字符串，用于排序（如: "2026-06-16T16:33:00"）

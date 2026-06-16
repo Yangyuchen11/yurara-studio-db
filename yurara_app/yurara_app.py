@@ -33,6 +33,7 @@ from .state.sales_order_state import SalesOrderState
 from .state.presale_state import PresaleState
 from .state.product_state import ProductState
 from .state.platforms_state import PlatformsState
+from .state.memo_state import MemoState
 
 # ---- 全局样式 ----
 
@@ -217,22 +218,22 @@ app.add_page(
     product_page,
     route="/product",
     title="商品管理 | Yurara Studio",
-    on_load=[AuthState.check_auth, AppState.load_exchange_rate, ProductState.load_products],
+    on_load=[AuthState.check_auth, AppState.load_exchange_rate, ProductState.load_products, MemoState.load_memos],
 )
 
 # 占位页面（迁移进行中）
-app.add_page(finance_page, route="/finance", title="财务流水 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, FinanceState.load_finance_page])
-app.add_page(balance_page, route="/balance", title="账面概览 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, BalanceState.load_balance_data])
-app.add_page(report_page, route="/report", title="财务报表 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, ReportState.load_report_page])
-app.add_page(cost_page, route="/cost", title="成本核算 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, CostState.load_cost_page])
-app.add_page(sales_order_page, route="/sales-order", title="线上销售 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, SalesOrderState.load_orders_page])
-app.add_page(presale_page, route="/presale", title="预售管理 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, PresaleState.load_presale_page])
-app.add_page(offline_sales_page, route="/offline-sales", title="线下销售 | Yurara Studio", on_load=[AuthState.check_auth, OfflineSalesState.load_offline_page])
-app.add_page(sales_page, route="/sales", title="销售额 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, SalesState.load_sales_data])
-app.add_page(platforms_page, route="/platforms", title="销售平台管理 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, PlatformsState.load_platforms])
-app.add_page(inventory_page, route="/inventory", title="库存管理 | Yurara Studio", on_load=[AuthState.check_auth, InventoryState.load_inventory_page])
-app.add_page(asset_page, route="/asset", title="固定资产 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, AssetState.load_asset_page])
-app.add_page(consumable_page, route="/consumable", title="其他资产 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, ConsumableState.load_consumable_page])
+app.add_page(finance_page, route="/finance", title="财务流水 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, FinanceState.load_finance_page, MemoState.load_memos])
+app.add_page(balance_page, route="/balance", title="账面概览 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, BalanceState.load_balance_data, MemoState.load_memos])
+app.add_page(report_page, route="/report", title="财务报表 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, ReportState.load_report_page, MemoState.load_memos])
+app.add_page(cost_page, route="/cost", title="成本核算 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, CostState.load_cost_page, MemoState.load_memos])
+app.add_page(sales_order_page, route="/sales-order", title="线上销售 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, SalesOrderState.load_orders_page, MemoState.load_memos])
+app.add_page(presale_page, route="/presale", title="预售管理 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, PresaleState.load_presale_page, MemoState.load_memos])
+app.add_page(offline_sales_page, route="/offline-sales", title="线下销售 | Yurara Studio", on_load=[AuthState.check_auth, OfflineSalesState.load_offline_page, MemoState.load_memos])
+app.add_page(sales_page, route="/sales", title="销售额 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, SalesState.load_sales_data, MemoState.load_memos])
+app.add_page(platforms_page, route="/platforms", title="销售平台管理 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, PlatformsState.load_platforms, MemoState.load_memos])
+app.add_page(inventory_page, route="/inventory", title="库存管理 | Yurara Studio", on_load=[AuthState.check_auth, InventoryState.load_inventory_page, MemoState.load_memos])
+app.add_page(asset_page, route="/asset", title="固定资产 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, AssetState.load_asset_page, MemoState.load_memos])
+app.add_page(consumable_page, route="/consumable", title="其他资产 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, ConsumableState.load_consumable_page, MemoState.load_memos])
 
 # 默认根路由：跳转到财务（需登录）
 def index_page() -> rx.Component:
