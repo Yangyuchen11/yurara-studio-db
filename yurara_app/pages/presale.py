@@ -135,10 +135,12 @@ def build_presale_create_form() -> rx.Component:
                         "币种",
                         rx.select.root(
                             rx.select.trigger(),
-                            rx.select.content(
-                                rx.select.item("CNY", value="CNY"),
-                                rx.select.item("JPY", value="JPY")
-                            ),
+                             rx.select.content(
+                                 rx.foreach(
+                                     PresaleState.all_currencies,
+                                     lambda curr: rx.select.item(curr, value=curr)
+                                 )
+                             ),
                             value=PresaleState.pre_curr,
                             on_change=PresaleState.set_pre_curr,
                             size="2",

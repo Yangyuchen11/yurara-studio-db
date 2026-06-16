@@ -124,14 +124,11 @@ def pivot_analysis_table() -> rx.Component:
                         SalesState.pivot_rows,
                         lambda row: rx.table.row(
                             rx.table.cell(rx.text(row.variant, size="1", weight="bold")),
-                            rx.table.cell(rx.text(row.qtys[0], size="1")),
-                            rx.table.cell(rx.text(row.qtys[1], size="1")),
-                            rx.table.cell(rx.text(row.qtys[2], size="1")),
-                            rx.table.cell(rx.text(row.qtys[3], size="1")),
-                            rx.table.cell(rx.text(row.qtys[4], size="1")),
-                            rx.table.cell(rx.text(row.qtys[5], size="1")),
-                            rx.table.cell(rx.text(row.qtys[6], size="1")),
-                            rx.table.cell(rx.text(row.qtys[7], size="1")),
+                            rx.foreach(
+                                SalesState.pivot_platforms,
+                                lambda h: rx.table.cell(rx.text(row.qtys_by_platform[h].to_string(), size="1"))
+                            ),
+                            rx.table.cell(rx.text(row.total_qty.to_string(), size="1", weight="bold")),
                             style={"backgroundColor": rx.cond(row.variant == "总计", rx.color("slate", 3), "transparent")}
                         )
                     )
@@ -382,10 +379,9 @@ def sales_page() -> rx.Component:
                 rx.vstack(
                     rx.grid(
                         sales_metric_card("纯 CNY 累计收款额", SalesState.total_cny_str, color_scheme="green", icon="dollar_sign", description="纯 CNY 货币的实际成交及收款总计"),
-                        sales_metric_card("纯 JPY 累计收款额", SalesState.total_jpy_str, color_scheme="blue", icon="japanese_yen", description="纯 JPY 货币的实际成交及收款原币总计"),
-                        sales_metric_card("折合总销售额 (CNY总计)", SalesState.grand_total_cny_str, color_scheme="violet", icon="banknote", description="包含 JPY 汇率折合后的全币种总销售额大项结算"),
+                        sales_metric_card("折合总销售额 (CNY总计)", SalesState.grand_total_cny_str, color_scheme="violet", icon="banknote", description="包含汇率折合后的全币种总销售额大项结算"),
                         sales_metric_card("累计销量总数", SalesState.total_qty_str, color_scheme="orange", icon="layers", description="全品类产品的实际累计净销售出库数总计"),
-                        columns="4",
+                        columns="3",
                         spacing="3",
                         width="100%"
                     ),

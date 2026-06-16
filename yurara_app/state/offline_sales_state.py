@@ -145,23 +145,32 @@ class OfflineSalesState(AppState):
     @rx.var
     def cart_total_str(self) -> str:
         curr = self.active_template.currency if self.active_template else "CNY"
-        if curr == "JPY":
+        if curr == "CNY":
+            return f"¥ {self.cart_total:,.2f}"
+        elif curr == "JPY":
             return f"{self.cart_total:,.0f} JPY"
-        return f"¥ {self.cart_total:,.2f}"
+        else:
+            return f"{self.cart_total:,.2f} {curr}"
 
     @rx.var
     def paypay_fee_str(self) -> str:
         curr = self.active_template.currency if self.active_template else "CNY"
-        if curr == "JPY":
+        if curr == "CNY":
+            return f"¥ {self.paypay_fee:,.2f}"
+        elif curr == "JPY":
             return f"{self.paypay_fee:,.0f} JPY"
-        return f"¥ {self.paypay_fee:,.2f}"
+        else:
+            return f"{self.paypay_fee:,.2f} {curr}"
 
     @rx.var
     def paypay_receive_str(self) -> str:
         curr = self.active_template.currency if self.active_template else "CNY"
-        if curr == "JPY":
+        if curr == "CNY":
+            return f"¥ {self.paypay_estimated_receive:,.2f}"
+        elif curr == "JPY":
             return f"{self.paypay_estimated_receive:,.0f} JPY"
-        return f"¥ {self.paypay_estimated_receive:,.2f}"
+        else:
+            return f"{self.paypay_estimated_receive:,.2f} {curr}"
 
     @rx.var
     def cash_account_options(self) -> list[str]:
@@ -195,7 +204,14 @@ class OfflineSalesState(AppState):
 
     @rx.var
     def platform_options(self) -> list[str]:
-        return list(PLATFORM_CODES.values())
+        db = self.get_db()
+        try:
+            from models import SalesPlatform
+            return [p.name for p in db.query(SalesPlatform).all()]
+        except Exception:
+            return []
+        finally:
+            db.close()
 
     @rx.var
     def is_cart_empty(self) -> bool:
@@ -607,10 +623,10 @@ class OfflineSalesState(AppState):
             
             # 解析平台 code
             platform_code = "offline_cn"
-            for k, v in PLATFORM_CODES.items():
-                if v == self.tpl_platform:
-                    platform_code = k
-                    break
+            from models import SalesPlatform
+            platform = db.query(SalesPlatform).filter(SalesPlatform.name == self.tpl_platform).first()
+            if platform:
+                platform_code = platform.code
                     
             exist_map = {}
             if exist_items:

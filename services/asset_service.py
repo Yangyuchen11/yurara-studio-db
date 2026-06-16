@@ -2,7 +2,7 @@
 from datetime import date
 from sqlalchemy import func
 from models import FixedAsset, FixedAssetLog
-from constants import Currency
+from constants import Currency, to_cny
 
 class AssetService:
     """
@@ -21,9 +21,9 @@ class AssetService:
         return db.query(FixedAsset).filter(FixedAsset.remaining_qty > 0).all()
 
     @staticmethod
-    def calculate_asset_totals(assets, exchange_rate):
+    def calculate_asset_totals(assets, rates_map: dict):
         """
-        计算资产总值统计信息
+        计算资产总值统计信息（支持任意货币）
         返回: (总采购价值(CNY折算), 当前剩余价值(CNY折算), 仅日元资产原值)
         """
         total_val_cny_equiv = 0.0
@@ -31,20 +31,18 @@ class AssetService:
         total_remain_val_jpy_only = 0.0
 
         for a in assets:
-            curr = getattr(a, "currency", Currency.CNY)
-            # 计算汇率系数
-            rate = exchange_rate if curr == Currency.JPY else 1.0
-            
+            curr = getattr(a, "currency", Currency.CNY) or Currency.CNY
+
             # 累加采购总值 (折合CNY)
-            total_val_cny_equiv += (a.unit_price * a.quantity) * rate
-            
+            total_val_cny_equiv += to_cny(a.unit_price * a.quantity, curr, rates_map)
+
             # 计算剩余价值
             remain_origin = a.unit_price * a.remaining_qty
-            total_remain_val_cny_equiv += remain_origin * rate
+            total_remain_val_cny_equiv += to_cny(remain_origin, curr, rates_map)
 
             if curr == Currency.JPY:
                 total_remain_val_jpy_only += remain_origin
-                
+
         return total_val_cny_equiv, total_remain_val_cny_equiv, total_remain_val_jpy_only
 
     @staticmethod

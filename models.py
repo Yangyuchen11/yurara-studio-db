@@ -271,3 +271,14 @@ class OfflineTemplateItem(Base):
     remaining_quantity = Column(Integer, default=0) # 当前可用分配数量
     
     template = relationship("OfflineTemplate", back_populates="items")
+
+
+# --- M. 销售平台管理 ---
+class SalesPlatform(Base):
+    __tablename__ = "sales_platforms"
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, unique=True, index=True)      # e.g., 'weidian', 'booth', 'usd_shop'
+    name = Column(String, unique=True, index=True)      # e.g., '微店', 'Booth', 'USD 商店'
+    currency = Column(String, default="CNY")            # 结算币种
+    fee_rate = Column(Float, default=0.0)               # 手续费率 (e.g., 0.056 for 5.6%)
+    fee_fixed = Column(Float, default=0.0)              # 单笔固定手续费 (e.g., 22.0 JPY)

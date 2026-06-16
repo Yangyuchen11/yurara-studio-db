@@ -286,8 +286,11 @@ class SalesOrderState(AppState):
                 recommended = "流动资金-微店账户"
             elif self.platform_input == "Booth":
                 recommended = "流动资金-booth账户"
-            elif self.currency_input == "JPY":
-                recommended = "流动资金-日元临时账户"
+            elif self.currency_input != "CNY":
+                if accs:
+                    recommended = accs[0].name
+                else:
+                    recommended = f"流动资金-{self.currency_input.lower()}临时账户"
                 
             if recommended not in names:
                 names.insert(0, recommended)
@@ -310,7 +313,14 @@ class SalesOrderState(AppState):
 
     @rx.var
     def platform_options(self) -> list[str]:
-        return list(PLATFORM_CODES.values())
+        db = self.get_db()
+        try:
+            from models import SalesPlatform
+            return [p.name for p in db.query(SalesPlatform).all()]
+        except Exception:
+            return []
+        finally:
+            db.close()
 
     @rx.var
     def product_options(self) -> list[str]:
@@ -335,11 +345,17 @@ class SalesOrderState(AppState):
     def cart_estimated_fee(self) -> float:
         if not self.deduct_fee_input:
             return 0.0
-        if self.platform_input == "微店":
-            return self.total_price_input * 0.006
-        elif self.platform_input == "Booth":
-            return math.ceil(self.total_price_input * 0.056 + (45 if self.currency_input == "JPY" else 2.16))
-        return 0.0
+        db = self.get_db()
+        try:
+            from models import SalesPlatform
+            platform = db.query(SalesPlatform).filter(SalesPlatform.name == self.platform_input).first()
+            if platform:
+                return math.ceil(self.total_price_input * platform.fee_rate) + platform.fee_fixed
+            return 0.0
+        except Exception:
+            return 0.0
+        finally:
+            db.close()
 
     @rx.var
     def cart_booth_shipping_peel(self) -> float:
@@ -508,12 +524,16 @@ class SalesOrderState(AppState):
     @rx.event
     def set_platform_input(self, val: str):
         self.platform_input = val
-        # Auto Currency Mapping
-        curr_map = {
-            "Booth": "JPY", "日本线下": "JPY", "Instagram": "JPY",
-            "国内线下": "CNY", "微店": "CNY", "其他(CNY)": "CNY", "其他(JPY)": "JPY"
-        }
-        self.currency_input = curr_map.get(val, "CNY")
+        db = self.get_db()
+        try:
+            from models import SalesPlatform
+            platform = db.query(SalesPlatform).filter(SalesPlatform.name == val).first()
+            if platform:
+                self.currency_input = platform.currency
+        except Exception:
+            pass
+        finally:
+            db.close()
         self.auto_match_account()
         
     @rx.event
@@ -555,8 +575,22 @@ class SalesOrderState(AppState):
             recommended = "流动资金-微店账户"
         elif self.platform_input == "Booth":
             recommended = "流动资金-booth账户"
-        elif self.currency_input == "JPY":
-            recommended = "流动资金-日元临时账户"
+        elif self.currency_input != "CNY":
+            db = self.get_db()
+            try:
+                acc = db.query(CompanyBalanceItem).filter(
+                    CompanyBalanceItem.category == 'asset',
+                    CompanyBalanceItem.asset_type == '现金',
+                    CompanyBalanceItem.currency == self.currency_input
+                ).first()
+                if acc:
+                    recommended = acc.name
+                else:
+                    recommended = f"流动资金-{self.currency_input.lower()}临时账户"
+            except Exception:
+                recommended = f"流动资金-{self.currency_input.lower()}临时账户"
+            finally:
+                db.close()
         self.target_account_input = recommended
 
     # --- 购物车操作事件 ---

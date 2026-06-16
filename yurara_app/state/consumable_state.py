@@ -10,6 +10,7 @@ from ..state.app_state import AppState
 from services.consumable_service import ConsumableService
 from models import CompanyBalanceItem
 from cache_manager import sync_all_caches
+from constants import to_cny
 
 class ConsumableItem(BaseModel):
     id: int = 0
@@ -19,7 +20,7 @@ class ConsumableItem(BaseModel):
     unit_price: float = 0.0
     remaining_qty: float = 0.0
     remaining_cny: float = 0.0
-    remaining_jpy: float = 0.0
+    remaining_original: float = 0.0
     shop_name: str = ""
     url: str = ""
     remarks: str = ""
@@ -35,6 +36,13 @@ class DropdownOption(BaseModel):
     value: str = ""
     label: str = ""
 
+
+class ConsumableValuationIndicator(BaseModel):
+    currency: str = ""
+    amount_str: str = ""
+    color: str = "blue"
+
+
 class ConsumableState(AppState):
     items: list[ConsumableItem] = []
     logs: list[ConsumableLogItem] = []
@@ -43,6 +51,7 @@ class ConsumableState(AppState):
     total_cny: float = 0.0
     total_jpy: float = 0.0
     grand_total_cny: float = 0.0
+    dynamic_valuation_indicators: list[ConsumableValuationIndicator] = []
     
     is_loading: bool = False
     
@@ -129,8 +138,7 @@ class ConsumableState(AppState):
             # 1. 资产清单
             raw_items = service.get_all_consumables()
             formatted_items = []
-            t_cny = 0.0
-            t_jpy = 0.0
+            totals_by_curr = {}
             
             for i in raw_items:
                 curr = getattr(i, "currency", "CNY")
@@ -138,17 +146,13 @@ class ConsumableState(AppState):
                 unit_price = i.unit_price
                 val_origin = unit_price * qty
                 
-                show_cny = val_origin if curr != "JPY" else 0.0
-                show_jpy = val_origin if curr == "JPY" else 0.0
-                
-                # 过滤无库存或无价值的项
                 if qty <= 0.001 and val_origin <= 0.001:
                     continue
-
-                if curr == "JPY":
-                    t_jpy += val_origin
-                else:
-                    t_cny += val_origin
+                
+                show_cny = to_cny(val_origin, curr, self.rates_map)
+                show_original = val_origin
+                
+                totals_by_curr[curr] = totals_by_curr.get(curr, 0.0) + val_origin
 
                 formatted_items.append(ConsumableItem(
                     id=i.id,
@@ -158,16 +162,46 @@ class ConsumableState(AppState):
                     unit_price=round(float(unit_price), 2),
                     remaining_qty=round(float(qty), 2),
                     remaining_cny=round(float(show_cny), 2),
-                    remaining_jpy=round(float(show_jpy), 2),
+                    remaining_original=round(float(show_original), 2),
                     shop_name=i.shop_name or "",
                     url=getattr(i, 'url', '') or "",
                     remarks=i.remarks or ""
                 ))
             
             self.items = formatted_items
-            self.total_cny = round(float(t_cny), 2)
-            self.total_jpy = round(float(t_jpy), 2)
-            self.grand_total_cny = round(float(t_cny + (t_jpy * self.exchange_rate)), 2)
+            self.total_cny = round(float(totals_by_curr.get("CNY", 0.0)), 2)
+            self.total_jpy = round(float(totals_by_curr.get("JPY", 0.0)), 2)
+            self.grand_total_cny = round(float(sum(item.remaining_cny for item in formatted_items)), 2)
+
+            # Build dynamic valuation indicators for UI
+            indicators = []
+            colors_palette = ["green", "red", "blue", "purple", "pink", "teal", "indigo"]
+            color_map = {"CNY": "green", "JPY": "red"}
+            color_idx = 0
+            
+            for curr in sorted(totals_by_curr.keys()):
+                val = totals_by_curr[curr]
+                if curr in color_map:
+                    color = color_map[curr]
+                else:
+                    color = colors_palette[color_idx % len(colors_palette)]
+                    if color in ["green", "red"]:
+                        color = "blue"  # avoid reusing standard colors
+                    color_idx += 1
+                
+                if curr == "JPY":
+                    amt_str = f"{val:,.0f} JPY"
+                elif curr == "CNY":
+                    amt_str = f"¥ {val:,.2f}"
+                else:
+                    amt_str = f"{val:,.2f} {curr}"
+                
+                indicators.append(ConsumableValuationIndicator(
+                    currency=curr,
+                    amount_str=amt_str,
+                    color=color
+                ))
+            self.dynamic_valuation_indicators = indicators
 
             # 2. 快速操作默认值
             active_list = service.get_active_consumables()
@@ -275,13 +309,12 @@ class ConsumableState(AppState):
             except ValueError:
                 op_date_obj = date.today()
 
-            # 调用 Service 写入 (使用数值汇率避免 rx.Var 传递)
-            rate_val = float(self.exchange_rate_100 / 100.0)
+            rate_map = dict(self.rates_map)
             name, delta, link_msg = service.process_inventory_change(
                 item_name=self.op_item_name,
                 date_obj=op_date_obj,
                 delta_qty=qty_delta,
-                exchange_rate=rate_val,
+                rates_map=rate_map,
                 mode=mode,
                 sale_info=s_info,
                 cost_info=c_info,

@@ -144,7 +144,16 @@ def budget_form() -> rx.Component:
                             size="2"
                         )
                     ),
-                    columns="2",
+                    custom_form_field(
+                        "预算币种",
+                        rx.select(
+                            CostState.all_currencies,
+                            value=CostState.b_currency,
+                            on_change=CostState.set_b_currency,
+                            size="2"
+                        )
+                    ),
+                    columns="3",
                     spacing="3",
                     width="100%"
                 ),
@@ -183,22 +192,29 @@ def budget_form() -> rx.Component:
                         spacing="3",
                         width="100%"
                     ),
-                    custom_form_field(
-                        "预算总额 (简易项目)",
-                        rx.input(
-                            placeholder="0.00",
-                            value=CostState.b_unit_price.to_string(),
-                            on_change=CostState.set_b_unit_price,
-                            type="number",
-                            size="2"
-                        )
+                    rx.grid(
+                        custom_form_field(
+                            "预算总额 (简易项目)",
+                            rx.input(
+                                placeholder="0.00",
+                                value=CostState.b_unit_price.to_string(),
+                                on_change=CostState.set_b_unit_price,
+                                type="number",
+                                size="2"
+                            )
+                        ),
+                        rx.box(),
+                        rx.box(),
+                        columns="3",
+                        spacing="3",
+                        width="100%"
                     )
                 ),
                 rx.cond(
                     CostState.is_detailed_b_cat,
                     rx.hstack(
-                        rx.text("💰 预算总价:", size="1", color=rx.color("slate", 10)),
-                        rx.text(CostState.budget_total_val_str, size="2", weight="bold", color=rx.color("violet", 11)),
+                        rx.text("💰 预算总价:", size="1", color="white"),
+                        rx.text(CostState.budget_total_val_str, size="2", weight="bold", color="white"),
                         spacing="1",
                         align="center"
                     ),

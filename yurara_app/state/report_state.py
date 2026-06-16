@@ -11,6 +11,35 @@ from typing import Any
 from ..state.app_state import AppState
 from models import FinanceRecord, CompanyBalanceItem
 from services.balance_service import BalanceService
+from constants import to_cny
+
+
+def compile_non_cny_str(group, is_abs=False):
+    """
+    将 pandas DataFrame 分组中所有非 CNY 币种的变动金额汇总并格式化为拼接字符串。
+    例如: "10,000 JPY / 50.00 USD"
+    """
+    non_cny_group = group[group['currency'] != 'CNY']
+    if non_cny_group.empty:
+        return "0"
+    
+    currency_sums = non_cny_group.groupby('currency')['amount'].sum()
+    parts = []
+    for curr, val in sorted(currency_sums.items()):
+        display_val = abs(val) if is_abs else val
+        if abs(display_val) < 0.001:
+            continue
+        if curr == 'JPY':
+            parts.append(f"{display_val:,.0f} JPY")
+        else:
+            parts.append(f"{display_val:,.2f} {curr}")
+            
+    if not parts:
+        return "0"
+    return " / ".join(parts)
+
+
+
 
 
 class AccountPeriodRow(BaseModel):
@@ -244,7 +273,8 @@ class ReportState(AppState):
         ).all()
         
         default_acc_id = {}
-        for curr in ['CNY', 'JPY']:
+        all_currencies = list(set(a.currency for a in cash_accounts if a.currency))
+        for curr in all_currencies:
             first_acc = next((a for a in sorted(cash_accounts, key=lambda x: x.id) if a.currency == curr), None)
             if first_acc:
                 default_acc_id[curr] = first_acc.id
@@ -299,6 +329,7 @@ class ReportState(AppState):
             
         df = pd.DataFrame(data)
         rate = self.exchange_rate
+        rates = dict(self.rates_map)
         
         # 确定筛选区间
         if self.active_report_type == "month":
@@ -353,15 +384,15 @@ class ReportState(AppState):
         self.acc_summary = acc_list
         
         # 计算折合 CNY 顶层现金汇总
-        self.past_cash_total = sum(r.opening_balance * (rate if r.currency == 'JPY' else 1.0) for r in acc_list)
-        self.net_cash_total = sum(r.net_change * (rate if r.currency == 'JPY' else 1.0) for r in acc_list)
-        self.closing_cash_total = sum(r.closing_balance * (rate if r.currency == 'JPY' else 1.0) for r in acc_list)
+        self.past_cash_total = sum(r.opening_balance * to_cny(1.0, r.currency, rates) for r in acc_list)
+        self.net_cash_total = sum(r.net_change * to_cny(1.0, r.currency, rates) for r in acc_list)
+        self.closing_cash_total = sum(r.closing_balance * to_cny(1.0, r.currency, rates) for r in acc_list)
         
         # 2. 实体资产变动逆向结算
         df_asset_current = df_current[df_current['nature'] == '资产变动']
         
         def equiv_cny(row):
-            return row['amount'] * (rate if row['currency'] == 'JPY' else 1.0)
+            return to_cny(row['amount'], row['currency'], rates)
             
         month_add = 0.0
         month_sub = 0.0
@@ -406,7 +437,7 @@ class ReportState(AppState):
         stock_val = 0.0
         for ma in summary["manual_assets"]:
             if getattr(ma, 'product_id', None) is not None:
-                val = ma.amount * (rate if ma.currency == 'JPY' else 1.0)
+                val = to_cny(ma.amount, ma.currency, rates)
                 stock_val += val
         self.stock_cny = stock_val
         
@@ -417,7 +448,7 @@ class ReportState(AppState):
             for name, group in grp:
                 cny_val = group[group['currency'] == 'CNY']['amount'].sum()
                 jpy_val = group[group['currency'] == 'JPY']['amount'].sum()
-                tot_equiv = abs(cny_val) + (abs(jpy_val) * rate)
+                tot_equiv = group.apply(equiv_cny, axis=1).abs().sum()
                 
                 ast_rows.append(AssetLiabPeriodRow(
                     category=name,
@@ -425,7 +456,7 @@ class ReportState(AppState):
                     jpy_amount=jpy_val,
                     total_cny_equiv=tot_equiv,
                     cny_str=f"¥ {abs(cny_val):,.2f}",
-                    jpy_str=f"¥ {abs(jpy_val):,.0f}",
+                    jpy_str=compile_non_cny_str(group, is_abs=True),
                     equiv_str=f"¥ {tot_equiv:,.2f}"
                 ))
         self.asset_purchase_rows = ast_rows
@@ -437,7 +468,7 @@ class ReportState(AppState):
             for name, group in grp:
                 cny_val = group[group['currency'] == 'CNY']['amount'].sum()
                 jpy_val = group[group['currency'] == 'JPY']['amount'].sum()
-                tot_equiv = cny_val + (jpy_val * rate)
+                tot_equiv = group.apply(equiv_cny, axis=1).sum()
                 
                 liab_rows.append(AssetLiabPeriodRow(
                     category=name,
@@ -445,7 +476,7 @@ class ReportState(AppState):
                     jpy_amount=jpy_val,
                     total_cny_equiv=tot_equiv,
                     cny_str=f"¥ {cny_val:,.2f}",
-                    jpy_str=f"¥ {jpy_val:,.0f}",
+                    jpy_str=compile_non_cny_str(group, is_abs=False),
                     equiv_str=f"¥ {tot_equiv:,.2f}"
                 ))
         self.liab_equity_rows = liab_rows
@@ -470,7 +501,7 @@ class ReportState(AppState):
                     jpy_amount=jpy_val,
                     total_cny_equiv=tot_equiv,
                     cny_str=f"¥ {cny_val:,.2f}",
-                    jpy_str=f"¥ {jpy_val:,.0f}",
+                    jpy_str=compile_non_cny_str(group, is_abs=False),
                     equiv_str=f"¥ {tot_equiv:,.2f}"
                 ))
         # 根据绝对额降序排

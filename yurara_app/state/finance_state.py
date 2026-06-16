@@ -7,7 +7,7 @@ from datetime import date
 import reflex as rx
 from pydantic import BaseModel
 from ..state.app_state import AppState
-from constants import PRODUCT_COST_CATEGORIES, Currency
+from constants import PRODUCT_COST_CATEGORIES, Currency, to_cny
 
 class FinanceRecordItem(BaseModel):
     id: int = 0
@@ -55,6 +55,13 @@ class BudgetOption(BaseModel):
     label: str = ""
 
 
+class CashBalanceIndicator(BaseModel):
+    currency: str = ""
+    amount_str: str = ""
+    cny_equiv_str: str = ""
+    color: str = "blue"
+
+
 class FinanceState(AppState):
     records: list[FinanceRecordItem] = []
     total_records: int = 0
@@ -62,6 +69,8 @@ class FinanceState(AppState):
     total_pages: int = 1
     cur_cny: float = 0.0
     cur_jpy: float = 0.0
+    dynamic_cash_indicators: list[CashBalanceIndicator] = []
+    total_cash_cny_str: str = "¥ 0.00"
     is_loading: bool = False
     search_query: str = ""
     
@@ -231,9 +240,18 @@ class FinanceState(AppState):
     @rx.event
     def set_ex_source_curr(self, val: str):
         self.ex_source_curr = val
-        self.ex_target_curr = "JPY" if val == "CNY" else "CNY"
+        if val == "CNY":
+            non_cny_keys = [k for k in self.rates_map.keys() if k != "CNY"]
+            self.ex_target_curr = non_cny_keys[0] if non_cny_keys else "JPY"
+        else:
+            self.ex_target_curr = "CNY"
         self.calc_exchange_estimate()
         
+    @rx.event
+    def set_ex_target_curr(self, val: str):
+        self.ex_target_curr = val
+        self.calc_exchange_estimate()
+
     @rx.event
     def set_ex_amount_out(self, val: float):
         self.ex_amount_out = val
@@ -423,10 +441,13 @@ class FinanceState(AppState):
 
     def calc_exchange_estimate(self):
         """按全局汇率自动计算汇率换算金额"""
-        if self.ex_source_curr == "CNY":
-            self.ex_amount_in = self.ex_amount_out / self.exchange_rate
+        rates = dict(self.rates_map)
+        rate_src = to_cny(1.0, self.ex_source_curr, rates)
+        rate_tgt = to_cny(1.0, self.ex_target_curr, rates)
+        if rate_tgt > 0:
+            self.ex_amount_in = (self.ex_amount_out * rate_src) / rate_tgt
         else:
-            self.ex_amount_in = self.ex_amount_out * self.exchange_rate
+            self.ex_amount_in = 0.0
 
     def reset_subform_variables(self):
         """重置各分类的变量"""
@@ -490,9 +511,53 @@ class FinanceState(AppState):
             self.records = processed_records
             
             # 2. 当前总额指标
-            cny_bal, jpy_bal = FinanceService.get_current_balances(db)
-            self.cur_cny = round(float(cny_bal), 2)
-            self.cur_jpy = round(float(jpy_bal), 2)
+            from models import CompanyBalanceItem
+            cash_accs = db.query(CompanyBalanceItem).filter(
+                CompanyBalanceItem.category == "asset",
+                CompanyBalanceItem.asset_type == "现金"
+            ).all()
+            
+            balances_by_curr = {}
+            for acc in cash_accs:
+                curr = acc.currency or "CNY"
+                balances_by_curr[curr] = balances_by_curr.get(curr, 0.0) + acc.amount
+                
+            indicators = []
+            rates = dict(self.rates_map)
+            
+            # CNY 始终第一个
+            cny_total = balances_by_curr.get("CNY", 0.0)
+            indicators.append(CashBalanceIndicator(
+                currency="CNY",
+                amount_str=f"¥ {cny_total:,.2f}",
+                cny_equiv_str="CNY",
+                color="green"
+            ))
+            
+            colors_palette = ["blue", "purple", "pink", "teal", "indigo"]
+            color_idx = 0
+            total_equiv_cny = cny_total
+            
+            for curr in sorted(balances_by_curr.keys()):
+                if curr == "CNY":
+                    continue
+                amt = balances_by_curr[curr]
+                equiv = to_cny(amt, curr, rates)
+                total_equiv_cny += equiv
+                
+                indicators.append(CashBalanceIndicator(
+                    currency=curr,
+                    amount_str=f"{amt:,.2f} {curr}",
+                    cny_equiv_str=f"折合 ¥ {equiv:,.2f}",
+                    color=colors_palette[color_idx % len(colors_palette)]
+                ))
+                color_idx += 1
+                
+            self.dynamic_cash_indicators = indicators
+            self.total_cash_cny_str = f"¥ {total_equiv_cny:,.2f}"
+            
+            self.cur_cny = round(float(cny_total), 2)
+            self.cur_jpy = round(float(balances_by_curr.get("JPY", 0.0)), 2)
             
             # 3. 加载缓存的下拉选项
             # A. 现金账户
@@ -744,12 +809,12 @@ class FinanceState(AppState):
                             "product_id": int(self.batch_product_id), "cat": self.batch_cost_cat
                         }
                         
-                        msg = FinanceService.create_general_transaction(db, base_data, link_config, self.exchange_rate)
+                        msg = FinanceService.create_general_transaction(db, base_data, link_config, dict(self.rates_map))
                         yield rx.toast(f"🎯 预算匹配成功: {msg}")
                     else:
                         # 纯批量切账单模式
                         msg = FinanceService.create_batch_expense_transaction(
-                            db, base_data, batch_config, items_data, self.exchange_rate
+                            db, base_data, batch_config, items_data, dict(self.rates_map)
                         )
                         yield rx.toast(f"📦 {msg}")
 
@@ -776,7 +841,7 @@ class FinanceState(AppState):
                         "name": "", "qty": 1.0, "unit_price": self.f_amount, "product_id": None, "cat": ""
                     }
                     
-                    msg = FinanceService.create_general_transaction(db, base_data, link_config, self.exchange_rate)
+                    msg = FinanceService.create_general_transaction(db, base_data, link_config, dict(self.rates_map))
                     yield rx.toast(f"💾 记账成功: {msg}")
 
             # ---- 场景 D: 资金移动 ----

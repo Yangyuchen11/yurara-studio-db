@@ -204,17 +204,14 @@ def valuation_metric_card() -> rx.Component:
         rx.vstack(
             rx.heading("📊 耗材库存总值", size="3", weight="bold"),
             rx.text("计算当前所有在库耗材的资产账面折算总价。", size="1", color=rx.color("slate", 9)),
-            rx.hstack(
-                rx.text("CNY 实物总值:", size="1", color=rx.color("slate", 10)),
-                rx.spacer(),
-                rx.text(ConsumableState.total_cny_str, size="2", weight="bold", color=rx.color("green", 11)),
-                width="100%"
-            ),
-            rx.hstack(
-                rx.text("JPY 实物总值:", size="1", color=rx.color("slate", 10)),
-                rx.spacer(),
-                rx.text(ConsumableState.total_jpy_str, size="2", weight="bold", color=rx.color("red", 11)),
-                width="100%"
+            rx.foreach(
+                ConsumableState.dynamic_valuation_indicators,
+                lambda ind: rx.hstack(
+                    rx.text(rx.fragment(ind.currency, " 实物总值:"), size="1", color=rx.color("slate", 10)),
+                    rx.spacer(),
+                    rx.text(ind.amount_str, size="2", weight="bold", color=rx.color(ind.color, 11)),
+                    width="100%"
+                )
             ),
             rx.divider(),
             rx.hstack(
@@ -294,7 +291,7 @@ def render_consumable_row(i: ConsumableItem) -> rx.Component:
         rx.table.cell(rx.text(i.unit_price.to_string(), size="1")),
         rx.table.cell(rx.badge(i.remaining_qty.to_string(), color_scheme=rx.cond(i.remaining_qty > 0.01, "green", "gray"), size="1")),
         rx.table.cell(rx.text(rx.cond(i.remaining_cny > 0.001, i.remaining_cny.to_string(), "-"), size="1")),
-        rx.table.cell(rx.text(rx.cond(i.remaining_jpy > 0.001, i.remaining_jpy.to_string(), "-"), size="1")),
+        rx.table.cell(rx.text(rx.cond(i.remaining_original > 0.001, i.remaining_original.to_string() + " " + i.currency, "-"), size="1")),
         rx.table.cell(rx.text(i.shop_name, size="1")),
         rx.table.cell(
             rx.cond(
@@ -335,7 +332,7 @@ def consumable_list_table() -> rx.Component:
                             rx.table.column_header_cell("单价(原币)", size="1"),
                             rx.table.column_header_cell("剩余数量", size="1"),
                             rx.table.column_header_cell("剩余价值(CNY)", size="1"),
-                            rx.table.column_header_cell("剩余价值(JPY)", size="1"),
+                            rx.table.column_header_cell("剩余价值(原币)", size="1"),
                             rx.table.column_header_cell("店铺", size="1"),
                             rx.table.column_header_cell("相关链接", size="1"),
                             rx.table.column_header_cell("备注", size="1"),

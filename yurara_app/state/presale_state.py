@@ -296,8 +296,11 @@ class PresaleState(AppState):
                 recommended = "流动资金-微店账户"
             elif self.pre_plat == "Booth":
                 recommended = "流动资金-booth账户"
-            elif self.pre_curr == "JPY":
-                recommended = "流动资金-日元临时账户"
+            elif self.pre_curr != "CNY":
+                if accs:
+                    recommended = accs[0].name
+                else:
+                    recommended = f"流动资金-{self.pre_curr.lower()}临时账户"
                 
             if recommended not in names:
                 names.insert(0, recommended)
@@ -320,7 +323,14 @@ class PresaleState(AppState):
 
     @rx.var
     def platform_options(self) -> list[str]:
-        return list(PLATFORM_CODES.values())
+        db = self.get_db()
+        try:
+            from models import SalesPlatform
+            return [p.name for p in db.query(SalesPlatform).all()]
+        except Exception:
+            return []
+        finally:
+            db.close()
 
     @rx.var
     def product_options(self) -> list[str]:
@@ -345,11 +355,17 @@ class PresaleState(AppState):
     def cart_estimated_fee(self) -> float:
         if not self.pre_fee:
             return 0.0
-        if self.pre_plat == "微店":
-            return self.pre_tp * 0.006
-        elif self.pre_plat == "Booth":
-            return math.ceil(self.pre_tp * 0.056 + (45 if self.pre_curr == "JPY" else 2.16))
-        return 0.0
+        db = self.get_db()
+        try:
+            from models import SalesPlatform
+            platform = db.query(SalesPlatform).filter(SalesPlatform.name == self.pre_plat).first()
+            if platform:
+                return math.ceil(self.pre_tp * platform.fee_rate) + platform.fee_fixed
+            return 0.0
+        except Exception:
+            return 0.0
+        finally:
+            db.close()
 
     @rx.var
     def cart_net_price(self) -> float:
@@ -361,11 +377,17 @@ class PresaleState(AppState):
     def final_estimated_fee(self) -> float:
         if not self.pre_fee_final or not self.show_search_lock:
             return 0.0
-        if self.found_deposit_order_platform == "微店":
-            return self.final_amount_input * 0.006
-        elif self.found_deposit_order_platform == "Booth":
-            return math.ceil(self.final_amount_input * 0.056 + (45 if self.found_deposit_order_currency == "JPY" else 2.16))
-        return 0.0
+        db = self.get_db()
+        try:
+            from models import SalesPlatform
+            platform = db.query(SalesPlatform).filter(SalesPlatform.name == self.found_deposit_order_platform).first()
+            if platform:
+                return math.ceil(self.final_amount_input * platform.fee_rate) + platform.fee_fixed
+            return 0.0
+        except Exception:
+            return 0.0
+        finally:
+            db.close()
 
     @rx.var
     def final_net_price(self) -> float:
@@ -503,11 +525,16 @@ class PresaleState(AppState):
     @rx.event
     def set_pre_plat(self, val: str):
         self.pre_plat = val
-        curr_map = {
-            "Booth": "JPY", "日本线下": "JPY", "Instagram": "JPY",
-            "国内线下": "CNY", "微店": "CNY", "其他(CNY)": "CNY", "其他(JPY)": "JPY"
-        }
-        self.pre_curr = curr_map.get(val, "CNY")
+        db = self.get_db()
+        try:
+            from models import SalesPlatform
+            platform = db.query(SalesPlatform).filter(SalesPlatform.name == val).first()
+            if platform:
+                self.pre_curr = platform.currency
+        except Exception:
+            pass
+        finally:
+            db.close()
         self.auto_match_account()
         
     @rx.event
@@ -551,8 +578,22 @@ class PresaleState(AppState):
             recommended = "流动资金-微店账户"
         elif self.pre_plat == "Booth":
             recommended = "流动资金-booth账户"
-        elif self.pre_curr == "JPY":
-            recommended = "流动资金-日元临时账户"
+        elif self.pre_curr != "CNY":
+            db = self.get_db()
+            try:
+                acc = db.query(CompanyBalanceItem).filter(
+                    CompanyBalanceItem.category == 'asset',
+                    CompanyBalanceItem.asset_type == '现金',
+                    CompanyBalanceItem.currency == self.pre_curr
+                ).first()
+                if acc:
+                    recommended = acc.name
+                else:
+                    recommended = f"流动资金-{self.pre_curr.lower()}临时账户"
+            except Exception:
+                recommended = f"流动资金-{self.pre_curr.lower()}临时账户"
+            finally:
+                db.close()
         self.pre_target_account = recommended
 
     # --- 购物车操作 ---

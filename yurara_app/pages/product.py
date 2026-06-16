@@ -4,7 +4,7 @@
 """
 import reflex as rx
 from ..state.auth_state import AuthState
-from ..state.product_state import ProductState, PLATFORM_CODES, ColorRow, PartRow, ProductItem
+from ..state.product_state import ProductState, ColorRow, PartRow, ProductItem, PlatformPrice
 from ..components.layout import page_layout
 from ..components.editable_table import data_card, confirm_dialog, empty_state, custom_form_field
 
@@ -120,6 +120,96 @@ def edit_part_row(row: PartRow) -> rx.Component:
     )
 
 
+def render_price_entry_create(row: ColorRow, price: PlatformPrice) -> rx.Component:
+    return rx.hstack(
+        rx.text(price.platform_name, size="1", weight="bold", width="70px"),
+        rx.input(
+            value=price.price.to_string(),
+            type="number",
+            size="1",
+            on_change=lambda val: ProductState.update_create_color_price(row.key, price.platform_code, val),
+            width="80px",
+        ),
+        rx.text(price.currency, size="1", color=rx.color("slate", 10), width="40px"),
+        rx.icon_button(
+            rx.icon("trash-2", size=12),
+            on_click=lambda: ProductState.remove_create_color_price(row.key, price.platform_code),
+            size="1",
+            variant="ghost",
+            color_scheme="red",
+            cursor="pointer",
+        ),
+        spacing="2",
+        align="center",
+    )
+
+
+def render_price_entry_edit(row: ColorRow, price: PlatformPrice) -> rx.Component:
+    return rx.hstack(
+        rx.text(price.platform_name, size="1", weight="bold", width="70px"),
+        rx.input(
+            value=price.price.to_string(),
+            type="number",
+            size="1",
+            on_change=lambda val: ProductState.update_edit_color_price(row.key, price.platform_code, val),
+            width="80px",
+        ),
+        rx.text(price.currency, size="1", color=rx.color("slate", 10), width="40px"),
+        rx.icon_button(
+            rx.icon("trash-2", size=12),
+            on_click=lambda: ProductState.remove_edit_color_price(row.key, price.platform_code),
+            size="1",
+            variant="ghost",
+            color_scheme="red",
+            cursor="pointer",
+        ),
+        spacing="2",
+        align="center",
+    )
+
+
+def add_price_dropdown_create(row: ColorRow) -> rx.Component:
+    return rx.hstack(
+        rx.select(
+            ProductState.platform_launch_options,
+            placeholder="追加定价平台...",
+            size="1",
+            on_change=lambda val: ProductState.set_selected_platform_to_add(row.key, val),
+            width="120px",
+        ),
+        rx.icon_button(
+            rx.icon("plus", size=12),
+            on_click=lambda: ProductState.add_create_color_price(row.key),
+            size="1",
+            variant="soft",
+            cursor="pointer",
+        ),
+        spacing="2",
+        align="center",
+    )
+
+
+def add_price_dropdown_edit(row: ColorRow) -> rx.Component:
+    return rx.hstack(
+        rx.select(
+            ProductState.platform_launch_options,
+            placeholder="追加定价平台...",
+            size="1",
+            on_change=lambda val: ProductState.set_selected_platform_to_add(row.key, val),
+            width="120px",
+        ),
+        rx.icon_button(
+            rx.icon("plus", size=12),
+            on_click=lambda: ProductState.add_edit_color_price(row.key),
+            size="1",
+            variant="soft",
+            cursor="pointer",
+        ),
+        spacing="2",
+        align="center",
+    )
+
+
 def create_color_row(row: ColorRow) -> rx.Component:
     """新建模式：单行颜色规格输入。"""
     return rx.table.row(
@@ -141,13 +231,17 @@ def create_color_row(row: ColorRow) -> rx.Component:
                 width="65px",
             ),
         ),
-        rx.table.cell(rx.input(default_value=row.price_weidian.to_string(), type="number", size="1", min="0", on_blur=lambda v: ProductState.update_create_color_field(row.key, "price_weidian", v), width="70px")),
-        rx.table.cell(rx.input(default_value=row.price_booth.to_string(), type="number", size="1", min="0", on_blur=lambda v: ProductState.update_create_color_field(row.key, "price_booth", v), width="70px")),
-        rx.table.cell(rx.input(default_value=row.price_offline_cn.to_string(), type="number", size="1", min="0", on_blur=lambda v: ProductState.update_create_color_field(row.key, "price_offline_cn", v), width="70px")),
-        rx.table.cell(rx.input(default_value=row.price_offline_jp.to_string(), type="number", size="1", min="0", on_blur=lambda v: ProductState.update_create_color_field(row.key, "price_offline_jp", v), width="70px")),
-        rx.table.cell(rx.input(default_value=row.price_instagram.to_string(), type="number", size="1", min="0", on_blur=lambda v: ProductState.update_create_color_field(row.key, "price_instagram", v), width="70px")),
-        rx.table.cell(rx.input(default_value=row.price_other.to_string(), type="number", size="1", min="0", on_blur=lambda v: ProductState.update_create_color_field(row.key, "price_other", v), width="70px")),
-        rx.table.cell(rx.input(default_value=row.price_other_jpy.to_string(), type="number", size="1", min="0", on_blur=lambda v: ProductState.update_create_color_field(row.key, "price_other_jpy", v), width="70px")),
+        rx.table.cell(
+            rx.vstack(
+                rx.foreach(
+                    row.prices,
+                    lambda price: render_price_entry_create(row, price)
+                ),
+                add_price_dropdown_create(row),
+                align_items="start",
+                spacing="2",
+            )
+        ),
         rx.table.cell(
             rx.icon_button(
                 rx.icon("x", size=11),
@@ -178,13 +272,17 @@ def edit_color_row(row: ColorRow) -> rx.Component:
                 width="65px",
             ),
         ),
-        rx.table.cell(rx.input(default_value=row.price_weidian.to_string(), type="number", size="1", min="0", on_blur=lambda v: ProductState.update_edit_color_field(row.key, "price_weidian", v), width="70px")),
-        rx.table.cell(rx.input(default_value=row.price_booth.to_string(), type="number", size="1", min="0", on_blur=lambda v: ProductState.update_edit_color_field(row.key, "price_booth", v), width="70px")),
-        rx.table.cell(rx.input(default_value=row.price_offline_cn.to_string(), type="number", size="1", min="0", on_blur=lambda v: ProductState.update_edit_color_field(row.key, "price_offline_cn", v), width="70px")),
-        rx.table.cell(rx.input(default_value=row.price_offline_jp.to_string(), type="number", size="1", min="0", on_blur=lambda v: ProductState.update_edit_color_field(row.key, "price_offline_jp", v), width="70px")),
-        rx.table.cell(rx.input(default_value=row.price_instagram.to_string(), type="number", size="1", min="0", on_blur=lambda v: ProductState.update_edit_color_field(row.key, "price_instagram", v), width="70px")),
-        rx.table.cell(rx.input(default_value=row.price_other.to_string(), type="number", size="1", min="0", on_blur=lambda v: ProductState.update_edit_color_field(row.key, "price_other", v), width="70px")),
-        rx.table.cell(rx.input(default_value=row.price_other_jpy.to_string(), type="number", size="1", min="0", on_blur=lambda v: ProductState.update_edit_color_field(row.key, "price_other_jpy", v), width="70px")),
+        rx.table.cell(
+            rx.vstack(
+                rx.foreach(
+                    row.prices,
+                    lambda price: render_price_entry_edit(row, price)
+                ),
+                add_price_dropdown_edit(row),
+                align_items="start",
+                spacing="2",
+            )
+        ),
         rx.table.cell(
             rx.icon_button(
                 rx.icon("x", size=11),
@@ -275,13 +373,7 @@ def color_matrix_table_create() -> rx.Component:
                     rx.table.column_header_cell("缩略图", size="1"),
                     rx.table.column_header_cell("颜色", size="1"),
                     rx.table.column_header_cell("预计数量", size="1"),
-                    rx.table.column_header_cell("微店", size="1"),
-                    rx.table.column_header_cell("Booth", size="1"),
-                    rx.table.column_header_cell("国内线下", size="1"),
-                    rx.table.column_header_cell("日本线下", size="1"),
-                    rx.table.column_header_cell("Instagram", size="1"),
-                    rx.table.column_header_cell("其他CNY", size="1"),
-                    rx.table.column_header_cell("其他JPY", size="1"),
+                    rx.table.column_header_cell("平台定价", size="1"),
                     rx.table.column_header_cell("", size="1"),
                 )
             ),
@@ -300,13 +392,7 @@ def color_matrix_table_edit() -> rx.Component:
                     rx.table.column_header_cell("缩略图", size="1"),
                     rx.table.column_header_cell("颜色", size="1"),
                     rx.table.column_header_cell("库存/预计", size="1"),
-                    rx.table.column_header_cell("微店", size="1"),
-                    rx.table.column_header_cell("Booth", size="1"),
-                    rx.table.column_header_cell("国内线下", size="1"),
-                    rx.table.column_header_cell("日本线下", size="1"),
-                    rx.table.column_header_cell("Instagram", size="1"),
-                    rx.table.column_header_cell("其他CNY", size="1"),
-                    rx.table.column_header_cell("其他JPY", size="1"),
+                    rx.table.column_header_cell("平台定价", size="1"),
                     rx.table.column_header_cell("", size="1"),
                 )
             ),
@@ -544,10 +630,10 @@ def product_card(product: ProductItem) -> rx.Component:
                             rx.table.column_header_cell("规格", size="1"),
                             rx.table.column_header_cell("数量", size="1"),
                             rx.table.column_header_cell("部件规格", size="1"),
-                            rx.table.column_header_cell("微店", size="1"),
-                            rx.table.column_header_cell("Booth", size="1"),
-                            rx.table.column_header_cell("国内线下", size="1"),
-                            rx.table.column_header_cell("日本线下", size="1"),
+                            rx.foreach(
+                                ProductState.platform_launch_options,
+                                lambda name: rx.table.column_header_cell(name, size="1")
+                            )
                         )
                     ),
                     rx.table.body(
@@ -590,10 +676,16 @@ def _product_color_table_row(color: ColorRow) -> rx.Component:
         rx.table.cell(rx.text(color.name, size="1", weight="medium")),
         rx.table.cell(rx.text(color.quantity.to_string(), size="1")),
         rx.table.cell(rx.text(color.parts_summary, size="1")),
-        rx.table.cell(rx.cond(color.price_weidian > 0, rx.text(color.price_weidian.to_string(), size="1"), rx.text("-", size="1", color=rx.color("slate", 8)))),
-        rx.table.cell(rx.cond(color.price_booth > 0, rx.text(color.price_booth.to_string(), size="1"), rx.text("-", size="1", color=rx.color("slate", 8)))),
-        rx.table.cell(rx.cond(color.price_offline_cn > 0, rx.text(color.price_offline_cn.to_string(), size="1"), rx.text("-", size="1", color=rx.color("slate", 8)))),
-        rx.table.cell(rx.cond(color.price_offline_jp > 0, rx.text(color.price_offline_jp.to_string(), size="1"), rx.text("-", size="1", color=rx.color("slate", 8)))),
+        rx.foreach(
+            color.aligned_price_strs,
+            lambda price_str: rx.table.cell(
+                rx.cond(
+                    price_str != "-",
+                    rx.text(price_str, size="1"),
+                    rx.text("-", size="1", color=rx.color("slate", 8))
+                )
+            )
+        )
     )
 
 

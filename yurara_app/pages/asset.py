@@ -179,7 +179,7 @@ def render_asset_row(a: AssetItem) -> rx.Component:
         rx.table.cell(rx.badge(a.remaining_qty.to_string(), color_scheme=rx.cond(a.remaining_qty > 0, "green", "gray"), size="1")),
         rx.table.cell(rx.text(a.total_price.to_string(), size="1")),
         rx.table.cell(rx.text(rx.cond(a.remaining_cny > 0.001, a.remaining_cny.to_string(), "-"), size="1")),
-        rx.table.cell(rx.text(rx.cond(a.remaining_jpy > 0.001, a.remaining_jpy.to_string(), "-"), size="1")),
+        rx.table.cell(rx.text(rx.cond(a.remaining_original > 0.001, a.remaining_original.to_string() + " " + a.currency, "-"), size="1")),
         rx.table.cell(rx.text(a.shop_name, size="1")),
         rx.table.cell(
             rx.cond(
@@ -221,7 +221,7 @@ def asset_list_table() -> rx.Component:
                             rx.table.column_header_cell("剩余数量", size="1"),
                             rx.table.column_header_cell("总价(原币)", size="1"),
                             rx.table.column_header_cell("剩余价值(CNY)", size="1"),
-                            rx.table.column_header_cell("剩余价值(JPY)", size="1"),
+                            rx.table.column_header_cell("剩余价值(原币)", size="1"),
                             rx.table.column_header_cell("店铺", size="1"),
                             rx.table.column_header_cell("链接", size="1"),
                             rx.table.column_header_cell("备注", size="1"),
@@ -250,8 +250,7 @@ def asset_page() -> rx.Component:
             rx.grid(
                 asset_metric_card("资产采购历史总值 (折合)", AssetState.val_total_str, "所有采购固定资产的历史金额以当前汇率折合为 CNY 的总和", "banknote", "violet"),
                 asset_metric_card("当前剩余价值 (折合)", AssetState.val_remain_str, "所有在库/未报废资产按当前汇率折算为 CNY 的总和", "trending_up", "green"),
-                asset_metric_card("其中日元资产原值", AssetState.val_jpy_raw_str, "仅统计以 JPY 计价的资产日元原值部分", "japanese_yen", "blue"),
-                columns="3",
+                columns="2",
                 spacing="3",
                 width="100%"
             ),

@@ -17,6 +17,7 @@ from .pages.report import report_page
 from .pages.offline_sales import offline_sales_page
 from .pages.sales_order import sales_order_page
 from .pages.presale import presale_page
+from .pages.platforms import platforms_page
 from .state.auth_state import AuthState
 from .state.app_state import AppState
 from .state.finance_state import FinanceState
@@ -31,6 +32,7 @@ from .state.offline_sales_state import OfflineSalesState
 from .state.sales_order_state import SalesOrderState
 from .state.presale_state import PresaleState
 from .state.product_state import ProductState
+from .state.platforms_state import PlatformsState
 
 # ---- 全局样式 ----
 
@@ -227,6 +229,7 @@ app.add_page(sales_order_page, route="/sales-order", title="线上销售 | Yurar
 app.add_page(presale_page, route="/presale", title="预售管理 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, PresaleState.load_presale_page])
 app.add_page(offline_sales_page, route="/offline-sales", title="线下销售 | Yurara Studio", on_load=[AuthState.check_auth, OfflineSalesState.load_offline_page])
 app.add_page(sales_page, route="/sales", title="销售额 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, SalesState.load_sales_data])
+app.add_page(platforms_page, route="/platforms", title="销售平台管理 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, PlatformsState.load_platforms])
 app.add_page(inventory_page, route="/inventory", title="库存管理 | Yurara Studio", on_load=[AuthState.check_auth, InventoryState.load_inventory_page])
 app.add_page(asset_page, route="/asset", title="固定资产 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, AssetState.load_asset_page])
 app.add_page(consumable_page, route="/consumable", title="其他资产 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, ConsumableState.load_consumable_page])
@@ -305,5 +308,35 @@ if not any(arg in sys.argv for arg in ["init", "export"]):
         except Exception as migrate_err:
             print(f"[Reflex App] Database migration check failed: {migrate_err}")
         Base.metadata.create_all(bind=engine)
+        # 自动初始化默认销售平台数据
+        try:
+            from database import SessionLocal
+            from models import SalesPlatform
+            db_session = SessionLocal()
+            try:
+                if db_session.query(SalesPlatform).count() == 0:
+                    defaults = [
+                        ("weidian", "微店", "CNY", 0.006, 0.0),
+                        ("booth", "Booth", "JPY", 0.056, 22.0),
+                        ("offline_cn", "国内线下", "CNY", 0.0, 0.0),
+                        ("offline_jp", "日本线下", "JPY", 0.0, 0.0),
+                        ("instagram", "Instagram", "JPY", 0.0, 0.0),
+                        ("other", "其他(CNY)", "CNY", 0.0, 0.0),
+                        ("other_jpy", "其他(JPY)", "JPY", 0.0, 0.0),
+                    ]
+                    for code, name, currency, fee_rate, fee_fixed in defaults:
+                        db_session.add(SalesPlatform(
+                            code=code,
+                            name=name,
+                            currency=currency,
+                            fee_rate=fee_rate,
+                            fee_fixed=fee_fixed
+                        ))
+                    db_session.commit()
+                    print("[Reflex App] Seeded default sales platforms.")
+            finally:
+                db_session.close()
+        except Exception as seed_err:
+            print(f"[Reflex App] Failed to seed default sales platforms: {seed_err}")
     except Exception as e:
         print(f"[Reflex App] Database auto-migration / init failed: {e}")

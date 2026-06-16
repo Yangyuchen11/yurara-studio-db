@@ -31,6 +31,7 @@ NAV_ITEMS = [
             {"label": "预售销售管理", "icon": "shopping_basket", "href": "/presale"},
             {"label": "线下销售管理", "icon": "store", "href": "/offline-sales"},
             {"label": "销售额一览", "icon": "trending_up", "href": "/sales"},
+            {"label": "销售平台管理", "icon": "globe", "href": "/platforms"},
         ]
     },
     {
@@ -112,73 +113,50 @@ def nav_group(group: str, items: list) -> rx.Component:
 
 
 def exchange_rate_widget() -> rx.Component:
-    """汇率设置小组件。"""
-    expanded_widget = rx.vstack(
-        rx.hstack(
-            rx.icon("refresh_cw", size=13),
-            rx.text("全局汇率", size="1", weight="bold"),
-            spacing="1",
-            color=rx.color("slate", 10),
-        ),
-        rx.hstack(
-            rx.text("100 JPY =", size="1", color=rx.color("slate", 10)),
-            rx.input(
-                default_value=AppState.exchange_rate_100.to_string(),
-                type="number",
+    """多货币汇率展示面板 - 展开版（侧边栏收起时不显示，收起时直接使用 view_rates_button）。"""
+    
+    def rate_row_readonly(rate_info: dict) -> rx.Component:
+        currency = rate_info["currency"]
+        rate_str = rate_info["rate_str"]
+        return rx.hstack(
+            rx.text(
+                f"100 {currency} =",
                 size="1",
-                width="70px",
-                on_blur=AppState.set_exchange_rate,
+                color=rx.color("slate", 10),
+                min_width="70px",
             ),
-            rx.text("CNY", size="1", color=rx.color("slate", 10)),
+            rx.text(
+                f"{rate_str} CNY",
+                size="1",
+                weight="medium",
+                color=rx.color("slate", 11),
+            ),
             spacing="1",
             align="center",
-        ),
-        spacing="1",
-        width="100%",
-        padding="0.75rem",
-        background=rx.color("slate", 2),
-        border_radius="8px",
-    )
-
-    collapsed_widget = rx.popover.root(
-        rx.popover.trigger(
-            rx.tooltip(
-                rx.icon_button(
-                    rx.icon("refresh_cw", size=16),
-                    variant="soft",
-                    color_scheme="gray",
-                    cursor="pointer",
-                ),
-                content="设置全局汇率",
-                side="right",
-            )
-        ),
-        rx.popover.content(
-            rx.vstack(
-                rx.text("全局汇率 (100 JPY)", size="1", weight="bold", color=rx.color("slate", 10)),
-                rx.hstack(
-                    rx.input(
-                        default_value=AppState.exchange_rate_100.to_string(),
-                        type="number",
-                        size="1",
-                        width="80px",
-                        on_blur=AppState.set_exchange_rate,
-                    ),
-                    rx.text("CNY", size="1", color=rx.color("slate", 10)),
-                    spacing="2",
-                    align="center",
-                ),
-                spacing="2",
-            ),
-            style={"maxWidth": "220px"},
-        ),
-    )
+            width="100%",
+        )
 
     return rx.cond(
         AppState.sidebar_collapsed,
-        collapsed_widget,
-        expanded_widget,
+        rx.fragment(),
+        rx.vstack(
+            rx.hstack(
+                rx.icon("refresh_cw", size=13),
+                rx.text("全局汇率", size="1", weight="bold"),
+                spacing="1",
+                align="center",
+                color=rx.color("slate", 10),
+                width="100%",
+            ),
+            rx.foreach(AppState.sorted_rates, rate_row_readonly),
+            spacing="1",
+            width="100%",
+            padding="0.75rem",
+            background=rx.color("slate", 2),
+            border_radius="8px",
+        )
     )
+
 
 
 def test_mode_toggle() -> rx.Component:
@@ -342,6 +320,179 @@ def data_management_popover() -> rx.Component:
             style={"maxWidth": "220px"},
         ),
     )
+
+
+def view_rates_button(collapsed: bool) -> rx.Component:
+    """查看全局汇率的按钮，点开显示对话框。"""
+    dialog_content = rx.dialog.content(
+        rx.hstack(
+            rx.heading("🌐 全局登记汇率看板", size="3"),
+            rx.spacer(),
+            rx.dialog.close(
+                rx.icon_button(rx.icon("x", size=16), variant="ghost", color_scheme="gray", cursor="pointer")
+            ),
+            width="100%",
+            align="center",
+            margin_bottom="1rem",
+        ),
+        rx.text(
+            "您可以在这里管理所有已登记的币种汇率。修改输入框后光标离开 (Blur) 即可自动保存，也可以点击下方按钮从 Google Finance 同步最新汇率。",
+            size="1",
+            color=rx.color("slate", 9),
+            margin_bottom="1.5rem",
+        ),
+        
+        # 汇率管理表格
+        rx.table.root(
+            rx.table.header(
+                rx.table.row(
+                    rx.table.column_header_cell("货币代号", size="1"),
+                    rx.table.column_header_cell("汇率 (100单位 = X CNY)", size="1"),
+                    rx.table.column_header_cell("逆向折算 (1 CNY)", size="1"),
+                    rx.table.column_header_cell("操作", size="1"),
+                )
+            ),
+            rx.table.body(
+                rx.foreach(
+                    AppState.sorted_rates,
+                    lambda rate: rx.table.row(
+                        rx.table.cell(rx.badge(rate["currency"], color_scheme="violet", variant="soft", size="2")),
+                        rx.table.cell(
+                            rx.hstack(
+                                rx.input(
+                                    key=f"input_{rate['currency']}_{rate['rate_str']}",
+                                    default_value=rate["rate_str"],
+                                    type="number",
+                                    size="1",
+                                    width="85px",
+                                    on_blur=lambda val: AppState.set_currency_rate(rate["currency"], val),
+                                ),
+
+                                rx.text("CNY", size="1", color=rx.color("slate", 10)),
+                                spacing="1",
+                                align="center",
+                            )
+                        ),
+                        rx.table.cell(rx.text(rx.fragment(rate["reverse_rate_str"], " ", rate["currency"]), size="2")),
+                        rx.table.cell(
+                            rx.cond(
+                                rate["currency"] != "JPY",
+                                rx.icon_button(
+                                    rx.icon("trash_2", size=12),
+                                    size="1",
+                                    variant="ghost",
+                                    color_scheme="red",
+                                    cursor="pointer",
+                                    on_click=AppState.remove_currency_rate(rate["currency"]),
+                                ),
+                                rx.fragment()
+                            )
+                        ),
+                    )
+                )
+            ),
+            size="2",
+            width="100%",
+            margin_bottom="1.5rem",
+        ),
+        
+        rx.divider(margin_y="1rem"),
+        
+        # 底部操作区：新增货币与一键获取
+        rx.vstack(
+            rx.text("➕ 登记新增货币：", size="1", weight="bold", color=rx.color("slate", 10)),
+            rx.hstack(
+                rx.input(
+                    placeholder="例如: USD",
+                    size="2",
+                    width="110px",
+                    value=AppState.new_currency_code,
+                    on_change=AppState.set_new_currency_code,
+                ),
+                rx.input(
+                    placeholder="100单位外币兑 CNY 汇率",
+                    type="number",
+                    size="2",
+                    flex="1",
+                    value=AppState.new_currency_rate,
+                    on_change=AppState.set_new_currency_rate,
+                ),
+                rx.icon_button(
+                    rx.icon("plus", size=16),
+                    size="2",
+                    variant="solid",
+                    color_scheme="green",
+                    cursor="pointer",
+                    on_click=AppState.add_new_currency_from_dialog,
+                ),
+
+                spacing="2",
+                width="100%",
+                align="center",
+            ),
+            rx.divider(margin_y="0.5rem"),
+            rx.button(
+                rx.cond(
+                    AppState.rates_fetching,
+                    rx.spinner(size="1"),
+                    rx.hstack(
+                        rx.icon("globe", size=14),
+                        rx.text("从 Google Finance 同步更新所有登记汇率", size="1"),
+                        spacing="2",
+                        align="center",
+                    ),
+                ),
+                size="2",
+                variant="soft",
+                color_scheme="blue",
+                width="100%",
+                cursor="pointer",
+                on_click=AppState.fetch_live_rates,
+                disabled=AppState.rates_fetching,
+            ),
+            spacing="3",
+            width="100%",
+        ),
+        style={"maxWidth": "540px"},
+    )
+
+    btn = rx.cond(
+        collapsed,
+        rx.dialog.root(
+            rx.dialog.trigger(
+                rx.tooltip(
+                    rx.icon_button(
+                        rx.icon("eye", size=16),
+                        variant="outline",
+                        color_scheme="gray",
+                        cursor="pointer",
+                    ),
+                    content="查看与管理汇率",
+                    side="right",
+                )
+            ),
+            dialog_content,
+        ),
+        rx.dialog.root(
+            rx.dialog.trigger(
+                rx.button(
+                    rx.hstack(
+                        rx.icon("eye", size=14),
+                        rx.text("查看全部与管理汇率", size="1"),
+                        spacing="2",
+                        align="center",
+                    ),
+                    variant="outline",
+                    color_scheme="gray",
+                    width="100%",
+                    cursor="pointer",
+                )
+            ),
+            dialog_content,
+        )
+    )
+    return btn
+
 
 
 def sidebar_toggle_button() -> rx.Component:
@@ -555,6 +706,7 @@ def sidebar() -> rx.Component:
             AppState.sidebar_collapsed,
             rx.vstack(
                 exchange_rate_widget(),
+                view_rates_button(collapsed=True),
                 test_mode_toggle(),
                 data_management_popover(),
                 rx.divider(margin="0"),
@@ -566,6 +718,7 @@ def sidebar() -> rx.Component:
             ),
             rx.vstack(
                 exchange_rate_widget(),
+                view_rates_button(collapsed=False),
                 test_mode_toggle(),
                 data_management_popover(),
                 rx.divider(margin="0"),

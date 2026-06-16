@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from typing import Any
 from ..state.app_state import AppState
 from services.sales_service import SalesService
-from constants import PLATFORM_CODES
+from constants import to_cny
 
 
 class SalesLeaderboardRow(BaseModel):
@@ -33,7 +33,8 @@ class SalesLogItem(BaseModel):
 
 class VariantPivotRow(BaseModel):
     variant: str = ""
-    qtys: list[int] = []  # 分列对齐值
+    qtys_by_platform: dict[str, int] = {}
+    total_qty: int = 0
 
 
 class PlatformSale(BaseModel):
@@ -74,6 +75,7 @@ class SalesState(AppState):
     # 交叉透视表表头与明细
     pivot_headers: list[str] = []
     pivot_rows: list[VariantPivotRow] = []
+    pivot_platforms: list[str] = []
     
     # 堆叠直方图数据 (List of VariantSaleChartData)
     chart_data: list[VariantSaleChartData] = []
@@ -169,14 +171,21 @@ class SalesState(AppState):
 
             # 2. 算全局销售指标
             total_cny_val = df[df['currency'] == 'CNY']['amount'].sum()
-            total_jpy_val = df[df['currency'] == 'JPY']['amount'].sum()
             self.total_cny = round(float(total_cny_val), 2)
-            self.total_jpy = round(float(total_jpy_val), 2)
-            self.grand_total_cny = round(float(self.total_cny + (self.total_jpy * self.exchange_rate)), 2)
+            self.total_jpy = 0.0
+            
+            # calculate grand_total_cny by folding all rows using to_cny:
+            grand_total = 0.0
+            for _, r in df.iterrows():
+                amt = float(r['amount'])
+                curr = str(r['currency'])
+                grand_total += to_cny(amt, curr, self.rates_map)
+                
+            self.grand_total_cny = round(grand_total, 2)
             self.total_qty = round(float(df['qty'].sum()), 2)
 
             # 3. 统计产品热卖排行榜
-            df_prod_summary = SalesService.get_product_leaderboard(df, self.exchange_rate)
+            df_prod_summary = SalesService.get_product_leaderboard(df, self.rates_map)
             leader_list = []
             for _, row in df_prod_summary.iterrows():
                 leader_list.append(SalesLeaderboardRow(
@@ -227,64 +236,84 @@ class SalesState(AppState):
                 self.p_active_platforms = 0
                 self.pivot_headers = []
                 self.pivot_rows = []
+                self.pivot_platforms = []
                 self.chart_data = []
                 self.logs = []
                 return
 
             # 1. 销量/销售额折合/活跃平台数
-            p_cny = df_p[df_p['currency'] == 'CNY']['amount'].sum()
-            p_jpy = df_p[df_p['currency'] == 'JPY']['amount'].sum()
             self.p_net_qty = round(float(df_p['qty'].sum()), 2)
-            self.p_cny_equiv = round(float(p_cny + (p_jpy * self.exchange_rate)), 2)
+            
+            p_grand_total = 0.0
+            for _, r in df_p.iterrows():
+                p_grand_total += to_cny(float(r['amount']), str(r['currency']), self.rates_map)
+            self.p_cny_equiv = round(p_grand_total, 2)
             self.p_active_platforms = int(df_p[df_p['qty'] != 0]['platform'].nunique())
 
-            # 2. 款式-平台交叉透视数据构建 (Static Standardized Formatter)
-            self.pivot_headers = ["款式", "微店", "Booth", "国内线下", "日本线下", "Instagram", "其他(CNY)", "其他(JPY)", "总计"]
-            platform_keys = ["weidian", "booth", "offline_cn", "offline_jp", "instagram", "other", "other_jpy"]
+            # 2. 款式-平台交叉透视数据构建 (完全动态列)
+            from models import SalesPlatform
+            plats = db.query(SalesPlatform).order_by(SalesPlatform.id.asc()).all()
+            self.pivot_headers = ["款式"] + [p.name for p in plats] + ["总计"]
+            self.pivot_platforms = [p.name for p in plats]
 
-            # 分别算出各款式、各平台的变动数量
-            var_sums = df_p.groupby(['variant', 'platform'])['qty'].sum().to_dict()
+            plat_name_by_code_or_name = {}
+            for p in plats:
+                plat_name_by_code_or_name[p.code.lower()] = p.name
+                plat_name_by_code_or_name[p.name.lower()] = p.name
+
+            df_p = df_p.copy()
+            df_p['plat_display_name'] = df_p['platform'].apply(lambda x: plat_name_by_code_or_name.get(str(x).lower(), str(x)))
+
+            var_sums = df_p.groupby(['variant', 'plat_display_name'])['qty'].sum().to_dict()
             var_totals = df_p.groupby('variant')['qty'].sum().to_dict()
 
             p_rows = []
-            # 对各款式构建对齐数据行
             for var in df_p['variant'].unique():
-                row_vals = []
-                for p in platform_keys:
-                    row_vals.append(int(var_sums.get((var, PLATFORM_CODES.get(p, p)), 0)))
-                # 添加该款式的横向总销量
-                row_vals.append(int(var_totals.get(var, 0)))
+                qtys_by_plat = {p.name: 0 for p in plats}
+                for p in plats:
+                    qty_val = int(var_sums.get((var, p.name), 0))
+                    qtys_by_plat[p.name] = qty_val
+                total_qty = int(var_totals.get(var, 0))
                 
                 p_rows.append(VariantPivotRow(
                     variant=str(var),
-                    qtys=row_vals
+                    qtys_by_platform=qtys_by_plat,
+                    total_qty=total_qty
                 ))
-            
-            # 追加底部的纵向列汇总（“总计”行）
-            col_totals = []
-            for p in platform_keys:
-                col_totals.append(int(df_p[df_p['platform'] == PLATFORM_CODES.get(p, p)]['qty'].sum()))
-            # 右下角全局总销量
-            col_totals.append(int(df_p['qty'].sum()))
-            
+
+            # Bottom total row
+            total_qtys_by_plat = {p.name: 0 for p in plats}
+            for p in plats:
+                col_sum = int(df_p[df_p['plat_display_name'] == p.name]['qty'].sum())
+                total_qtys_by_plat[p.name] = col_sum
+            grand_total_qty = int(df_p['qty'].sum())
+
             p_rows.append(VariantPivotRow(
                 variant="总计",
-                qtys=col_totals
+                qtys_by_platform=total_qtys_by_plat,
+                total_qty=grand_total_qty
             ))
-            
             self.pivot_rows = p_rows
 
             # 3. 产生适用于 CSS 堆叠条形图的数据字典序列
             c_data = []
-            colors = {
-                "weidian": "var(--violet-9)",
-                "booth": "var(--crimson-9)",
-                "offline_cn": "var(--blue-9)",
-                "offline_jp": "var(--jade-9)",
-                "instagram": "var(--pink-9)",
-                "other": "var(--amber-9)",
-                "other_jpy": "var(--orange-9)"
-            }
+            color_palette = [
+                "var(--violet-9)",
+                "var(--crimson-9)",
+                "var(--blue-9)",
+                "var(--jade-9)",
+                "var(--pink-9)",
+                "var(--amber-9)",
+                "var(--orange-9)",
+                "var(--teal-9)",
+                "var(--indigo-9)",
+                "var(--ruby-9)",
+                "var(--grass-9)",
+            ]
+            plat_colors = {}
+            for idx, p in enumerate(plats):
+                plat_colors[p.name] = color_palette[idx % len(color_palette)]
+
             for var in df_p['variant'].unique():
                 var_df = df_p[df_p['variant'] == var]
                 total_qty = int(var_df['qty'].sum())
@@ -292,15 +321,15 @@ class SalesState(AppState):
                     continue
                     
                 platform_list = []
-                for p in platform_keys:
-                    qty = int(var_df[var_df['platform'] == PLATFORM_CODES.get(p, p)]['qty'].sum())
+                for p in plats:
+                    qty = int(var_df[var_df['plat_display_name'] == p.name]['qty'].sum())
                     if qty > 0:
                         pct = (qty / total_qty) * 100
                         platform_list.append(PlatformSale(
-                            name=PLATFORM_CODES.get(p, p),
+                            name=p.name,
                             qty=qty,
-                            pct_str=f"{pct}%",
-                            color=colors.get(p, "var(--slate-9)")
+                            pct_str=f"{pct:.1f}%",
+                            color=plat_colors.get(p.name, "var(--slate-9)")
                         ))
                 if platform_list:
                     c_data.append(VariantSaleChartData(
@@ -315,7 +344,6 @@ class SalesState(AppState):
             self.total_rows = len(df_logs_all)
             self.total_pages = max(1, (self.total_rows + 19) // 20)
             
-            # 安全限制当前页码
             if self.page > self.total_pages:
                 self.page = self.total_pages
             
@@ -325,7 +353,6 @@ class SalesState(AppState):
 
             log_items = []
             for _, row in df_slice.iterrows():
-                # 本地化翻译变动动作大类
                 t = row['type']
                 if t == 'sale':
                     lbl = "📤 售出"
@@ -342,7 +369,7 @@ class SalesState(AppState):
                     type_label=lbl,
                     variant=str(row.get('variant', '')),
                     qty=round(float(row.get('qty', 0.0)), 2),
-                    platform=PLATFORM_CODES.get(row.get('platform', ''), row.get('platform', '')),
+                    platform=plat_name_by_code_or_name.get(str(row.get('platform', '')).lower(), str(row.get('platform', ''))),
                     amount=round(float(row.get('amount', 0.0)), 2),
                     currency=str(row.get('currency', 'CNY'))
                 ))

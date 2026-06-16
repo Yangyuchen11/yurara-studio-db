@@ -1,6 +1,5 @@
 from sqlalchemy.orm import Session, joinedload
 from models import Product, ProductColor, ProductPrice, ProductPart
-from constants import PLATFORM_CURRENCY_MAP, PLATFORM_CODES
 
 class ProductService:
     def __init__(self, db: Session):
@@ -39,17 +38,23 @@ class ProductService:
         self.db.query(ProductPrice).filter(ProductPrice.color_id == color_id).delete()
 
         # 2. 写入新价格
+        from models import SalesPlatform
+        platforms = self.db.query(SalesPlatform).all()
+        platform_currency_map = {}
+        for p in platforms:
+            platform_currency_map[p.code] = p.currency
+            platform_currency_map[p.name] = p.currency
+
         for pf_key, price_val in prices_dict.items():
             if price_val and float(price_val) > 0:
-                currency = PLATFORM_CURRENCY_MAP.get(pf_key)
-                if currency:
-                    new_price = ProductPrice(
-                        color_id=color_id,
-                        platform=pf_key,
-                        currency=currency,
-                        price=float(price_val)
-                    )
-                    self.db.add(new_price)
+                currency = platform_currency_map.get(pf_key, "CNY")
+                new_price = ProductPrice(
+                    color_id=color_id,
+                    platform=pf_key,
+                    currency=currency,
+                    price=float(price_val)
+                )
+                self.db.add(new_price)
 
     def create_product(self, name, platform, colors_with_prices, parts_df=None):
         """创建新产品及其规格和部件"""
@@ -111,6 +116,12 @@ class ProductService:
         # 删除旧颜色前，如果没传入新图片，可以考虑保留原图片逻辑（此处简化为覆盖）
         self.db.query(ProductColor).filter(ProductColor.product_id == target_prod.id).delete()
         new_total_qty = 0
+        
+        # Fetch active platforms
+        from models import SalesPlatform
+        plats = self.db.query(SalesPlatform).all()
+        platform_codes = [p.code for p in plats]
+
         for index, row in color_matrix_data.iterrows():
             c_name = row.get("颜色名称")
             # ✨ 从传入的 map 中获取该颜色对应的图片
@@ -130,9 +141,9 @@ class ProductService:
                 
                 # 3. 提取并更新价格
                 row_prices = {}
-                for pf_key in PLATFORM_CODES.keys():
-                    if pf_key in row:
-                        row_prices[pf_key] = row[pf_key]
+                for pf_code in platform_codes:
+                    if pf_code in row:
+                        row_prices[pf_code] = row[pf_code]
                 
                 self._update_color_prices(new_color.id, row_prices)
 

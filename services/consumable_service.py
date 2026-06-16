@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from datetime import date
 from models import ConsumableItem, ConsumableLog, Product, CostItem, FinanceRecord, CompanyBalanceItem
-from constants import AssetPrefix, BalanceCategory, Currency, FinanceCategory
+from constants import AssetPrefix, BalanceCategory, Currency, FinanceCategory, to_cny
 
 class ConsumableService:
     def __init__(self, db: Session):
@@ -38,7 +38,7 @@ class ConsumableService:
         return self.db.query(Product).all()
 
     # ================= 2. 核心业务：库存变动 =================
-    def process_inventory_change(self, item_name, date_obj, delta_qty, exchange_rate, 
+    def process_inventory_change(self, item_name, date_obj, delta_qty, rates_map: dict,
                                  mode="normal",  # normal, sale, cost
                                  sale_info=None, # dict: content, source, amount, currency, remark
                                  cost_info=None, # dict: product_id, category, remark
@@ -60,9 +60,8 @@ class ConsumableService:
         item.remaining_qty += delta_qty
 
         # 2. 计算价值变动 (用于日志)
-        curr = getattr(item, "currency", "CNY")
-        rate = exchange_rate if curr == "JPY" else 1.0
-        val_change_cny = delta_qty * item.unit_price * rate
+        curr = getattr(item, "currency", "CNY") or "CNY"
+        val_change_cny = delta_qty * item.unit_price * (to_cny(1.0, curr, rates_map) if curr != "CNY" else 1.0)
 
         link_msg = ""
         log_note = base_remark

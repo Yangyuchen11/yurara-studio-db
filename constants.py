@@ -1,14 +1,38 @@
-from enum import Enum, unique
-
 # ==========================================
-# 1. 基础枚举 (Enums) - 用于类型判断和强约束
+# 1. 货币常量 - 已知货币字符串集合（不再使用 Enum，方便动态扩展）
 # ==========================================
 
-@unique
-class Currency(str, Enum):
-    """支持的货币类型"""
+class Currency:
+    """已知货币代码（字符串常量）。新增货币无需修改代码，直接在 UI/DB 中注册即可。"""
     CNY = "CNY"
     JPY = "JPY"
+    # 未来可在此记录更多常见代码方便引用，但系统逻辑不依赖此列表
+    KNOWN = {"CNY", "JPY"}
+
+    # CNY 始终为基准货币，不需要汇率
+    BASE = "CNY"
+
+
+def to_cny(amount: float, currency: str, rates_map: dict) -> float:
+    """
+    将任意货币金额折算为 CNY（人民币）。
+
+    Args:
+        amount:    原始金额（原币单位）
+        currency:  货币代码，如 "JPY" / "USD"
+        rates_map: 汇率字典，格式为 {货币代码: 每1单位该货币对应的CNY值}
+                   例如：{"JPY": 0.048, "USD": 7.25}
+                   CNY 本身无需出现在字典中（自动视为 1.0）
+
+    Returns:
+        折合 CNY 的金额
+    """
+    if not currency or currency == Currency.CNY:
+        return amount
+    rate = rates_map.get(currency, 0.0)
+    return amount * rate
+
+from enum import Enum, unique
 
 @unique
 class BalanceCategory(str, Enum):

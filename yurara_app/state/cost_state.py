@@ -9,7 +9,13 @@ from pydantic import BaseModel
 from typing import Any
 from ..state.app_state import AppState
 from services.cost_service import CostService
-from constants import PRODUCT_COST_CATEGORIES
+from constants import PRODUCT_COST_CATEGORIES, to_cny
+
+def format_curr_val(val: float, currency: str) -> str:
+    if currency == "JPY":
+        return f"{val:,.0f} JPY"
+    else:
+        return f"{val:,.2f} {currency}"
 
 
 class CostItemModel(BaseModel):
@@ -64,6 +70,7 @@ class CostState(AppState):
     b_qty: float = 1.0
     b_unit_text: str = ""
     b_remarks: str = ""
+    b_currency: str = "CNY"
     
     # 明细编辑状态
     is_edit_open: bool = False
@@ -103,7 +110,7 @@ class CostState(AppState):
 
     @rx.var
     def budget_total_val_str(self) -> str:
-        return f"¥ {self.budget_total_val:,.2f}"
+        return format_curr_val(self.budget_total_val, self.b_currency)
 
     @rx.var
     def total_real_cost(self) -> float:
@@ -112,11 +119,13 @@ class CostState(AppState):
 
     @rx.var
     def total_budget_cost(self) -> float:
-        """预算总成本。"""
-        budget_map = {
-            item.item_name: item.unit_price * item.quantity 
-            for item in self.cost_items if item.supplier == "预算设定"
-        }
+        """预算总成本 (折合 CNY)。"""
+        rates = dict(self.rates_map)
+        budget_map = {}
+        for item in self.cost_items:
+            if item.supplier == "预算设定":
+                equiv = to_cny(item.unit_price * item.quantity, item.currency, rates)
+                budget_map[item.item_name] = equiv
         total_b = sum(budget_map.values())
         for item in self.cost_items:
             if item.supplier != "预算设定" and item.item_name not in budget_map:
@@ -144,15 +153,15 @@ class CostState(AppState):
 
     # --- 字符串格式化方便渲染 ---
     @rx.var
-    def total_real_cost_str(self) -> str: return f"¥ {self.total_real_cost:,.2f}"
+    def total_real_cost_str(self) -> str: return f"{self.total_real_cost:,.2f} CNY"
     @rx.var
-    def total_budget_cost_str(self) -> str: return f"¥ {self.total_budget_cost:,.2f}"
+    def total_budget_cost_str(self) -> str: return f"{self.total_budget_cost:,.2f} CNY"
     @rx.var
-    def unit_real_cost_str(self) -> str: return f"¥ {self.unit_real_cost:,.2f}"
+    def unit_real_cost_str(self) -> str: return f"{self.unit_real_cost:,.2f} CNY"
     @rx.var
-    def unit_budget_cost_str(self) -> str: return f"¥ {self.unit_budget_cost:,.2f}"
+    def unit_budget_cost_str(self) -> str: return f"{self.unit_budget_cost:,.2f} CNY"
     @rx.var
-    def remaining_wip_str(self) -> str: return f"¥ {self.remaining_wip:,.2f}"
+    def remaining_wip_str(self) -> str: return f"{self.remaining_wip:,.2f} CNY"
     @rx.var
     def make_qty_str(self) -> str: return f"{int(self.make_qty)} 件"
 
@@ -194,11 +203,11 @@ class CostState(AppState):
                 "is_budget": is_budget_item,
                 # 预先格式化为字符串
                 "budget_qty_str": f"{budget_qty:.2f}" if budget_qty else "-",
-                "budget_price_str": f"¥ {budget_unit_price:,.2f}" if budget_unit_price else "-",
-                "budget_total_str": f"¥ {budget_total:,.2f}" if budget_total else "-",
+                "budget_price_str": format_curr_val(budget_unit_price, item.currency) if budget_unit_price else "-",
+                "budget_total_str": format_curr_val(budget_total, item.currency) if budget_total else "-",
                 "actual_qty_str": f"{actual_qty:.2f}" if actual_qty else "-",
-                "actual_price_str": f"¥ {actual_unit_price:,.2f}" if actual_unit_price else "-",
-                "actual_total_str": f"{item.currency} {actual_total:,.2f}" if actual_total else "-",
+                "actual_price_str": format_curr_val(actual_unit_price, item.currency) if actual_unit_price else "-",
+                "actual_total_str": format_curr_val(actual_total, item.currency) if actual_total else "-",
             })
         return grouped
 
@@ -206,6 +215,7 @@ class CostState(AppState):
     def category_subtotals(self) -> dict[str, dict[str, Any]]:
         """计算各科目的实际和预算小计，并在后端格式化。"""
         subtotals = {}
+        rates = dict(self.rates_map)
         for cat in PRODUCT_COST_CATEGORIES:
             # 兼容检品发货等人工费搜索
             cat_items = [
@@ -214,10 +224,11 @@ class CostState(AppState):
             ]
             real_total = sum(i.actual_cost for i in cat_items)
             
-            budget_map = {
-                i.item_name: i.unit_price * i.quantity 
-                for i in cat_items if i.supplier == "预算设定"
-            }
+            budget_map = {}
+            for i in cat_items:
+                if i.supplier == "预算设定":
+                    equiv = to_cny(i.unit_price * i.quantity, i.currency, rates)
+                    budget_map[i.item_name] = equiv
             budget_total = sum(budget_map.values())
             for i in cat_items:
                 if i.supplier != "预算设定" and i.item_name not in budget_map:
@@ -227,10 +238,10 @@ class CostState(AppState):
             budget_unit = budget_total / self.make_qty if self.make_qty > 0 else 0.0
             
             subtotals[cat] = {
-                "real_str": f"¥ {real_total:,.2f}",
-                "budget_str": f"¥ {budget_total:,.2f}",
-                "real_unit_str": f"¥ {real_unit:,.2f}",
-                "budget_unit_str": f"¥ {budget_unit:,.2f}"
+                "real_str": f"{real_total:,.2f} CNY",
+                "budget_str": f"{budget_total:,.2f} CNY",
+                "real_unit_str": f"{real_unit:,.2f} CNY",
+                "budget_unit_str": f"{budget_unit:,.2f} CNY"
             }
         return subtotals
 
@@ -248,60 +259,52 @@ class CostState(AppState):
             if not prod:
                 return []
 
-            platforms_config = [
-                ("weidian", "微店 (CNY)", False), 
-                ("offline_cn", "中国线下 (CNY)", False),
-                ("other", "其他 (CNY)", False), 
-                ("booth", "Booth (JPY)", True),
-                ("instagram", "Instagram (JPY)", True), 
-                ("offline_jp", "日本线下 (JPY)", True),
-                ("other_jpy", "其他 (JPY)", True),
-            ]
+            from models import SalesPlatform
+            plats = db.query(SalesPlatform).order_by(SalesPlatform.id.asc()).all()
 
             results = []
             unit_real = self.unit_real_cost
-            rate = self.exchange_rate
+            
+            from constants import to_cny
 
             for color in prod.colors:
-                for pf_key, label, is_jpy in platforms_config:
+                for p in plats:
                     # 获取该款式该平台的定价
                     price_val = 0.0
                     if color.prices:
-                        for p in color.prices:
-                            if p.platform == pf_key:
-                                price_val = p.price
+                        for pr in color.prices:
+                            if pr.platform == p.code:
+                                price_val = pr.price
                                 break
                     
                     if price_val > 0:
-                        fee_val = 0.0
-                        if pf_key == "weidian":
-                            fee_val = price_val * 0.006 
-                        elif pf_key == "booth":
-                            fee_val = math.ceil(price_val * 0.056 + 22) 
+                        fee_val = price_val * p.fee_rate + p.fee_fixed
                             
-                        price_cny = price_val * rate if is_jpy else price_val
-                        fee_cny = fee_val * rate if is_jpy else fee_val
+                        price_cny = to_cny(price_val, p.currency, self.rates_map)
+                        fee_cny = to_cny(fee_val, p.currency, self.rates_map)
                         
                         margin = price_cny - fee_cny - unit_real
                         margin_rate = (margin / price_cny * 100) if price_cny > 0 else 0.0
                         total_profit = margin * color.quantity
 
+                        label = f"{p.name} ({p.currency})"
+
                         results.append(ProfitReferenceRow(
                             color_name=color.color_name,
                             platform_label=label,
                             preset_price=price_val,
-                            price_currency="JPY" if is_jpy else "CNY",
+                            price_currency=p.currency,
                             price_cny=price_cny,
                             estimated_fee_cny=fee_cny,
                             margin_cny=margin,
                             margin_rate=margin_rate,
                             expected_total_profit=total_profit,
                             quantity=color.quantity,
-                            preset_price_str=f"{price_val:,.0f} JPY" if is_jpy else f"¥ {price_val:,.2f}",
-                            estimated_fee_cny_str=f"¥ {fee_cny:,.2f}",
-                            margin_cny_str=f"¥ {margin:,.2f}",
+                            preset_price_str=f"{price_val:,.2f} {p.currency}",
+                            estimated_fee_cny_str=f"{fee_cny:,.2f} CNY",
+                            margin_cny_str=f"{margin:,.2f} CNY",
                             margin_rate_str=f"{margin_rate:.1f}%",
-                            expected_total_profit_str=f"¥ {total_profit:,.2f}"
+                            expected_total_profit_str=f"{total_profit:,.2f} CNY"
                         ))
             return results
         except Exception:
@@ -395,6 +398,8 @@ class CostState(AppState):
     def set_b_unit_text(self, val: str): self.b_unit_text = val
     @rx.event
     def set_b_remarks(self, val: str): self.b_remarks = val
+    @rx.event
+    def set_b_currency(self, val: str): self.b_currency = val
 
     @rx.event
     def add_budget_item(self):
@@ -420,7 +425,8 @@ class CostState(AppState):
                 unit_price=price,
                 quantity=qty,
                 unit=self.b_unit_text if self.is_detailed_b_cat else "",
-                remarks=self.b_remarks.strip()
+                remarks=self.b_remarks.strip(),
+                currency=self.b_currency
             )
             
             # 重置表单

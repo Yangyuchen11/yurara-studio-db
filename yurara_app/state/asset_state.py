@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from ..state.app_state import AppState
 from services.asset_service import AssetService
 
+from constants import to_cny
+
 class AssetItem(BaseModel):
     id: int = 0
     name: str = ""
@@ -17,7 +19,7 @@ class AssetItem(BaseModel):
     remaining_qty: float = 0.0
     total_price: float = 0.0
     remaining_cny: float = 0.0
-    remaining_jpy: float = 0.0
+    remaining_original: float = 0.0
     shop_name: str = ""
     url: str = ""
     remarks: str = ""
@@ -58,15 +60,11 @@ class AssetState(AppState):
 
     @rx.var
     def val_total_str(self) -> str:
-        return f"¥ {self.val_total:,.2f}"
+        return f"{self.val_total:,.2f} CNY"
 
     @rx.var
     def val_remain_str(self) -> str:
-        return f"¥ {self.val_remain:,.2f}"
-
-    @rx.var
-    def val_jpy_raw_str(self) -> str:
-        return f"¥ {self.val_jpy_raw:,.0f}"
+        return f"{self.val_remain:,.2f} CNY"
 
     @rx.var
     def has_assets(self) -> bool:
@@ -100,8 +98,8 @@ class AssetState(AppState):
                 remain_origin = a.unit_price * a.remaining_qty
                 total_origin = a.unit_price * a.quantity
                 
-                show_cny = remain_origin if curr != "JPY" else 0.0
-                show_jpy = remain_origin if curr == "JPY" else 0.0
+                show_cny = to_cny(remain_origin, curr, self.rates_map)
+                show_original = remain_origin
 
                 formatted_assets.append(AssetItem(
                     id=a.id,
@@ -112,7 +110,7 @@ class AssetState(AppState):
                     remaining_qty=round(float(a.remaining_qty), 2),
                     total_price=round(float(total_origin), 2),
                     remaining_cny=round(float(show_cny), 2),
-                    remaining_jpy=round(float(show_jpy), 2),
+                    remaining_original=round(float(show_original), 2),
                     shop_name=a.shop_name or "",
                     url=getattr(a, 'url', '') or "",
                     remarks=a.remarks or ""
@@ -121,7 +119,7 @@ class AssetState(AppState):
 
             # 2. 计算大项指标
             if raw_assets:
-                v_total, v_remain, v_jpy_raw = AssetService.calculate_asset_totals(raw_assets, self.exchange_rate)
+                v_total, v_remain, v_jpy_raw = AssetService.calculate_asset_totals(raw_assets, self.rates_map)
                 self.val_total = round(float(v_total), 2)
                 self.val_remain = round(float(v_remain), 2)
                 self.val_jpy_raw = round(float(v_jpy_raw), 2)

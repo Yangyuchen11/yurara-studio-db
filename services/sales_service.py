@@ -125,15 +125,22 @@ class SalesService:
 
     # ==================== 共享榜单方法 ====================
     @staticmethod
-    def get_product_leaderboard(df, exchange_rate=0.048):
+    def get_product_leaderboard(df, rates_map=None):
         if df.empty: return pd.DataFrame()
+        if rates_map is None:
+            rates_map = {"JPY": 0.048}
+
+        from constants import to_cny
+        df = df.copy()
+        df['equiv_cny'] = df.apply(lambda r: to_cny(float(r['amount']), str(r['currency']), rates_map), axis=1)
+
         df_prod_summary = df.groupby('product').apply(
             lambda x: pd.Series({
+                '折合CNY总额': x['equiv_cny'].sum(),
                 'CNY总额': x[x['currency'] == 'CNY']['amount'].sum(),
                 'JPY总额': x[x['currency'] == 'JPY']['amount'].sum()
             }),
             include_groups=False  
         ).reset_index()
-        df_prod_summary['折合CNY总额'] = df_prod_summary['CNY总额'] + (df_prod_summary['JPY总额'] * exchange_rate)
         df_prod_summary = df_prod_summary.sort_values(by='折合CNY总额', ascending=False)
         return df_prod_summary[['product', '折合CNY总额', 'CNY总额', 'JPY总额']]

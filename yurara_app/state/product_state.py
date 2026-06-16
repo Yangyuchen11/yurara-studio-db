@@ -10,13 +10,13 @@ import base64
 import reflex as rx
 from pydantic import BaseModel
 from ..state.app_state import AppState
-from constants import PLATFORM_CODES
-
-PLATFORMS = list(PLATFORM_CODES.keys())
-PLATFORM_OPTIONS = [{"key": k, "label": v} for k, v in PLATFORM_CODES.items()]
-PLATFORM_LAUNCH_OPTIONS = ["微店", "Booth", "Instagram", "日本线下", "中国线下", "其他"]
-
 # ===================== Pydantic 强类型声明 =====================
+
+class PlatformPrice(BaseModel):
+    platform_code: str = ""
+    platform_name: str = ""
+    price: float = 0.0
+    currency: str = "CNY"
 
 class ColorRow(BaseModel):
     key: str = ""
@@ -24,13 +24,8 @@ class ColorRow(BaseModel):
     quantity: int = 0
     image_data: str = ""
     parts_summary: str = ""
-    price_weidian: float = 0.0
-    price_booth: float = 0.0
-    price_offline_cn: float = 0.0
-    price_offline_jp: float = 0.0
-    price_instagram: float = 0.0
-    price_other: float = 0.0
-    price_other_jpy: float = 0.0
+    prices: list[PlatformPrice] = []
+    aligned_price_strs: list[str] = []
 
 class PartRow(BaseModel):
     key: str = ""
@@ -49,8 +44,7 @@ class ProductItem(BaseModel):
 
 # ---- 空行模板 ----
 def _new_color_row(idx: int) -> ColorRow:
-    prices = {f"price_{k}": 0.0 for k in PLATFORMS}
-    return ColorRow(key=f"row_{idx}", name="", quantity=0, image_data="", **prices)
+    return ColorRow(key=f"row_{idx}", name="", quantity=0, image_data="", prices=[], aligned_price_strs=[])
 
 def _new_part_row(idx: int) -> PartRow:
     return PartRow(key=f"part_{idx}", part_name="", quantity=1)
@@ -87,15 +81,19 @@ class ProductState(AppState):
     upload_target_mode: str = ""
     upload_target_color_name: str = ""
 
+    # === 销售平台列表与追加选择 ===
+    all_platforms: list[dict[str, str]] = []  # 各项包含 code, name, currency
+    selected_platforms_to_add: dict[str, str] = {}
+
     # ===================== 计算属性 =====================
 
     @rx.var
     def platform_launch_options(self) -> list[str]:
-        return PLATFORM_LAUNCH_OPTIONS
+        return [p["name"] for p in self.all_platforms]
 
     @rx.var
     def platform_keys(self) -> list[str]:
-        return PLATFORMS
+        return [p["code"] for p in self.all_platforms]
 
     @rx.var
     def has_products(self) -> bool:
@@ -118,6 +116,12 @@ class ProductState(AppState):
         db = self.get_db()
         try:
             from services.product_service import ProductService
+            from models import SalesPlatform
+            
+            # Query all platforms
+            plats = db.query(SalesPlatform).order_by(SalesPlatform.id.asc()).all()
+            self.all_platforms = [{"code": p.code, "name": p.name, "currency": p.currency} for p in plats]
+
             service = ProductService(db)
             prods = service.get_all_products()
             result = []
@@ -127,19 +131,26 @@ class ProductState(AppState):
                 color_names = []
                 for c in p.colors:
                     color_names.append(c.color_name)
-                    prices = {
-                        "price_weidian": 0.0,
-                        "price_booth": 0.0,
-                        "price_offline_cn": 0.0,
-                        "price_offline_jp": 0.0,
-                        "price_instagram": 0.0,
-                        "price_other": 0.0,
-                        "price_other_jpy": 0.0,
-                    }
-                    for pr in c.prices:
-                        field_key = f"price_{pr.platform}"
-                        if field_key in prices:
-                            prices[field_key] = round(float(pr.price), 2)
+                    
+                    plat_prices = []
+                    aligned_price_strs = []
+                    c_prices_lookup = {pr.platform: pr.price for pr in c.prices}
+                    
+                    for pl in self.all_platforms:
+                        p_code = pl["code"]
+                        p_price = c_prices_lookup.get(p_code, 0.0)
+                        plat_prices.append(
+                            PlatformPrice(
+                                platform_code=p_code,
+                                platform_name=pl["name"],
+                                price=p_price,
+                                currency=pl["currency"]
+                            )
+                        )
+                        if p_price > 0:
+                            aligned_price_strs.append(f"{p_price:.2f} {pl['currency']}")
+                        else:
+                            aligned_price_strs.append("-")
                     
                     parts_summary_list = []
                     for pt in c.parts:
@@ -153,7 +164,8 @@ class ProductState(AppState):
                             quantity=c.quantity,
                             image_data=getattr(c, "image_data", "") or "",
                             parts_summary=parts_summary,
-                            **prices
+                            prices=plat_prices,
+                            aligned_price_strs=aligned_price_strs
                         )
                     )
 
@@ -184,9 +196,25 @@ class ProductState(AppState):
     def init_create_form(self):
         self.create_name = ""
         self.create_platform = "微店"
-        self.create_color_rows = [_new_color_row(0)]
-        self.create_part_rows = [_new_part_row(0)]
         self.create_error = ""
+        
+        # Load platforms
+        db = self.get_db()
+        try:
+            from models import SalesPlatform
+            plats = db.query(SalesPlatform).order_by(SalesPlatform.id.asc()).all()
+            self.all_platforms = [{"code": p.code, "name": p.name, "currency": p.currency} for p in plats]
+        finally:
+            db.close()
+            
+        initial_prices = [
+            PlatformPrice(platform_code=p["code"], platform_name=p["name"], price=0.0, currency=p["currency"])
+            for p in self.all_platforms
+        ]
+        
+        self.create_color_rows = [ColorRow(key="row_0", name="", quantity=0, image_data="", prices=initial_prices)]
+        self.create_part_rows = [_new_part_row(0)]
+        self.selected_platforms_to_add = {}
         self.active_tab = "create"
 
     @rx.event
@@ -199,7 +227,13 @@ class ProductState(AppState):
 
     @rx.event
     def add_create_color_row(self):
-        self.create_color_rows.append(_new_color_row(len(self.create_color_rows)))
+        initial_prices = [
+            PlatformPrice(platform_code=p["code"], platform_name=p["name"], price=0.0, currency=p["currency"])
+            for p in self.all_platforms
+        ]
+        self.create_color_rows.append(
+            ColorRow(key=f"row_{len(self.create_color_rows)}", name="", quantity=0, image_data="", prices=initial_prices)
+        )
 
     @rx.event
     def remove_create_color_row(self, key: str):
@@ -216,11 +250,6 @@ class ProductState(AppState):
                         row.quantity = int(value)
                     except ValueError:
                         row.quantity = 0
-                elif field.startswith("price_"):
-                    try:
-                        setattr(row, field, float(value))
-                    except ValueError:
-                        setattr(row, field, 0.0)
                 break
         self.create_color_rows = list(self.create_color_rows)
 
@@ -331,7 +360,7 @@ class ProductState(AppState):
 
             colors_with_prices = []
             for row in valid_colors:
-                prices = {k: getattr(row, f"price_{k}", 0.0) for k in PLATFORMS}
+                prices = {p.platform_code: p.price for p in row.prices}
                 colors_with_prices.append({
                     "name": row.name.strip(),
                     "qty": row.quantity,
@@ -378,6 +407,12 @@ class ProductState(AppState):
         db = self.get_db()
         try:
             from services.product_service import ProductService
+            from models import SalesPlatform
+            
+            # Query all platforms
+            plats = db.query(SalesPlatform).order_by(SalesPlatform.id.asc()).all()
+            self.all_platforms = [{"code": p.code, "name": p.name, "currency": p.currency} for p in plats]
+
             service = ProductService(db)
             p = service.get_product_by_id(product_id)
             if not p:
@@ -389,17 +424,33 @@ class ProductState(AppState):
 
             color_rows = []
             for i, c in enumerate(p.colors):
-                prices = {f"price_{k}": 0.0 for k in PLATFORMS}
-                for pr in c.prices:
-                    if pr.platform in PLATFORMS:
-                        prices[f"price_{pr.platform}"] = round(float(pr.price), 2)
+                c_prices_lookup = {pr.platform: pr.price for pr in c.prices}
+                
+                plat_prices = []
+                aligned_price_strs = []
+                for pl in self.all_platforms:
+                    p_code = pl["code"]
+                    p_price = c_prices_lookup.get(p_code, 0.0)
+                    plat_prices.append(
+                        PlatformPrice(
+                            platform_code=p_code,
+                            platform_name=pl["name"],
+                            price=p_price,
+                            currency=pl["currency"]
+                        )
+                    )
+                    if p_price > 0:
+                        aligned_price_strs.append(f"{p_price:.2f} {pl['currency']}")
+                    else:
+                        aligned_price_strs.append("-")
                 
                 row = ColorRow(
                     key=f"edit_row_{i}",
                     name=c.color_name,
                     quantity=c.quantity,
                     image_data=getattr(c, "image_data", "") or "",
-                    **prices
+                    prices=plat_prices,
+                    aligned_price_strs=aligned_price_strs
                 )
                 color_rows.append(row)
             self.edit_color_rows = color_rows
@@ -428,6 +479,7 @@ class ProductState(AppState):
             if not part_rows:
                 part_rows = [PartRow(key="edit_part_0", part_name="", quantity=1, target_colors=[])]
             self.edit_part_rows = part_rows
+            self.selected_platforms_to_add = {}
             self.edit_error = ""
             self.active_tab = "edit"
         finally:
@@ -443,7 +495,13 @@ class ProductState(AppState):
 
     @rx.event
     def add_edit_color_row(self):
-        self.edit_color_rows.append(_new_color_row(len(self.edit_color_rows)))
+        initial_prices = [
+            PlatformPrice(platform_code=p["code"], platform_name=p["name"], price=0.0, currency=p["currency"])
+            for p in self.all_platforms
+        ]
+        self.edit_color_rows.append(
+            ColorRow(key=f"edit_row_{len(self.edit_color_rows)}", name="", quantity=0, image_data="", prices=initial_prices)
+        )
 
     @rx.event
     def remove_edit_color_row(self, key: str):
@@ -460,11 +518,103 @@ class ProductState(AppState):
                         row.quantity = int(value)
                     except ValueError:
                         row.quantity = 0
-                elif field.startswith("price_"):
-                    try:
-                        setattr(row, field, float(value))
-                    except ValueError:
-                        setattr(row, field, 0.0)
+                break
+        self.edit_color_rows = list(self.edit_color_rows)
+
+    # === 价格项 CRUD 事件处理器 ===
+    @rx.event
+    def update_create_color_price(self, row_key: str, platform_code: str, val: str):
+        for r in self.create_color_rows:
+            if r.key == row_key:
+                for p in r.prices:
+                    if p.platform_code == platform_code:
+                        try:
+                            p.price = float(val) if val else 0.0
+                        except ValueError:
+                            p.price = 0.0
+                        break
+        self.create_color_rows = list(self.create_color_rows)
+
+    @rx.event
+    def update_edit_color_price(self, row_key: str, platform_code: str, val: str):
+        for r in self.edit_color_rows:
+            if r.key == row_key:
+                for p in r.prices:
+                    if p.platform_code == platform_code:
+                        try:
+                            p.price = float(val) if val else 0.0
+                        except ValueError:
+                            p.price = 0.0
+                        break
+        self.edit_color_rows = list(self.edit_color_rows)
+
+    @rx.event
+    def set_selected_platform_to_add(self, row_key: str, platform_code: str):
+        self.selected_platforms_to_add[row_key] = platform_code
+
+    @rx.event
+    def add_create_color_price(self, row_key: str):
+        platform_code = self.selected_platforms_to_add.get(row_key, "")
+        if not platform_code:
+            if self.all_platforms:
+                platform_code = self.all_platforms[0]["code"]
+            else:
+                return
+        plat = next((p for p in self.all_platforms if p["code"] == platform_code), None)
+        if not plat:
+            return
+        for r in self.create_color_rows:
+            if r.key == row_key:
+                if not any(p.platform_code == platform_code for p in r.prices):
+                    r.prices.append(
+                        PlatformPrice(
+                            platform_code=plat["code"],
+                            platform_name=plat["name"],
+                            price=0.0,
+                            currency=plat["currency"]
+                        )
+                    )
+                break
+        self.create_color_rows = list(self.create_color_rows)
+
+    @rx.event
+    def remove_create_color_price(self, row_key: str, platform_code: str):
+        for r in self.create_color_rows:
+            if r.key == row_key:
+                r.prices = [p for p in r.prices if p.platform_code != platform_code]
+                break
+        self.create_color_rows = list(self.create_color_rows)
+
+    @rx.event
+    def add_edit_color_price(self, row_key: str):
+        platform_code = self.selected_platforms_to_add.get(row_key, "")
+        if not platform_code:
+            if self.all_platforms:
+                platform_code = self.all_platforms[0]["code"]
+            else:
+                return
+        plat = next((p for p in self.all_platforms if p["code"] == platform_code), None)
+        if not plat:
+            return
+        for r in self.edit_color_rows:
+            if r.key == row_key:
+                if not any(p.platform_code == platform_code for p in r.prices):
+                    r.prices.append(
+                        PlatformPrice(
+                            platform_code=plat["code"],
+                            platform_name=plat["name"],
+                            price=0.0,
+                            currency=plat["currency"]
+                        )
+                    )
+                break
+        self.edit_color_rows = list(self.edit_color_rows)
+
+    @rx.event
+    def remove_edit_color_price(self, row_key: str, platform_code: str):
+        for r in self.edit_color_rows:
+            if r.key == row_key:
+                r.prices = [p for p in r.prices if p.platform_code != platform_code]
                 break
         self.edit_color_rows = list(self.edit_color_rows)
 
@@ -529,8 +679,8 @@ class ProductState(AppState):
             color_rows_data = []
             for row in valid_colors:
                 r = {"颜色名称": row.name.strip(), "库存/预计数量": row.quantity}
-                for pf_key in PLATFORMS:
-                    r[pf_key] = getattr(row, f"price_{pf_key}", 0.0)
+                for p in row.prices:
+                    r[p.platform_code] = p.price
                 color_rows_data.append(r)
             color_df = pd.DataFrame(color_rows_data)
 

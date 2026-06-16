@@ -41,10 +41,11 @@ class CostService:
         return offset_item.amount if offset_item else 0.0
 
     # ================= 2. 预算管理 =================
-    def add_budget_item(self, product_id, category, name, unit_price, quantity, unit, remarks):
+    def add_budget_item(self, product_id, category, name, unit_price, quantity, unit, remarks, currency="CNY"):
         new_cost = CostItem(
             product_id=product_id, item_name=name, actual_cost=0, supplier="预算设定", 
-            category=category, unit_price=unit_price, quantity=quantity, unit=unit, remarks=remarks
+            category=category, unit_price=unit_price, quantity=quantity, unit=unit, remarks=remarks,
+            currency=currency
         )
         self.db.add(new_cost)
         self.db.commit()

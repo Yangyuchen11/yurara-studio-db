@@ -5,7 +5,7 @@ from datetime import date
 from models import (
     SalesOrder, SalesOrderItem, OrderRefund,
     Product, InventoryLog, CompanyBalanceItem,
-    CostItem, FinanceRecord, Warehouse
+    CostItem, FinanceRecord, Warehouse, SalesPlatform
 )
 import math
 import pandas as pd
@@ -785,37 +785,62 @@ class SalesOrderService:
                     
                 platform = safe_str(row['销售平台'])
                 currency = safe_str(row['币种'])
-                platform_lower = platform.lower()
                 fee = 0.0
                 shipping_and_other = 0.0
                 
-                if "booth" in platform_lower:
-                    preset_item_total = 0.0
-                    for item in deposit_order.items:
-                        target_p = self.db.query(Product).filter(Product.name == item.product_name).first()
-                        if target_p:
-                            target_c = next((c for c in target_p.colors if c.color_name == item.variant), None)
-                            if target_c:
-                                target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
-                                preset_item_total += target_price * item.quantity
-                    if preset_item_total > 0:
-                        shipping_and_other = max(0.0, gross_price - preset_item_total)
-                    base_fixed_fee = 45 if currency == "JPY" else 2.16
-                    fee = math.ceil(gross_price * 0.056) + base_fixed_fee
-                    
-                elif "微店" in platform_lower:
-                    fee = gross_price * 0.006
-                    
+                db_plat = self.db.query(SalesPlatform).filter(
+                    (SalesPlatform.name == platform) | (SalesPlatform.code == platform.lower())
+                ).first()
+                
+                if db_plat:
+                    if db_plat.code == "booth":
+                        preset_item_total = 0.0
+                        for item in deposit_order.items:
+                            target_p = self.db.query(Product).filter(Product.name == item.product_name).first()
+                            if target_p:
+                                target_c = next((c for c in target_p.colors if c.color_name == item.variant), None)
+                                if target_c:
+                                    target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
+                                    preset_item_total += target_price * item.quantity
+                        if preset_item_total > 0:
+                            shipping_and_other = max(0.0, gross_price - preset_item_total)
+                            
+                    fee = math.ceil(gross_price * db_plat.fee_rate) + db_plat.fee_fixed
+                else:
+                    platform_lower = platform.lower()
+                    if "booth" in platform_lower:
+                        preset_item_total = 0.0
+                        for item in deposit_order.items:
+                            target_p = self.db.query(Product).filter(Product.name == item.product_name).first()
+                            if target_p:
+                                target_c = next((c for c in target_p.colors if c.color_name == item.variant), None)
+                                if target_c:
+                                    target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
+                                    preset_item_total += target_price * item.quantity
+                        if preset_item_total > 0:
+                            shipping_and_other = max(0.0, gross_price - preset_item_total)
+                        base_fixed_fee = 45 if currency == "JPY" else 2.16
+                        fee = math.ceil(gross_price * 0.056) + base_fixed_fee
+                    elif "微店" in platform_lower:
+                        fee = gross_price * 0.006
+
                 net_price = gross_price - fee - shipping_and_other
                 
                 if net_price <= 0:
                     errors.append(f"订单号 {order_no}: 扣除手续费后的净金额({net_price:.2f}) 小于等于 0")
                     continue
                 
-                if "微店" in platform_lower: target_acc = "流动资金-微店账户"
-                elif "booth" in platform_lower: target_acc = "流动资金-booth账户"
-                elif currency == "JPY": target_acc = "流动资金-日元临时账户"
-                else: target_acc = "流动资金-支付宝账户"
+                if db_plat:
+                    if db_plat.code == "weidian": target_acc = "流动资金-微店账户"
+                    elif db_plat.code == "booth": target_acc = "流动资金-booth账户"
+                    else:
+                        if db_plat.currency == "JPY": target_acc = "流动资金-日元临时账户"
+                        else: target_acc = f"流动资金-{db_plat.currency}账户"
+                else:
+                    if "微店" in platform.lower(): target_acc = "流动资金-微店账户"
+                    elif "booth" in platform.lower(): target_acc = "流动资金-booth账户"
+                    elif currency == "JPY": target_acc = "流动资金-日元临时账户"
+                    else: target_acc = "流动资金-支付宝账户"
                 
                 fake_items = [{"product_name": i.product_name, "variant": i.variant, "quantity": i.quantity, "warehouse_id": i.warehouse_id} for i in deposit_order.items]
 
@@ -922,28 +947,46 @@ class SalesOrderService:
                     
             if has_item_error: continue
 
-            platform_lower = platform.lower()
+            db_plat = self.db.query(SalesPlatform).filter(
+                (SalesPlatform.name == platform) | (SalesPlatform.code == platform.lower())
+            ).first()
+
             fee = 0.0
             shipping_and_other = 0.0
             
-            if "booth" in platform_lower:
-                preset_item_total = 0.0
-                for item in items_data:
-                    target_p = self.db.query(Product).filter(Product.name == item["product_name"]).first()
-                    if target_p:
-                        target_c = next((c for c in target_p.colors if c.color_name == item["variant"]), None)
-                        if target_c:
-                            target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
-                            preset_item_total += target_price * item["quantity"]
+            if db_plat:
+                if db_plat.code == "booth":
+                    preset_item_total = 0.0
+                    for item in items_data:
+                        target_p = self.db.query(Product).filter(Product.name == item["product_name"]).first()
+                        if target_p:
+                            target_c = next((c for c in target_p.colors if c.color_name == item["variant"]), None)
+                            if target_c:
+                                target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
+                                preset_item_total += target_price * item["quantity"]
+                    
+                    if preset_item_total > 0:
+                        shipping_and_other = max(0.0, gross_price - preset_item_total)
                 
-                if preset_item_total > 0:
-                    shipping_and_other = max(0.0, gross_price - preset_item_total)
-                
-                base_fixed_fee = 45 if currency == "JPY" else 2.16
-                fee = math.ceil(gross_price * 0.056) + base_fixed_fee
-                
-            elif "微店" in platform_lower:
-                fee = gross_price * 0.006
+                fee = math.ceil(gross_price * db_plat.fee_rate) + db_plat.fee_fixed
+            else:
+                if "booth" in platform_lower:
+                    preset_item_total = 0.0
+                    for item in items_data:
+                        target_p = self.db.query(Product).filter(Product.name == item["product_name"]).first()
+                        if target_p:
+                            target_c = next((c for c in target_p.colors if c.color_name == item["variant"]), None)
+                            if target_c:
+                                target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
+                                preset_item_total += target_price * item["quantity"]
+                    
+                    if preset_item_total > 0:
+                        shipping_and_other = max(0.0, gross_price - preset_item_total)
+                    
+                    base_fixed_fee = 45 if currency == "JPY" else 2.16
+                    fee = math.ceil(gross_price * 0.056) + base_fixed_fee
+                elif "微店" in platform_lower:
+                    fee = gross_price * 0.006
                 
             net_price = gross_price - fee - shipping_and_other
             
@@ -956,10 +999,17 @@ class SalesOrderService:
                 item["unit_price"] = final_unit_price
                 item["subtotal"] = item["quantity"] * final_unit_price
                 
-            if "微店" in platform_lower: target_acc = "流动资金-微店账户"
-            elif "booth" in platform_lower: target_acc = "流动资金-booth账户"
-            elif currency == "JPY": target_acc = "流动资金-日元临时账户"
-            else: target_acc = "流动资金-支付宝账户"
+            if db_plat:
+                if db_plat.code == "weidian": target_acc = "流动资金-微店账户"
+                elif db_plat.code == "booth": target_acc = "流动资金-booth账户"
+                else:
+                    if db_plat.currency == "JPY": target_acc = "流动资金-日元临时账户"
+                    else: target_acc = f"流动资金-{db_plat.currency}账户"
+            else:
+                if "微店" in platform_lower: target_acc = "流动资金-微店账户"
+                elif "booth" in platform_lower: target_acc = "流动资金-booth账户"
+                elif currency == "JPY": target_acc = "流动资金-日元临时账户"
+                else: target_acc = "流动资金-支付宝账户"
 
             parsed_orders.append({
                 "order_no": order_no, "platform": platform, "currency": currency,

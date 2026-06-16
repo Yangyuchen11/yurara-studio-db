@@ -575,8 +575,10 @@ def template_config_tab() -> rx.Component:
                 rx.select.root(
                     rx.select.trigger(),
                     rx.select.content(
-                        rx.select.item("CNY", value="CNY"),
-                        rx.select.item("JPY", value="JPY")
+                        rx.foreach(
+                            OfflineSalesState.all_currencies,
+                            lambda curr: rx.select.item(curr, value=curr)
+                        )
                     ),
                     value=OfflineSalesState.tpl_currency,
                     on_change=OfflineSalesState.set_tpl_currency,

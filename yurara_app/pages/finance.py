@@ -74,8 +74,10 @@ def common_single_form() -> rx.Component:
                 rx.select.root(
                     rx.select.trigger(),
                     rx.select.content(
-                        rx.select.item("CNY", value="CNY"),
-                        rx.select.item("JPY", value="JPY")
+                        rx.foreach(
+                            FinanceState.all_currencies,
+                            lambda curr: rx.select.item(curr, value=curr)
+                        )
                     ),
                     value=FinanceState.f_currency,
                     on_change=FinanceState.set_f_currency,
@@ -358,8 +360,10 @@ def batch_expense_form() -> rx.Component:
                 rx.select.root(
                     rx.select.trigger(),
                     rx.select.content(
-                        rx.select.item("CNY", value="CNY"),
-                        rx.select.item("JPY", value="JPY")
+                        rx.foreach(
+                            FinanceState.all_currencies,
+                            lambda curr: rx.select.item(curr, value=curr)
+                        )
                     ),
                     value=FinanceState.f_currency,
                     on_change=FinanceState.set_f_currency,
@@ -401,8 +405,10 @@ def exchange_form() -> rx.Component:
                 rx.select.root(
                     rx.select.trigger(),
                     rx.select.content(
-                        rx.select.item("CNY", value="CNY"),
-                        rx.select.item("JPY", value="JPY")
+                        rx.foreach(
+                            FinanceState.all_currencies,
+                            lambda curr: rx.select.item(curr, value=curr)
+                        )
                     ),
                     value=FinanceState.ex_source_curr,
                     on_change=FinanceState.set_ex_source_curr,
@@ -429,7 +435,18 @@ def exchange_form() -> rx.Component:
         rx.grid(
             custom_form_field(
                 "入账侧目标币种",
-                rx.input(value=FinanceState.ex_target_curr, disabled=True, size="2", width="100%")
+                rx.select.root(
+                    rx.select.trigger(),
+                    rx.select.content(
+                        rx.foreach(
+                            FinanceState.all_currencies,
+                            lambda curr: rx.select.item(curr, value=curr)
+                        )
+                    ),
+                    value=FinanceState.ex_target_curr,
+                    on_change=FinanceState.set_ex_target_curr,
+                    size="2", width="100%"
+                )
             ),
             custom_form_field(
                 "入账现金账户",
@@ -528,8 +545,10 @@ def debt_form() -> rx.Component:
                     custom_form_field("币种", rx.select.root(
                         rx.select.trigger(),
                         rx.select.content(
-                            rx.select.item("CNY", value="CNY"),
-                            rx.select.item("JPY", value="JPY")
+                            rx.foreach(
+                                FinanceState.all_currencies,
+                                lambda curr: rx.select.item(curr, value=curr)
+                            )
                         ),
                         value=FinanceState.debt_curr, on_change=FinanceState.set_debt_curr, size="2"
                     )),
@@ -1046,10 +1065,23 @@ def finance_page() -> rx.Component:
             
             # 2. 四大核心当前账户总现金余额指标
             rx.grid(
-                stat_indicator_card("CNY 现金当前余额", FinanceState.cur_cny_str, "CNY", "green", "circle_dollar_sign"),
-                stat_indicator_card("JPY 现金当前余额", FinanceState.cur_jpy_str, "JPY", "blue", "circle_dollar_sign"),
-                stat_indicator_card("JPY 现金折合 CNY", FinanceState.jpy_to_cny_str, "CNY", "purple", "refresh_cw"),
-                stat_indicator_card("流动现金总计 (CNY)", FinanceState.total_balance_str, "CNY", "orange", "trending_up"),
+                rx.foreach(
+                    FinanceState.dynamic_cash_indicators,
+                    lambda ind: stat_indicator_card(
+                        ind.currency + " 现金当前余额",
+                        ind.amount_str,
+                        ind.cny_equiv_str,
+                        ind.color,
+                        "circle_dollar_sign"
+                    )
+                ),
+                stat_indicator_card(
+                    "流动现金总计 (CNY)",
+                    FinanceState.total_cash_cny_str,
+                    "CNY",
+                    "orange",
+                    "trending_up"
+                ),
                 columns="4",
                 spacing="3",
                 width="100%"

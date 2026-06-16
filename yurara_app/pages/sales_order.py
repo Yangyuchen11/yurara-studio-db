@@ -118,8 +118,10 @@ def build_manual_order_form() -> rx.Component:
                 rx.select.root(
                     rx.select.trigger(),
                     rx.select.content(
-                        rx.select.item("CNY", value="CNY"),
-                        rx.select.item("JPY", value="JPY")
+                        rx.foreach(
+                            SalesOrderState.all_currencies,
+                            lambda curr: rx.select.item(curr, value=curr)
+                        )
                     ),
                     value=SalesOrderState.currency_input,
                     on_change=SalesOrderState.set_currency_input,

@@ -7,7 +7,7 @@ from models import (
     FinanceRecord, Product, CostItem, ConsumableItem,
     FixedAsset, ConsumableLog, CompanyBalanceItem
 )
-from constants import AssetPrefix, BalanceCategory, Currency, FinanceCategory
+from constants import AssetPrefix, BalanceCategory, Currency, FinanceCategory, to_cny
 
 class FinanceService:
     """
@@ -327,7 +327,7 @@ class FinanceService:
         db.commit()
 
     @staticmethod
-    def create_general_transaction(db, base_data, link_config, exchange_rate):
+    def create_general_transaction(db, base_data, link_config, rates_map: dict):
         """✨ 核心优化：支持非现金流转逻辑"""
         is_income = (base_data['type'] == "收入")
         signed_amount = base_data['amount'] if is_income else -base_data['amount']
@@ -394,10 +394,10 @@ class FinanceService:
             unit_price_cny = link_config['unit_price']
             final_remark = base_data['desc']
             
-            if base_data['currency'] == Currency.JPY:
-                cost_in_cny = base_data['amount'] * exchange_rate
+            if base_data['currency'] != Currency.CNY:
+                cost_in_cny = to_cny(base_data['amount'], base_data['currency'], rates_map)
                 unit_price_cny = cost_in_cny / link_config['qty'] if link_config['qty'] > 0 else 0
-                final_remark = f"{base_data['desc']} (原币支付: {base_data['amount']:.0f} JPY)".strip()
+                final_remark = f"{base_data['desc']} (原币支付: {base_data['amount']:.2f} {base_data['currency']})".strip()
 
             detailed_cat = link_config.get('cat') if link_config.get('cat') else base_data['category']
 
@@ -467,7 +467,7 @@ class FinanceService:
             link_msg += " + 固定资产"
 
         elif l_type == 'consumable':
-            rate = exchange_rate if base_data['currency'] == "JPY" else 1.0
+            rate = to_cny(1.0, base_data['currency'], rates_map)
             val_cny = base_data['amount'] * rate
             
             target_item = db.query(ConsumableItem).filter(ConsumableItem.name == link_config['name']).first()
@@ -505,7 +505,7 @@ class FinanceService:
         return link_msg
 
     @staticmethod
-    def create_batch_expense_transaction(db, base_data, batch_config, items_data, exchange_rate):
+    def create_batch_expense_transaction(db, base_data, batch_config, items_data, rates_map: dict):
         """
         处理批量录入：将一个同来源、同账户的订单拆分为多条资产/成本项记录，
         并支持记录统一的邮费。
@@ -546,7 +546,7 @@ class FinanceService:
             
             # 遍历并写入所有细项
             for item in items_data:
-                rate = exchange_rate if base_data['currency'] == "JPY" else 1.0
+                rate = to_cny(1.0, base_data['currency'], rates_map)
                 val_cny = item['amount'] * rate
                 unit_price_cny = val_cny / item['qty'] if item['qty'] else 0
                 
@@ -613,7 +613,7 @@ class FinanceService:
                 db.flush()
                 target_cash.amount -= shipping_fee
                 
-                rate = exchange_rate if base_data['currency'] == "JPY" else 1.0
+                rate = to_cny(1.0, base_data['currency'], rates_map)
                 ship_cny = shipping_fee * rate
                 
                 new_cost = CostItem(
