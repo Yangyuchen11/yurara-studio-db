@@ -95,8 +95,8 @@ def render_warehouse_stock_row(r) -> rx.Component:
 
 def render_warehouse_card(w) -> rx.Component:
     """按仓库卡片展现。"""
-    # 动态字典取值，在前端获取其库存数组，防空保护
-    stock_rows = InventoryState.warehouse_stocks.get(w.id.to_string(), rx.Var.create([]))
+    # 使用过滤后的库存数组（已根据商品筛选过）
+    stock_rows = InventoryState.filtered_warehouse_stocks.get(w.id.to_string(), rx.Var.create([]))
     
     return rx.card(
         rx.vstack(
@@ -126,10 +126,17 @@ def render_warehouse_card(w) -> rx.Component:
             rx.text(w.remarks, size="1", color=rx.color("slate", 9)),
             rx.divider(),
             
-            # 库存表格
+            # 库存表格（基于过滤后的 stock_rows 判断空置）
             rx.cond(
-                w.is_empty,
-                rx.text("该仓库当前空置，没有存储任何物料散件或商品大货。", size="1", color=rx.color("slate", 9)),
+                stock_rows.length() == 0,
+                rx.text(
+                    rx.cond(
+                        w.is_empty,
+                        "该仓库当前空置，没有存储任何物料散件或商品大货。",
+                        "该商品在此仓库暂无库存。"
+                    ),
+                    size="1", color=rx.color("slate", 9)
+                ),
                 rx.table.root(
                     rx.table.header(
                         rx.table.row(
@@ -662,7 +669,39 @@ def inventory_page() -> rx.Component:
                         ),
                         
                         rx.divider(),
-                        rx.heading("🏬 各实体网点散落实存清单明细 (成套木桶还原折算)", size="4", weight="bold"),
+                        rx.hstack(
+                            rx.heading("🏬 各实体网点散落实存清单明细 (成套木桶还原折算)", size="4", weight="bold"),
+                            rx.spacer(),
+                            # 商品筛选器
+                            rx.hstack(
+                                rx.icon("filter", size=14, color=rx.color("violet", 9)),
+                                rx.text("商品筛选:", size="2", weight="medium", color=rx.color("slate", 11)),
+                                rx.select(
+                                    InventoryState.wh_product_options,
+                                    value=InventoryState.wh_filter_display,
+                                    on_change=InventoryState.set_wh_filter_product,
+                                    size="2",
+                                    width="160px",
+                                    color_scheme="violet"
+                                ),
+                                rx.cond(
+                                    InventoryState.wh_filter_product != "",
+                                    rx.button(
+                                        rx.icon("x", size=12),
+                                        "清除筛选条件",
+                                        size="1",
+                                        variant="soft",
+                                        color_scheme="gray",
+                                        on_click=InventoryState.set_wh_filter_product("全部商品")
+                                    ),
+                                    rx.fragment()
+                                ),
+                                spacing="2",
+                                align="center"
+                            ),
+                            align="center",
+                            width="100%"
+                        ),
                         
                         # 各物理仓库的卡片清单
                         rx.cond(

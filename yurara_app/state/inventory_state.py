@@ -70,6 +70,10 @@ class InventoryState(AppState):
     # 仓库列表和仓库库存明细
     warehouses: list[WarehouseItemModel] = []
     warehouse_stocks: dict[str, list[WarehouseStockRow]] = {}  # key 是 str(warehouse_id)
+    filtered_warehouse_stocks: dict[str, list[WarehouseStockRow]] = {}  # 过滤后的库存明细
+    
+    # 物理仓库明细商品筛选
+    wh_filter_product: str = ""  # 空字符串 = 显示全部商品
     
     # 变动录入状态
     op_date: str = ""
@@ -194,6 +198,16 @@ class InventoryState(AppState):
     def wip_balance_str(self) -> str:
         return f"¥ {self.wip_balance:,.2f}"
 
+    @rx.var
+    def wh_product_options(self) -> list[str]:
+        """物理仓库明细商品筛选选项（含"全部商品"）。"""
+        return ["全部商品"] + self.product_names
+
+    @rx.var
+    def wh_filter_display(self) -> str:
+        """当前筛选显示名（用于 select 控件的 value）。"""
+        return self.wh_filter_product if self.wh_filter_product else "全部商品"
+
     # ===================== 事件处理器 =====================
 
     @rx.event
@@ -286,6 +300,7 @@ class InventoryState(AppState):
             
         self.warehouses = wh_list
         self.warehouse_stocks = stocks_dict
+        self._apply_wh_filter()
 
     def load_current_inventory(self, service: InventoryService):
         """拉取指定商品的在制资产、款式生产进度表、操作日志。"""
@@ -359,6 +374,22 @@ class InventoryState(AppState):
             self.op_wh_id = str(self.warehouses[0].id)
             self.op_to_wh_name = self.warehouse_options[0]
             self.op_to_wh_id = str(self.warehouses[0].id)
+
+    def _apply_wh_filter(self):
+        """根据 wh_filter_product 对 warehouse_stocks 进行过滤，结果写入 filtered_warehouse_stocks。"""
+        if not self.wh_filter_product or self.wh_filter_product == "全部商品":
+            self.filtered_warehouse_stocks = dict(self.warehouse_stocks)
+        else:
+            filtered = {}
+            for wh_id, rows in self.warehouse_stocks.items():
+                filtered[wh_id] = [r for r in rows if r.product_name == self.wh_filter_product]
+            self.filtered_warehouse_stocks = filtered
+
+    @rx.event
+    def set_wh_filter_product(self, val: str):
+        """切换物理仓库明细的商品筛选。"""
+        self.wh_filter_product = val if val != "全部商品" else ""
+        self._apply_wh_filter()
 
     # --- 录入事件相关 Setter ---
     @rx.event
