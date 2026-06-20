@@ -15,32 +15,33 @@ class InventoryService:
         prod = self.db.query(Product).filter(Product.id == product_id).first()
         if not prod: return
         
-        # 1. 计算在成本中消耗的数量 (仅限成套消耗)
-        consumed_qty = 0
-        logs = self.db.query(InventoryLog).filter(
-            InventoryLog.product_name == prod.name,
-            InventoryLog.reason == StockLogReason.OUT_STOCK,
-            InventoryLog.part_name == None
-        ).all()
-        for l in logs:
-            if l.note and "消耗" in l.note:
-                consumed_qty += abs(l.change_amount)
-                
-        # 2. 动态计算预计可销售数量
+        # 1. 完整库存快照（含所有物理变动，用于大货资产 & 在制核算）
         stats = self.get_stock_overview_by_parts(prod.id, prod.name)
+        actual_assemblable = sum(s.get("actual", 0) for s in stats.values())
+        produced_sets = sum(s.get("produced", 0) for s in stats.values())
+
+        # 2. 消耗专用快照：OUT_STOCK 仅纳入标记"消耗"的记录，排除售出
+        #    利用木桶原理让模拟自然计算出消耗后实际能组装的套数，
+        #    彻底避免手工比例折算带来的误差（散件多件配一套等复杂情况均正确处理）
+        stats_cons = self.get_stock_overview_by_parts(prod.id, prod.name, consumption_only=True)
+        assemblable_after_consumption = sum(s.get("actual", 0) for s in stats_cons.values())
+
+        # 3. 计算 marketable_quantity（成本摊销分母）
+        #    = 生产出来的套数里，去掉消耗后剩余可销售的部分
+        #    售出不影响此分母（已售套数仍承担其成本份额）
         if prod.is_production_completed:
-            base_qty = sum(s.get("produced", 0) for s in stats.values())
+            # 已结单：消耗后可组装套数即为可销售分母
+            prod.marketable_quantity = max(0, assemblable_after_consumption)
         else:
-            base_qty = prod.total_quantity
-            
-        prod.marketable_quantity = max(0, base_qty - consumed_qty)
-        
-        # 3. 重新计算单价
+            # WIP：当前消耗后在库可组装 + 尚未入库的计划产量
+            not_yet_produced = max(0, prod.total_quantity - produced_sets)
+            prod.marketable_quantity = max(0, assemblable_after_consumption + not_yet_produced)
+
         total_cost = self.db.query(func.sum(CostItem.actual_cost)).filter(CostItem.product_id == prod.id).scalar() or 0.0
         unit_cost = total_cost / prod.marketable_quantity if prod.marketable_quantity > 0 else 0.0
         
         # 4. 实时更新大货资产 (实库存 * 最新单价)
-        actual_stock = sum(s.get("actual", 0) for s in stats.values())
+        actual_stock = actual_assemblable  # 复用步骤 1 已计算的实际可组装套数
         asset_name = f"{AssetPrefix.STOCK}{prod.name}"
         asset_val = actual_stock * unit_cost
         
@@ -76,8 +77,7 @@ class InventoryService:
         if prod.is_production_completed:
             wip_offset_val = -total_cost
         else:
-            produced_qty = sum(s.get("produced", 0) for s in stats.values())
-            wip_offset_val = -(produced_qty * unit_cost)
+            wip_offset_val = -(produced_sets * unit_cost)
             
         offset_name = f"{AssetPrefix.WIP_OFFSET}{prod.name}"
         
@@ -187,7 +187,12 @@ class InventoryService:
         return wh_dict
 
     # ================= 4. 部件维度的整体库存计算 =================
-    def get_stock_overview_by_parts(self, product_id, product_name):
+    def get_stock_overview_by_parts(self, product_id, product_name, consumption_only: bool = False):
+        """
+        按款式计算各部件维度的库存快照。
+        consumption_only=True 时，OUT_STOCK 仅计入 note 含"消耗"的记录，
+        排除售出和其他出库，用于正确计算 marketable_quantity。
+        """
         product = self.db.query(Product).filter(Product.id == product_id).first()
         logs = self.db.query(InventoryLog).filter(InventoryLog.product_name == product_name).all()
 
@@ -219,7 +224,10 @@ class InventoryService:
                         part_actual[p] += d
                         part_produced[p] += d 
                     elif l.reason == StockLogReason.OUT_STOCK:
-                        part_actual[p] += d   
+                        # consumption_only 模式下，跳过非消耗出库（售出、其他）
+                        if consumption_only and not (l.note and "消耗" in l.note):
+                            continue
+                        part_actual[p] += d
                     elif l.reason in [StockLogReason.OTHER_IN, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.TRANSFER]:
                         part_actual[p] += d
                         if l.reason == StockLogReason.IN_STOCK:
