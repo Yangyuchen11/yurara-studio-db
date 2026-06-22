@@ -210,6 +210,32 @@ def asset_list_table() -> rx.Component:
         ~AssetState.has_assets,
         empty_state("暂无固定资产数据。请在【财务流水账】中录入‘固定资产购入’。"),
         rx.vstack(
+            # ─── 搜索工具栏 ───
+            rx.hstack(
+                rx.input(
+                    rx.input.slot(rx.icon("search", size=14)),
+                    placeholder="搜索项目名称、店铺、备注、币种…",
+                    value=AssetState.asset_search_query,
+                    on_change=AssetState.set_asset_search_query,
+                    size="2",
+                    width="280px",
+                ),
+                rx.cond(
+                    AssetState.asset_search_query != "",
+                    rx.button(
+                        rx.icon("x", size=13),
+                        "清除",
+                        on_click=AssetState.set_asset_search_query(""),
+                        variant="soft",
+                        color_scheme="gray",
+                        size="2",
+                    ),
+                    rx.fragment()
+                ),
+                spacing="2",
+                align="center",
+                width="100%",
+            ),
             rx.scroll_area(
                 rx.table.root(
                     rx.table.header(
@@ -229,7 +255,7 @@ def asset_list_table() -> rx.Component:
                         )
                     ),
                     rx.table.body(
-                        rx.foreach(AssetState.assets, render_asset_row)
+                        rx.foreach(AssetState.filtered_assets, render_asset_row)
                     ),
                     size="1",
                     width="100%"

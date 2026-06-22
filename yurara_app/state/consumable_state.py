@@ -55,6 +55,11 @@ class ConsumableState(AppState):
     
     is_loading: bool = False
     
+    # 搜索与筛选状态
+    search_query: str = ""
+    filter_currency: str = "all"
+    filter_category: str = "all"
+    
     # 下拉基础选项
     active_item_names: list[str] = []
     cash_accounts: list[DropdownOption] = []
@@ -112,6 +117,46 @@ class ConsumableState(AppState):
     @rx.var
     def has_items(self) -> bool:
         return len(self.items) > 0
+
+    @rx.var
+    def filtered_items(self) -> list[ConsumableItem]:
+        """根据搜索词、币种和分类筛选耗材列表"""
+        result = self.items
+        # 文本搜索：匹配项目名、分类、店铺、备注
+        if self.search_query.strip():
+            q = self.search_query.strip().lower()
+            result = [
+                i for i in result
+                if q in i.name.lower()
+                or q in i.category.lower()
+                or q in i.shop_name.lower()
+                or q in i.remarks.lower()
+            ]
+        # 币种筛选
+        if self.filter_currency != "all":
+            result = [i for i in result if i.currency == self.filter_currency]
+        # 分类筛选
+        if self.filter_category != "all":
+            result = [i for i in result if i.category == self.filter_category]
+        return result
+
+    @rx.var
+    def available_currencies(self) -> list[str]:
+        """从当前 items 中提取不重复的币种列表"""
+        seen = []
+        for i in self.items:
+            if i.currency not in seen:
+                seen.append(i.currency)
+        return seen
+
+    @rx.var
+    def available_categories(self) -> list[str]:
+        """从当前 items 中提取不重复的分类列表"""
+        seen = []
+        for i in self.items:
+            if i.category and i.category not in seen:
+                seen.append(i.category)
+        return seen
 
     @rx.var
     def is_outbound(self) -> bool:
@@ -192,7 +237,7 @@ class ConsumableState(AppState):
                 if curr == "JPY":
                     amt_str = f"{val:,.0f} JPY"
                 elif curr == "CNY":
-                    amt_str = f"¥ {val:,.2f}"
+                    amt_str = f"CNY {val:,.2f}"
                 else:
                     amt_str = f"{val:,.2f} {curr}"
                 
@@ -488,3 +533,18 @@ class ConsumableState(AppState):
 
     @rx.event
     def set_edit_remarks(self, val: str): self.edit_remarks = val
+
+    @rx.event
+    def set_search_query(self, val: str): self.search_query = val
+
+    @rx.event
+    def set_filter_currency(self, val: str): self.filter_currency = val
+
+    @rx.event
+    def set_filter_category(self, val: str): self.filter_category = val
+
+    @rx.event
+    def reset_filters(self):
+        self.search_query = ""
+        self.filter_currency = "all"
+        self.filter_category = "all"

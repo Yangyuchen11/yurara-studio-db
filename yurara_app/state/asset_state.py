@@ -56,6 +56,9 @@ class AssetState(AppState):
     write_off_qty: float = 1.0     # 用户输入的核销数量
     write_off_reason: str = ""    # 核销原因
 
+    # 搜索状态
+    asset_search_query: str = ""
+
     # ===================== 计算属性 =====================
 
     @rx.var
@@ -69,6 +72,20 @@ class AssetState(AppState):
     @rx.var
     def has_assets(self) -> bool:
         return len(self.assets) > 0
+
+    @rx.var
+    def filtered_assets(self) -> list[AssetItem]:
+        """根据搜索词过滤资产清单（匹配名称、店铺、备注、币种）"""
+        if not self.asset_search_query.strip():
+            return self.assets
+        q = self.asset_search_query.strip().lower()
+        return [
+            a for a in self.assets
+            if q in a.name.lower()
+            or q in a.shop_name.lower()
+            or q in a.remarks.lower()
+            or q in a.currency.lower()
+        ]
 
     @rx.var
     def active_assets_options(self) -> list[dict[str, str]]:
@@ -252,3 +269,6 @@ class AssetState(AppState):
 
     @rx.event
     def set_write_off_reason(self, val: str): self.write_off_reason = val
+
+    @rx.event
+    def set_asset_search_query(self, val: str): self.asset_search_query = val

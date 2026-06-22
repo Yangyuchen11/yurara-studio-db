@@ -22,7 +22,7 @@ def operation_panel() -> rx.Component:
                 custom_form_field(
                     "📦 选择项目",
                     rx.select.root(
-                        rx.select.trigger(),
+                        rx.select.trigger(width="100%"),
                         rx.select.content(
                             rx.foreach(
                                 ConsumableState.active_item_names,
@@ -31,7 +31,9 @@ def operation_panel() -> rx.Component:
                         ),
                         value=ConsumableState.op_item_name,
                         on_change=ConsumableState.on_change_item_name,
-                        size="2"
+                        size="2",
+                        width="100%",
+                        max_width="220px",
                     )
                 ),
                 custom_form_field(
@@ -282,17 +284,45 @@ def edit_consumable_dialog() -> rx.Component:
     )
 
 
+# 耗材清单各列固定宽度配置
+_COL_WIDTHS = {
+    "name":     "160px",
+    "category": "100px",
+    "currency": "60px",
+    "unit_price": "90px",
+    "remain_qty": "80px",
+    "remain_cny": "110px",
+    "remain_orig": "120px",
+    "shop":     "110px",
+    "link":     "70px",
+    "remarks":  "140px",
+    "action":   "50px",
+}
+
+
 def render_consumable_row(i: ConsumableItem) -> rx.Component:
     """渲染表格单行"""
     return rx.table.row(
-        rx.table.cell(rx.text(i.name, size="1", weight="bold")),
-        rx.table.cell(rx.badge(i.category, variant="outline", size="1")),
-        rx.table.cell(rx.text(i.currency, size="1")),
-        rx.table.cell(rx.text(i.unit_price.to_string(), size="1")),
-        rx.table.cell(rx.badge(i.remaining_qty.to_string(), color_scheme=rx.cond(i.remaining_qty > 0.01, "green", "gray"), size="1")),
-        rx.table.cell(rx.text(rx.cond(i.remaining_cny > 0.001, i.remaining_cny.to_string(), "-"), size="1")),
-        rx.table.cell(rx.text(rx.cond(i.remaining_original > 0.001, i.remaining_original.to_string() + " " + i.currency, "-"), size="1")),
-        rx.table.cell(rx.text(i.shop_name, size="1")),
+        rx.table.cell(
+            rx.tooltip(
+                rx.text(i.name, size="1", weight="bold", overflow="hidden", text_overflow="ellipsis", white_space="nowrap"),
+                content=i.name,
+            ),
+            min_width=_COL_WIDTHS["name"], max_width=_COL_WIDTHS["name"]
+        ),
+        rx.table.cell(rx.badge(i.category, variant="outline", size="1"), min_width=_COL_WIDTHS["category"], max_width=_COL_WIDTHS["category"]),
+        rx.table.cell(rx.text(i.currency, size="1"), min_width=_COL_WIDTHS["currency"], max_width=_COL_WIDTHS["currency"]),
+        rx.table.cell(rx.text(i.unit_price.to_string(), size="1"), min_width=_COL_WIDTHS["unit_price"], max_width=_COL_WIDTHS["unit_price"]),
+        rx.table.cell(rx.badge(i.remaining_qty.to_string(), color_scheme=rx.cond(i.remaining_qty > 0.01, "green", "gray"), size="1"), min_width=_COL_WIDTHS["remain_qty"], max_width=_COL_WIDTHS["remain_qty"]),
+        rx.table.cell(rx.text(rx.cond(i.remaining_cny > 0.001, i.remaining_cny.to_string(), "-"), size="1"), min_width=_COL_WIDTHS["remain_cny"], max_width=_COL_WIDTHS["remain_cny"]),
+        rx.table.cell(rx.text(rx.cond(i.remaining_original > 0.001, i.remaining_original.to_string() + " " + i.currency, "-"), size="1"), min_width=_COL_WIDTHS["remain_orig"], max_width=_COL_WIDTHS["remain_orig"]),
+        rx.table.cell(
+            rx.tooltip(
+                rx.text(i.shop_name, size="1", overflow="hidden", text_overflow="ellipsis", white_space="nowrap"),
+                content=i.shop_name,
+            ),
+            min_width=_COL_WIDTHS["shop"], max_width=_COL_WIDTHS["shop"]
+        ),
         rx.table.cell(
             rx.cond(
                 i.url != "",
@@ -302,16 +332,24 @@ def render_consumable_row(i: ConsumableItem) -> rx.Component:
                     is_external=True
                 ),
                 rx.text("-", size="1", color=rx.color("slate", 7))
-            )
+            ),
+            min_width=_COL_WIDTHS["link"], max_width=_COL_WIDTHS["link"]
         ),
-        rx.table.cell(rx.text(i.remarks, size="1", line_clamp=1)),
+        rx.table.cell(
+            rx.tooltip(
+                rx.text(i.remarks, size="1", line_clamp=1, overflow="hidden", text_overflow="ellipsis", white_space="nowrap"),
+                content=i.remarks,
+            ),
+            min_width=_COL_WIDTHS["remarks"], max_width=_COL_WIDTHS["remarks"]
+        ),
         rx.table.cell(
             rx.icon_button(
                 rx.icon("pencil", size=11),
                 on_click=lambda: ConsumableState.open_edit_dialog(i),
                 size="1",
                 variant="ghost"
-            )
+            ),
+            min_width=_COL_WIDTHS["action"], max_width=_COL_WIDTHS["action"]
         )
     )
 
@@ -322,25 +360,76 @@ def consumable_list_table() -> rx.Component:
         ~ConsumableState.has_items,
         empty_state("当前无有效在库库存资产。"),
         rx.vstack(
+            # ─── 搜索与筛选工具栏 ───
+            rx.hstack(
+                rx.input(
+                    rx.input.slot(rx.icon("search", size=14)),
+                    placeholder="搜索项目名称、店铺、备注…",
+                    value=ConsumableState.search_query,
+                    on_change=ConsumableState.set_search_query,
+                    size="2",
+                    width="260px",
+                ),
+                rx.select.root(
+                    rx.select.trigger(placeholder="筛选币种"),
+                    rx.select.content(
+                        rx.select.item("全部币种", value="all"),
+                        rx.foreach(
+                            ConsumableState.available_currencies,
+                            lambda c: rx.select.item(c, value=c)
+                        )
+                    ),
+                    value=ConsumableState.filter_currency,
+                    on_change=ConsumableState.set_filter_currency,
+                    size="2",
+                    width="130px",
+                ),
+                rx.select.root(
+                    rx.select.trigger(placeholder="筛选分类"),
+                    rx.select.content(
+                        rx.select.item("全部分类", value="all"),
+                        rx.foreach(
+                            ConsumableState.available_categories,
+                            lambda cat: rx.select.item(cat, value=cat)
+                        )
+                    ),
+                    value=ConsumableState.filter_category,
+                    on_change=ConsumableState.set_filter_category,
+                    size="2",
+                    width="130px",
+                ),
+                rx.button(
+                    rx.icon("x", size=13),
+                    "重置",
+                    on_click=ConsumableState.reset_filters,
+                    variant="soft",
+                    color_scheme="gray",
+                    size="2",
+                ),
+                spacing="2",
+                align="center",
+                flex_wrap="wrap",
+                width="100%",
+            ),
             rx.scroll_area(
                 rx.table.root(
                     rx.table.header(
                         rx.table.row(
-                            rx.table.column_header_cell("项目", size="1"),
-                            rx.table.column_header_cell("分类", size="1"),
-                            rx.table.column_header_cell("币种", size="1"),
-                            rx.table.column_header_cell("单价(原币)", size="1"),
-                            rx.table.column_header_cell("剩余数量", size="1"),
-                            rx.table.column_header_cell("剩余价值(CNY)", size="1"),
-                            rx.table.column_header_cell("剩余价值(原币)", size="1"),
-                            rx.table.column_header_cell("店铺", size="1"),
-                            rx.table.column_header_cell("相关链接", size="1"),
-                            rx.table.column_header_cell("备注", size="1"),
-                            rx.table.column_header_cell("操作", size="1"),
+                            rx.table.column_header_cell("项目",          size="1", min_width=_COL_WIDTHS["name"],      max_width=_COL_WIDTHS["name"]),
+                            rx.table.column_header_cell("分类",          size="1", min_width=_COL_WIDTHS["category"],  max_width=_COL_WIDTHS["category"]),
+                            rx.table.column_header_cell("币种",          size="1", min_width=_COL_WIDTHS["currency"],  max_width=_COL_WIDTHS["currency"]),
+                            rx.table.column_header_cell("单价(原币)",    size="1", min_width=_COL_WIDTHS["unit_price"],max_width=_COL_WIDTHS["unit_price"]),
+                            rx.table.column_header_cell("剩余数量",      size="1", min_width=_COL_WIDTHS["remain_qty"],max_width=_COL_WIDTHS["remain_qty"]),
+                            rx.table.column_header_cell("剩余价值(CNY)", size="1", min_width=_COL_WIDTHS["remain_cny"],max_width=_COL_WIDTHS["remain_cny"]),
+                            rx.table.column_header_cell("剩余价值(原币)",size="1", min_width=_COL_WIDTHS["remain_orig"],max_width=_COL_WIDTHS["remain_orig"]),
+                            rx.table.column_header_cell("店铺",          size="1", min_width=_COL_WIDTHS["shop"],      max_width=_COL_WIDTHS["shop"]),
+                            rx.table.column_header_cell("相关链接",      size="1", min_width=_COL_WIDTHS["link"],      max_width=_COL_WIDTHS["link"]),
+                            rx.table.column_header_cell("备注",          size="1", min_width=_COL_WIDTHS["remarks"],   max_width=_COL_WIDTHS["remarks"]),
+                            rx.table.column_header_cell("操作",          size="1", min_width=_COL_WIDTHS["action"],    max_width=_COL_WIDTHS["action"]),
                         )
                     ),
                     rx.table.body(
-                        rx.foreach(ConsumableState.items, render_consumable_row)
+                        rx.foreach(ConsumableState.filtered_items, render_consumable_row)
                     ),
                     size="1",
                     width="100%"
