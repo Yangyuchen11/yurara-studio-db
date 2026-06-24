@@ -7,6 +7,7 @@ from datetime import date
 import reflex as rx
 from pydantic import BaseModel
 from ..state.app_state import AppState
+import re
 from constants import PRODUCT_COST_CATEGORIES, Currency, to_cny
 
 class FinanceRecordItem(BaseModel):
@@ -41,6 +42,7 @@ class DebtOption(BaseModel):
     label: str = ""
     amount: float = 0.0
     currency: str = ""
+    source_type: str = ""  # "商品成本待付款" / "其他待付款" / "" (普通债务)
 
 class AssetOption(BaseModel):
     id: str = ""
@@ -151,6 +153,13 @@ class FinanceState(AppState):
     is_selected_delete_budget_related: bool = False
     delete_include_budget: bool = False
     
+    # === 选中的预算详情展示 ===
+    selected_budget_item_name: str = ""
+    selected_budget_qty: float = 0.0
+    selected_budget_unit_price: float = 0.0
+    selected_budget_total: float = 0.0
+    selected_budget_actual_cost: float = 0.0
+
     # === 下拉菜单缓存资源 ===
     cash_accounts: list[CashAccountOption] = []
     unsettled_debts: list[DebtOption] = []
@@ -195,6 +204,29 @@ class FinanceState(AppState):
     def batch_items_subtotal_str(self) -> str: return f"{self.batch_items_subtotal:,.2f}"
     @rx.var
     def batch_total_with_shipping_str(self) -> str: return f"{self.batch_total_with_shipping:,.2f}"
+
+    @rx.var
+    def is_pending_cost_mode(self) -> bool:
+        """true 当当前模式为商品成本待付款输入表单"""
+        return self.rec_type == "支出" and self.f_category == "商品成本待付款"
+
+    @rx.var
+    def is_pending_other_mode(self) -> bool:
+        """true 当当前模式为其他待付款输入表单"""
+        return self.rec_type == "支出" and self.f_category == "其他待付款"
+
+    @rx.var
+    def is_batch_expense_mode(self) -> bool:
+        """true 当当前模式为批量购入支出输入表单"""
+        return self.rec_type == "支出" and self.f_category in {"商品成本", "固定资产购入", "其他资产购入"}
+
+    @rx.var
+    def selected_debt_source_type(self) -> str:
+        """\u8fd4回当前选中的债务的来源类型"""
+        for d in self.unsettled_debts:
+            if d.id == self.debt_selected_id:
+                return d.source_type
+        return ""
 
     # ===================== 事件处理器 =====================
 
@@ -333,7 +365,9 @@ class FinanceState(AppState):
     @rx.event
     def set_batch_asset_cat(self, val: str): self.batch_asset_cat = val
     @rx.event
-    def set_batch_selected_budget_id(self, val: str): self.batch_selected_budget_id = val
+    def set_batch_selected_budget_id(self, val: str):
+        self.batch_selected_budget_id = val
+        self.load_selected_budget_details()
     @rx.event
     def set_batch_shipping_fee(self, val: float): self.batch_shipping_fee = val
 
@@ -391,7 +425,7 @@ class FinanceState(AppState):
                     self.edit_type = "收入" if r.amount > 0 else "支出"
                     self.edit_amount = abs(r.amount)
                     self.edit_category = r.category
-                    self.edit_desc = r.description or ""
+                    self.edit_desc = re.sub(r'\s*\[cost_item:\d+\]', '', r.description or "")
                     self.edit_url = r.url or ""
                     self.edit_acc_id = str(r.account_id) if r.account_id else ""
             finally:
@@ -502,7 +536,7 @@ class FinanceState(AppState):
                         type=row["收支"],
                         amount=round(float(row["金额"]), 2),
                         category=row["分类"],
-                        desc=row["备注"],
+                        desc=re.sub(r'\s*\[cost_item:\d+\]', '', row["备注"] or ""),
                         url=row["网址"],
                         cny_bal=round(float(row["当前CNY余额"]), 2),
                         jpy_bal=round(float(row["当前JPY余额"]), 2)
@@ -574,7 +608,17 @@ class FinanceState(AppState):
             # B. 负债
             liab_list = FinanceService.get_balance_items(db, "liability")
             self.unsettled_debts = [
-                DebtOption(id=str(l.id), label=f"{l.name} (待还余额: {l.amount:,.2f})", amount=float(l.amount), currency=l.currency)
+                DebtOption(
+                    id=str(l.id),
+                    label=f"{l.name} (待还余额: {l.amount:,.2f})",
+                    amount=float(l.amount),
+                    currency=l.currency,
+                    source_type=(
+                        "商品成本待付款" if l.name.startswith("商品成本待付款:")
+                        else "其他待付款" if l.name.startswith("其他待付款:")
+                        else ""
+                    )
+                )
                 for l in liab_list
             ]
             
@@ -642,6 +686,39 @@ class FinanceState(AppState):
                 for b in budgets
             ]
             self.batch_selected_budget_id = ""
+            self.load_selected_budget_details()
+        finally:
+            db.close()
+
+    def load_selected_budget_details(self):
+        """加载当前选中预算项的详细属性数据"""
+        if not self.batch_selected_budget_id:
+            self.selected_budget_item_name = ""
+            self.selected_budget_qty = 0.0
+            self.selected_budget_unit_price = 0.0
+            self.selected_budget_total = 0.0
+            self.selected_budget_actual_cost = 0.0
+            return
+
+        db = self.get_db()
+        try:
+            from models import CostItem
+            b_id = int(self.batch_selected_budget_id)
+            item = db.query(CostItem).filter(CostItem.id == b_id).first()
+            if item:
+                self.selected_budget_item_name = item.item_name or ""
+                self.selected_budget_qty = float(item.quantity or 0.0)
+                self.selected_budget_unit_price = float(item.unit_price or 0.0)
+                self.selected_budget_total = self.selected_budget_qty * self.selected_budget_unit_price
+                self.selected_budget_actual_cost = float(item.actual_cost or 0.0)
+            else:
+                self.selected_budget_item_name = ""
+                self.selected_budget_qty = 0.0
+                self.selected_budget_unit_price = 0.0
+                self.selected_budget_total = 0.0
+                self.selected_budget_actual_cost = 0.0
+        except Exception as e:
+            print(f"Error loading budget details: {e}")
         finally:
             db.close()
 
@@ -729,7 +806,8 @@ class FinanceState(AppState):
                             debt_id=sel_debt_id,
                             amount=self.debt_repay_amount,
                             remark=self.debt_repay_remark.strip(),
-                            source_acc_id=src_acc
+                            source_acc_id=src_acc,
+                            rates_map=dict(self.rates_map)
                         )
                         yield rx.toast("💸 债务资金偿还成功！")
                     else:
@@ -749,100 +827,158 @@ class FinanceState(AppState):
                         )
                         yield rx.toast("🔄 资产抵债核销成功！")
 
-            # ---- 场景 C: 普通收入 / 支出 (普通录入 + 批量分割) ----
+            # ---- 场景 C: 普通收入 / 支出 (普通录入 + 批量分割 + 待付款) ----
             elif self.rec_type in ["收入", "支出"]:
-                is_batch_mode = self.rec_type == "支出" and self.f_category in ["商品成本", "固定资产购入", "其他资产购入"]
-                
-                # A. 批量录入模式
-                if is_batch_mode:
-                    if not self.batch_items and self.batch_shipping_fee <= 0:
-                        yield rx.toast("请先在下方明细表中至少录入一项明细或提供邮费金额！", level="warning")
+
+                # C-1: 商品成本待付款
+                if self.rec_type == "支出" and self.f_category == "商品成本待付款":
+                    items_total = sum(item.amount for item in self.batch_items)
+                    total_pending = items_total + self.batch_shipping_fee
+                    if total_pending <= 0:
+                        yield rx.toast("请至少录入一条物品明细或提供邮费金额！", level="warning")
                         return
-                    if not self.f_account_id:
-                        yield rx.toast("未指定操作现金扣款账户！", level="warning")
+                    if not self.batch_product_id:
+                        yield rx.toast("请选择归属商品！", level="warning")
                         return
-                        
-                    items_data = []
-                    for item in self.batch_items:
-                        items_data.append({
-                            "name": item.name,
-                            "amount": item.amount,
-                            "qty": item.qty,
-                            "desc": item.desc,
-                            "url": item.url
-                        })
-                        
-                    base_data = {
-                        "date": date.fromisoformat(self.f_date),
-                        "currency": self.f_currency,
-                        "account_id": int(self.f_account_id),
-                        "shop": self.f_shop.strip(),
-                        "category": self.f_category
-                    }
-                    
-                    batch_config = {
-                        "product_id": int(self.batch_product_id) if self.batch_product_id else None,
-                        "cost_cat": self.batch_cost_cat,
-                        "asset_cat": self.batch_asset_cat,
-                        "shipping_fee": self.batch_shipping_fee
-                    }
-                    
-                    # 匹配预算模式
+
+                    items_data = [
+                        {"name": i.name, "amount": i.amount, "qty": i.qty, "desc": i.desc, "url": i.url}
+                        for i in self.batch_items
+                    ]
                     selected_budget_id = int(self.batch_selected_budget_id) if self.batch_selected_budget_id else None
-                    if selected_budget_id:
-                        # 强绑定为单条记录匹配预算
-                        if len(self.batch_items) != 1:
-                            yield rx.toast("匹配特定预算项时，物品明细表内只能有且仅有一条物品记录！", level="warning")
+
+                    msg = FinanceService.create_pending_payment(
+                        db,
+                        date_val=date.fromisoformat(self.f_date),
+                        curr=self.f_currency,
+                        category="商品成本待付款",
+                        product_id=int(self.batch_product_id),
+                        cost_cat=self.batch_cost_cat,
+                        items_data=items_data,
+                        shipping_fee=self.batch_shipping_fee,
+                        total_amount=total_pending,
+                        shop=self.f_shop.strip(),
+                        desc=self.f_desc.strip(),
+                        selected_budget_id=selected_budget_id,
+                        rates_map=dict(self.rates_map)
+                    )
+                    yield rx.toast(f"📋 {msg}")
+
+                # C-2: 其他待付款
+                elif self.rec_type == "支出" and self.f_category == "其他待付款":
+                    if self.f_amount <= 0:
+                        yield rx.toast("待付款金额必须大于 0！", level="warning")
+                        return
+                    if not self.f_desc.strip():
+                        yield rx.toast("请填写业务明细描述！", level="warning")
+                        return
+
+                    msg = FinanceService.create_pending_payment(
+                        db,
+                        date_val=date.fromisoformat(self.f_date),
+                        curr=self.f_currency,
+                        category="其他待付款",
+                        total_amount=self.f_amount,
+                        shop=self.f_shop.strip(),
+                        desc=self.f_desc.strip(),
+                        rates_map=dict(self.rates_map)
+                    )
+                    yield rx.toast(f"📋 {msg}")
+
+                else:
+                    # C-3: 批量录入模式或单项录入模式
+                    is_batch_mode = self.rec_type == "支出" and self.f_category in ["商品成本", "固定资产购入", "其他资产购入"]
+                
+                    # A. 批量录入模式
+                    if is_batch_mode:
+                        if not self.batch_items and self.batch_shipping_fee <= 0:
+                            yield rx.toast("请先在下方明细表中至少录入一项明细或提供邮费金额！", level="warning")
+                            return
+                        if not self.f_account_id:
+                            yield rx.toast("未指定操作现金扣款账户！", level="warning")
                             return
                             
-                        first_item = self.batch_items[0]
+                        items_data = []
+                        for item in self.batch_items:
+                            items_data.append({
+                                "name": item.name,
+                                "amount": item.amount,
+                                "qty": item.qty,
+                                "desc": item.desc,
+                                "url": item.url
+                            })
+                            
                         base_data = {
-                            "date": date.fromisoformat(self.f_date), "type": "支出", "currency": self.f_currency,
-                            "amount": first_item.amount, "category": self.f_category, "shop": self.f_shop.strip(),
-                            "desc": first_item.desc, "url": first_item.url, "account_id": int(self.f_account_id)
+                            "date": date.fromisoformat(self.f_date),
+                            "currency": self.f_currency,
+                            "account_id": int(self.f_account_id),
+                            "shop": self.f_shop.strip(),
+                            "category": self.f_category
                         }
                         
+                        batch_config = {
+                            "product_id": int(self.batch_product_id) if self.batch_product_id else None,
+                            "cost_cat": self.batch_cost_cat,
+                            "asset_cat": self.batch_asset_cat,
+                            "shipping_fee": self.batch_shipping_fee
+                        }
+                        
+                        # 匹配预算模式
+                        selected_budget_id = int(self.batch_selected_budget_id) if self.batch_selected_budget_id else None
+                        if selected_budget_id:
+                            # 强绑定为单条记录匹配预算
+                            if len(self.batch_items) != 1:
+                                yield rx.toast("匹配特定预算项时，物品明细表内只能有且仅有一条物品记录！", level="warning")
+                                return
+                                
+                            first_item = self.batch_items[0]
+                            base_data = {
+                                "date": date.fromisoformat(self.f_date), "type": "支出", "currency": self.f_currency,
+                                "amount": first_item.amount, "category": self.f_category, "shop": self.f_shop.strip(),
+                                "desc": first_item.desc, "url": first_item.url, "account_id": int(self.f_account_id)
+                            }
+                            
+                            link_config = {
+                                "link_type": "cost", "target_cost_id": selected_budget_id,
+                                "name": first_item.name, "qty": first_item.qty,
+                                "unit_price": first_item.amount / first_item.qty if first_item.qty else 0,
+                                "product_id": int(self.batch_product_id), "cat": self.batch_cost_cat
+                            }
+                            
+                            msg = FinanceService.create_general_transaction(db, base_data, link_config, dict(self.rates_map))
+                            yield rx.toast(f"🎯 预算匹配成功: {msg}")
+                        else:
+                            # 纯批量切账单模式
+                            msg = FinanceService.create_batch_expense_transaction(
+                                db, base_data, batch_config, items_data, dict(self.rates_map)
+                            )
+                            yield rx.toast(f"📦 {msg}")
+
+                    # B. 单项通用录入模式
+                    else:
+                        if self.f_amount <= 0:
+                            yield rx.toast("录入金额必须大于 0！", level="warning")
+                            return
+                            
+                        # 非现金类别不需要现金账户
+                        is_non_cash = self.f_category in FinanceService.NON_CASH_CATEGORIES
+                        acc_id = int(self.f_account_id) if (not is_non_cash and self.f_account_id) else None
+                        
+                        base_data = {
+                            "date": date.fromisoformat(self.f_date), "type": self.rec_type, "currency": self.f_currency,
+                            "amount": self.f_amount, "category": self.f_category, "shop": self.f_shop.strip(),
+                            "desc": self.f_desc.strip(), "url": self.f_url.strip(), "account_id": acc_id,
+                            "is_non_cash": is_non_cash
+                        }
+                        
+                        # 确定业务映射类型
                         link_config = {
-                            "link_type": "cost", "target_cost_id": selected_budget_id,
-                            "name": first_item.name, "qty": first_item.qty,
-                            "unit_price": first_item.amount / first_item.qty if first_item.qty else 0,
-                            "product_id": int(self.batch_product_id), "cat": self.batch_cost_cat
+                            "link_type": None, "is_new": False, "target_id": None,
+                            "name": "", "qty": 1.0, "unit_price": self.f_amount, "product_id": None, "cat": ""
                         }
                         
                         msg = FinanceService.create_general_transaction(db, base_data, link_config, dict(self.rates_map))
-                        yield rx.toast(f"🎯 预算匹配成功: {msg}")
-                    else:
-                        # 纯批量切账单模式
-                        msg = FinanceService.create_batch_expense_transaction(
-                            db, base_data, batch_config, items_data, dict(self.rates_map)
-                        )
-                        yield rx.toast(f"📦 {msg}")
-
-                # B. 单项通用录入模式
-                else:
-                    if self.f_amount <= 0:
-                        yield rx.toast("录入金额必须大于 0！", level="warning")
-                        return
-                        
-                    # 非现金类别不需要现金账户
-                    is_non_cash = self.f_category in FinanceService.NON_CASH_CATEGORIES
-                    acc_id = int(self.f_account_id) if (not is_non_cash and self.f_account_id) else None
-                    
-                    base_data = {
-                        "date": date.fromisoformat(self.f_date), "type": self.rec_type, "currency": self.f_currency,
-                        "amount": self.f_amount, "category": self.f_category, "shop": self.f_shop.strip(),
-                        "desc": self.f_desc.strip(), "url": self.f_url.strip(), "account_id": acc_id,
-                        "is_non_cash": is_non_cash
-                    }
-                    
-                    # 确定业务映射类型
-                    link_config = {
-                        "link_type": None, "is_new": False, "target_id": None,
-                        "name": "", "qty": 1.0, "unit_price": self.f_amount, "product_id": None, "cat": ""
-                    }
-                    
-                    msg = FinanceService.create_general_transaction(db, base_data, link_config, dict(self.rates_map))
-                    yield rx.toast(f"💾 记账成功: {msg}")
+                        yield rx.toast(f"💾 记账成功: {msg}")
 
             # ---- 场景 D: 资金移动 ----
             elif self.rec_type == "资金移动":

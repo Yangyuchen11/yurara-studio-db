@@ -413,8 +413,16 @@ def cost_page() -> rx.Component:
             rx.card(
                 rx.hstack(
                     rx.text("请选择要核算的商品:", size="2", weight="medium"),
-                    rx.select(
-                        CostState.product_names,
+                    rx.select.root(
+                        rx.select.trigger(),
+                        rx.select.content(
+                            rx.foreach(
+                                CostState.product_names,
+                                lambda name: rx.select.item(name, value=name)
+                            ),
+                            position="popper",
+                            side="bottom",
+                        ),
                         value=CostState.selected_product_name,
                         on_change=CostState.select_product,
                         size="2",

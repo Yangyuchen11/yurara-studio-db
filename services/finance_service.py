@@ -284,25 +284,209 @@ class FinanceService:
         db.commit()
 
     @staticmethod
-    def repay_debt(db, date_val, debt_id, amount, remark, source_acc_id=None):
+    def create_pending_payment(db, date_val, curr, category,
+                               product_id=None, cost_cat=None,
+                               items_data=None, shipping_fee=0.0,
+                               total_amount=0.0, shop="", desc="",
+                               selected_budget_id=None, rates_map=None):
+        """
+        处理商品成本待付款或其他待付款录入。
+        - 不扣减现金账户
+        - 生成负债 CompanyBalanceItem
+        - 对于商品成本待付款：创建或绑定 CostItem (actual_cost=0 占位)
+        """
+        if rates_map is None:
+            rates_map = {}
+        if items_data is None:
+            items_data = []
+
+        debt_name = ""
+
+        if category == "商品成本待付款":
+            product = db.query(Product).filter(Product.id == product_id).first()
+            product_name = product.name if product else f"商品#{product_id}"
+
+            # 构建物品摘要描述
+            parts = [f"{item['name']} ×{item['qty']}" for item in items_data]
+            if shipping_fee > 0:
+                parts.append(f"邮费 {shipping_fee:.2f}")
+            items_summary = " + ".join(parts) if parts else "待付款商品成本"
+            full_desc = f"{shop} | {items_summary}" if shop else items_summary
+            if desc:
+                full_desc += f" | {desc}"
+
+            # 创建零金额流水（无现金流动）
+            pending_rec = FinanceRecord(
+                date=date_val, amount=0, currency=curr,
+                category="商品成本待付款",
+                description=f"[待付款] {product_name}: {full_desc}",
+            )
+            db.add(pending_rec)
+            db.flush()
+
+            # 创建或绑定 CostItem
+            if selected_budget_id:
+                cost_item = db.query(CostItem).filter(CostItem.id == selected_budget_id).first()
+                if not cost_item:
+                    raise ValueError(f"指定的预算项 (ID: {selected_budget_id}) 不存在")
+            else:
+                rate = to_cny(1.0, curr, rates_map)
+                expected_cny = total_amount * rate
+                cost_item = CostItem(
+                    product_id=product_id,
+                    item_name=items_summary[:200],
+                    actual_cost=0.0,
+                    supplier="待付款",
+                    category=cost_cat or "其他成本",
+                    unit_price=0.0,
+                    quantity=1.0,
+                    remarks=f"待付款 | 预计 {total_amount:.2f} {curr} ≈ CNY {expected_cny:.2f} | 来源: {shop}",
+                    currency=curr,
+                    original_amount=0.0,
+                    actual_qty=0.0,
+                    actual_unit_price=0.0,
+                    finance_record_id=pending_rec.id,
+                    url=""
+                )
+                db.add(cost_item)
+                db.flush()
+
+            pending_rec.related_item_id = cost_item.id
+
+            # 创建负债记录
+            debt_name = f"商品成本待付款: {product_name} ({items_summary[:60]})"
+            liability = CompanyBalanceItem(
+                category=BalanceCategory.LIABILITY,
+                name=debt_name,
+                amount=total_amount,
+                currency=curr,
+                finance_record_id=pending_rec.id,
+                product_id=product_id
+            )
+            db.add(liability)
+
+        else:  # 其他待付款
+            pending_rec = FinanceRecord(
+                date=date_val, amount=0, currency=curr,
+                category="其他待付款",
+                description=(f"[待付款] {shop} | {desc}" if shop else f"[待付款] {desc}").strip(" |"),
+            )
+            db.add(pending_rec)
+            db.flush()
+
+            debt_name = f"其他待付款: {(desc or shop)[:80]}"
+            liability = CompanyBalanceItem(
+                category=BalanceCategory.LIABILITY,
+                name=debt_name,
+                amount=total_amount,
+                currency=curr,
+                finance_record_id=pending_rec.id
+            )
+            db.add(liability)
+
+        db.commit()
+        return f"已录入待付款债务: {debt_name} ({total_amount:.2f} {curr})"
+
+    @staticmethod
+    def repay_debt(db, date_val, debt_id, amount, remark, source_acc_id=None, rates_map=None):
+        if rates_map is None:
+            rates_map = {}
+
         target_liab = db.query(CompanyBalanceItem).filter(CompanyBalanceItem.id == debt_id).first()
         if not target_liab: raise ValueError("债务不存在")
+
+        is_cost_pending = target_liab.name.startswith("商品成本待付款:")
+        remaining_debt = float(target_liab.amount)
+
+        # 对于普通债务或其它待付款，限制付款金额不能大于剩余债务额度
+        if not is_cost_pending and amount > remaining_debt + 0.001:
+            raise ValueError(f"当前债务余额为 {remaining_debt:.2f} {target_liab.currency}。偿还普通债务或其它待付款时，还款金额不能超过债务余额！")
+
+        actual_repay = min(amount, remaining_debt)
+        overpayment = round(amount - actual_repay, 8)
 
         cash_asset = FinanceService.get_cash_asset_by_id(db, source_acc_id) if source_acc_id else FinanceService.get_cash_asset(db, target_liab.currency)
         acc_name = cash_asset.name if cash_asset else f"流动资金({target_liab.currency})"
 
+        # 若为商品成本待付款，找关联的 CostItem
+        cost_item = None
+        if is_cost_pending and target_liab.finance_record_id:
+            pending_rec_ref = db.query(FinanceRecord).filter(FinanceRecord.id == target_liab.finance_record_id).first()
+            if pending_rec_ref and pending_rec_ref.related_item_id:
+                cost_item = db.query(CostItem).filter(CostItem.id == pending_rec_ref.related_item_id).first()
+
+        # 主还款流水（偿还 actual_repay）
         finance_rec = FinanceRecord(
-            date=date_val, amount=-amount, currency=target_liab.currency, category="债务偿还",
+            date=date_val,
+            amount=-actual_repay,
+            currency=target_liab.currency,
+            category="债务偿还",
             description=f"偿还债务: [{target_liab.name}] [账户: {acc_name}] | {remark}",
             account_id=cash_asset.id if cash_asset else None,
-            related_item_id=target_liab.id # ✨ 强绑定要偿还的债务ID
+            related_item_id=target_liab.id,  # ✨ 强绑定要偿还的债务ID
+            related_cost_id=cost_item.id if cost_item else None  # ✨ 数据库级别ID强绑定
         )
         db.add(finance_rec)
+        if cash_asset: cash_asset.amount -= actual_repay
 
-        if cash_asset: cash_asset.amount -= amount
-        
-        target_liab.amount -= amount
+        target_liab.amount -= actual_repay
         if target_liab.amount <= 0.01: db.delete(target_liab)
+
+        # 更新 CostItem 实付（仅限债务实际偿还部分）
+        if is_cost_pending and cost_item:
+            rate = to_cny(1.0, target_liab.currency, rates_map)
+            repay_cny = actual_repay * rate
+            cost_item.actual_cost = (cost_item.actual_cost or 0.0) + repay_cny
+            cost_item.original_amount = (cost_item.original_amount or 0.0) + actual_repay
+            if not cost_item.actual_qty or cost_item.actual_qty < 0.001:
+                cost_item.actual_qty = 1.0
+            cost_item.actual_unit_price = cost_item.original_amount / cost_item.actual_qty
+            cost_item.currency = target_liab.currency
+
+        # 超额偿还：额外扣款、生成商品成本支出流水，并在成本核算表生成对应分类的成本项
+        if overpayment > 0.01 and is_cost_pending and cost_item:
+            if cash_asset: cash_asset.amount -= overpayment
+            
+            excess_rec = FinanceRecord(
+                date=date_val,
+                amount=-overpayment,
+                currency=target_liab.currency,
+                category="商品成本",
+                description=f"超额付款(计入商品成本): 来自[{target_liab.name}] [账户: {acc_name}] | {remark}",
+                account_id=cash_asset.id if cash_asset else None
+            )
+            db.add(excess_rec)
+            db.flush()  # 获取 excess_rec.id
+            
+            # 在成本核算表中新建一条超额部分对应的成本明细
+            rate = to_cny(1.0, target_liab.currency, rates_map)
+            overpayment_cny = overpayment * rate
+            excess_cost = CostItem(
+                product_id=cost_item.product_id,
+                item_name=f"超额付款: {cost_item.item_name[:150]}",
+                actual_cost=overpayment_cny,
+                supplier=cost_item.supplier or "待付款",
+                category=cost_item.category or "其他成本",
+                unit_price=0.0,
+                quantity=1.0,
+                remarks=f"来自债务[{target_liab.name}]超额偿还 | {remark}",
+                currency=target_liab.currency,
+                original_amount=overpayment,
+                actual_qty=1.0,
+                actual_unit_price=overpayment,
+                finance_record_id=excess_rec.id,
+                url=cost_item.url or ""
+            )
+            db.add(excess_cost)
+            db.flush()
+            excess_rec.related_item_id = excess_cost.id
+
+        # 同步库存指标
+        if is_cost_pending and cost_item and cost_item.product_id:
+            db.flush()
+            from services.inventory_service import InventoryService
+            InventoryService(db).sync_product_metrics(cost_item.product_id)
+
         db.commit()
 
     @staticmethod
@@ -704,7 +888,20 @@ class FinanceService:
         rec.currency = new_currency
         rec.amount = new_signed_amount
         rec.category = updates['category']
-        rec.description = updates['desc']
+        
+        # 提取原有 description 中可能隐藏的 [cost_item:\d+] 标签
+        match = re.search(r'\[cost_item:\d+\]', rec.description or "")
+        new_desc = re.sub(r'\s*\[cost_item:\d+\]', '', updates['desc'])
+        if match:
+            tag = match.group(0)
+            if "|" in new_desc:
+                parts = new_desc.split("|", 1)
+                rec.description = f"{parts[0].strip()} {tag} | {parts[1].strip()}"
+            else:
+                rec.description = f"{new_desc.strip()} {tag}"
+        else:
+            rec.description = new_desc
+
         rec.url = updates.get('url', '')
         rec.account_id = new_cash_asset.id if new_cash_asset else None
         
@@ -837,6 +1034,33 @@ class FinanceService:
             else:
                 msg_list.append("未能自动复原负债，请手动核对")
 
+            # ✨ 若为商品成本待付款的还款，同步回滚关联 CostItem 实付
+            rollback_ci = None
+            if getattr(rec, "related_cost_id", None):
+                rollback_ci = db.query(CostItem).filter(CostItem.id == rec.related_cost_id).first()
+            elif rec.description and "[cost_item:" in rec.description:
+                try:
+                    m = re.search(r'\[cost_item:(\d+)\]', rec.description)
+                    if m:
+                        ci_id = int(m.group(1))
+                        rollback_ci = db.query(CostItem).filter(CostItem.id == ci_id).first()
+                except:
+                    pass
+            
+            if rollback_ci:
+                try:
+                    rollback_amount = abs(rec.amount)
+                    rollback_ci.actual_cost = max(0.0, (rollback_ci.actual_cost or 0.0) - rollback_amount)
+                    rollback_ci.original_amount = max(0.0, (rollback_ci.original_amount or 0.0) - rollback_amount)
+                    if rollback_ci.actual_qty and rollback_ci.actual_qty > 0 and rollback_ci.original_amount > 0:
+                        rollback_ci.actual_unit_price = rollback_ci.original_amount / rollback_ci.actual_qty
+                    else:
+                        rollback_ci.actual_unit_price = 0.0
+                    product_id_to_sync = rollback_ci.product_id
+                    msg_list.append(f"已从成本项【{rollback_ci.item_name}】回滚实付 {rollback_amount:.2f}")
+                except Exception:
+                    msg_list.append("成本实付回滚失败，请手动核对")
+
         elif rec.category == "资产抵消":
             target_liab = None
             if rec.related_item_id:
@@ -904,6 +1128,27 @@ class FinanceService:
                 msg_list.append("资金移动已撤销")
             except Exception:
                 msg_list.append("未能完全自动复原移动资产，请手动核对")
+
+        # ================= 待付款债务回滚逻辑 =================
+        elif rec.category in ["商品成本待付款", "其他待付款"]:
+            # 级联删除关联负债
+            deleted_liab = db.query(CompanyBalanceItem).filter(
+                CompanyBalanceItem.finance_record_id == rec.id
+            ).delete()
+            if deleted_liab > 0:
+                msg_list.append(f"已清理 {deleted_liab} 项关联待付负债记录")
+
+            # 商品成本待付款：清理关联的 CostItem 占位项
+            product_id_to_sync = None
+            if rec.category == "商品成本待付款" and rec.related_item_id:
+                pending_ci = db.query(CostItem).filter(CostItem.id == rec.related_item_id).first()
+                if pending_ci:
+                    product_id_to_sync = pending_ci.product_id
+                    if pending_ci.supplier == "待付款":
+                        db.delete(pending_ci)
+                        msg_list.append(f"已删除自动生成的成本占位项【{pending_ci.item_name}】")
+                    else:
+                        msg_list.append(f"预算项【{pending_ci.item_name}】已保留（如已有实付请手动核对）")
 
         # ================= 普通流水回滚逻辑 =================
         else:

@@ -51,3 +51,13 @@ def migrate_db(engine):
                     print("[Migration] Added column actual_unit_price to cost_items")
                 except Exception as e:
                     print(f"[Migration] Failed to add actual_unit_price: {e}")
+
+    if "finance_records" in inspector.get_table_names():
+        fr_columns = [c["name"] for c in inspector.get_columns("finance_records")]
+        if "related_cost_id" not in fr_columns:
+            with engine.begin() as conn:
+                try:
+                    conn.execute(text("ALTER TABLE finance_records ADD COLUMN related_cost_id INTEGER;"))
+                    print("[Migration] Added column related_cost_id to finance_records")
+                except Exception as e:
+                    print(f"[Migration] Failed to add related_cost_id: {e}")

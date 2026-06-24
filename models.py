@@ -103,6 +103,7 @@ class FinanceRecord(Base):
     account_id = Column(Integer, ForeignKey("company_balance_items.id", ondelete="SET NULL", use_alter=True, name="fk_finance_records_account_id"), nullable=True) # 绑定的现金账户
     order_id = Column(Integer, ForeignKey("sales_orders.id", ondelete="CASCADE"), nullable=True) # 绑定的销售订单
     related_item_id = Column(Integer, nullable=True)
+    related_cost_id = Column(Integer, ForeignKey("cost_items.id", ondelete="SET NULL", use_alter=True, name="fk_finance_records_related_cost_id"), nullable=True)
 
 # --- D. 公司账面/资产负债 ---
 class CompanyBalanceItem(Base):

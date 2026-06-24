@@ -34,7 +34,7 @@ def stat_indicator_card(label: str, value: rx.Var, unit: str = "CNY", color_sche
     )
 
 CATS_INCOME = ["销售收入", "退款", "投资", "现有资产增加", "其他资产增加", "新资产增加", "其他现金收入"]
-CATS_EXPENSE = ["商品成本", "固定资产购入", "其他资产购入", "撤资", "分红", "现有资产减少", "其他"]
+CATS_EXPENSE = ["商品成本", "商品成本待付款", "固定资产购入", "其他资产购入", "其他待付款", "撤资", "分红", "现有资产减少", "其他"]
 
 
 # ===================== 表单场景子组件 =====================
@@ -225,6 +225,44 @@ def batch_editor_table() -> rx.Component:
     )
 
 
+def budget_info_card() -> rx.Component:
+    """匹配预算后的提示与详细信息展示组件"""
+    return rx.cond(
+        (FinanceState.batch_selected_budget_id != "") & (FinanceState.batch_selected_budget_id != "0"),
+        rx.vstack(
+            rx.callout(
+                "✅ 当前已匹配特定预算项：此模式下仅支持添加一条物品明细用于累加实付/待付成本，且共同邮费将设为0。",
+                icon="info", size="1", color_scheme="blue", width="100%"
+            ),
+            rx.box(
+                rx.vstack(
+                    rx.hstack(
+                        rx.icon("circle_dashed", size=14, color=rx.color("violet", 9)),
+                        rx.text("匹配预算详情：", size="2", weight="bold", color="white"),
+                        spacing="1",
+                        align="center"
+                    ),
+                    rx.grid(
+                        rx.vstack(rx.text("项目名称", size="1", color="white"), rx.text(FinanceState.selected_budget_item_name, size="2", weight="medium", color="white"), spacing="1"),
+                        rx.vstack(rx.text("预算数量", size="1", color="white"), rx.text(FinanceState.selected_budget_qty.to_string(), size="2", weight="medium", color="white"), spacing="1"),
+                        rx.vstack(rx.text("预算单价", size="1", color="white"), rx.text(FinanceState.selected_budget_unit_price.to_string() + " CNY", size="2", weight="medium", color="white"), spacing="1"),
+                        rx.vstack(rx.text("预算总额", size="1", color="white"), rx.text(FinanceState.selected_budget_total.to_string() + " CNY", size="2", weight="bold", color="#d8b4fe"), spacing="1"),
+                        rx.vstack(rx.text("已付实付(已入账)", size="1", color="white"), rx.text(FinanceState.selected_budget_actual_cost.to_string() + " CNY", size="2", weight="bold", color="#10b981"), spacing="1"),
+                        columns="5", spacing="4", width="100%"
+                    ),
+                    spacing="2"
+                ),
+                padding="0.75rem",
+                border_radius="var(--radius-3)",
+                width="100%",
+                style={"border": f"1px solid {rx.color('violet', 5)}"}
+            ),
+            spacing="2", width="100%"
+        ),
+        rx.fragment()
+    )
+
+
 def batch_expense_form() -> rx.Component:
     """场景 B: 批量购入（成本、固定资产、其他资产）表单驱动的明细追加组件"""
     return rx.vstack(
@@ -322,12 +360,8 @@ def batch_expense_form() -> rx.Component:
             rx.fragment()
         ),
         
-        # 匹配预算警告提示
-        rx.cond(
-            (FinanceState.batch_selected_budget_id != "") & (FinanceState.batch_selected_budget_id != "0"),
-            rx.callout("✅ 当前已匹配特定预算项：此模式下仅支持添加一条物品明细用于累加实付成本，且共同邮费将设为0。", icon="info", size="1", color_scheme="blue", width="100%"),
-            rx.fragment()
-        ),
+        # 匹配预算警告提示与详情
+        budget_info_card(),
         
         # 共同店铺与操作账户
         rx.grid(
@@ -391,6 +425,192 @@ def batch_expense_form() -> rx.Component:
         
         # 物品明细表格与输入行
         batch_editor_table(),
+        spacing="3", width="100%"
+    )
+
+
+def pending_cost_form() -> rx.Component:
+    """商品成本待付款的录入表单 (无付款现金账户选择)"""
+    return rx.vstack(
+        rx.grid(
+            custom_form_field(
+                "操作大类",
+                rx.select.root(
+                    rx.select.trigger(),
+                    rx.select.content(
+                        rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
+                    ),
+                    value=FinanceState.f_category,
+                    on_change=FinanceState.set_f_category,
+                    size="2", width="100%"
+                )
+            ),
+            custom_form_field(
+                "归属商品",
+                rx.select.root(
+                    rx.select.trigger(width="400px"),
+                    rx.select.content(
+                        rx.foreach(
+                            FinanceState.products_list,
+                            lambda p: rx.select.item(p.label, value=p.id)
+                        )
+                    ),
+                    value=FinanceState.batch_product_id,
+                    on_change=FinanceState.set_batch_product_id,
+                    size="2", width="100%"
+                )
+            ),
+            custom_form_field(
+                "共同成本分类",
+                rx.select.root(
+                    rx.select.trigger(width="400px"),
+                    rx.select.content(
+                        rx.foreach(PRODUCT_COST_CATEGORIES, lambda cat: rx.select.item(cat, value=cat))
+                    ),
+                    value=FinanceState.batch_cost_cat,
+                    on_change=FinanceState.set_batch_cost_cat,
+                    size="2", width="100%"
+                )
+            ),
+            columns="3", spacing="4", width="100%"
+        ),
+        
+        # 预算项目匹配
+        custom_form_field(
+            "🎯 预算项目匹配",
+            rx.select.root(
+                rx.select.trigger(width="400px"),
+                rx.select.content(
+                    rx.foreach(
+                        FinanceState.budgets_list,
+                        lambda b: rx.select.item(b.label, value=b.id)
+                    )
+                ),
+                placeholder="➕ 不匹配预算 (自动创建并绑定新预算项)",
+                value=FinanceState.batch_selected_budget_id,
+                on_change=FinanceState.set_batch_selected_budget_id,
+                size="2", width="100%"
+            )
+        ),
+        
+        # 匹配预算警告提示与详情
+        budget_info_card(),
+        
+        # 待付店铺与交易币种
+        rx.grid(
+            custom_form_field(
+                "待付店铺/商家",
+                rx.input(
+                    placeholder="如：某工厂、淘宝商家",
+                    value=FinanceState.f_shop,
+                    on_change=FinanceState.set_f_shop,
+                    size="2", width="400px"
+                )
+            ),
+            custom_form_field(
+                "交易币种",
+                rx.select.root(
+                    rx.select.trigger(),
+                    rx.select.content(
+                        rx.foreach(
+                            FinanceState.all_currencies,
+                            lambda curr: rx.select.item(curr, value=curr)
+                        )
+                    ),
+                    value=FinanceState.f_currency,
+                    on_change=FinanceState.set_f_currency,
+                    size="2", width="100%"
+                )
+            ),
+            columns="3", spacing="4", width="100%"
+        ),
+        
+        # 共同邮费录入 (不匹配预算时显示)
+        rx.cond(
+            FinanceState.batch_selected_budget_id == "",
+            custom_form_field(
+                "订单共同邮费 (待付款一部分)",
+                rx.input(
+                    type="number",
+                    placeholder="请输入共同邮费",
+                    value=FinanceState.batch_shipping_fee.to_string(),
+                    on_change=lambda v: FinanceState.set_batch_shipping_fee(rx.cond(v != "", v.to(float), 0.0)),
+                    size="2", width="100%"
+                )
+            ),
+            rx.fragment()
+        ),
+        
+        # 物品明细表格与输入行
+        batch_editor_table(),
+        spacing="3", width="100%"
+    )
+
+
+def pending_other_form() -> rx.Component:
+    """其他待付款的录入表单 (无付款现金账户选择)"""
+    return rx.vstack(
+        rx.grid(
+            custom_form_field(
+                "操作大类",
+                rx.select.root(
+                    rx.select.trigger(),
+                    rx.select.content(
+                        rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
+                    ),
+                    value=FinanceState.f_category,
+                    on_change=FinanceState.set_f_category,
+                    size="2", width="100%"
+                )
+            ),
+            custom_form_field(
+                "待付款金额",
+                rx.input(
+                    type="number",
+                    placeholder="请输入金额",
+                    value=FinanceState.f_amount.to_string(),
+                    on_change=lambda v: FinanceState.set_f_amount(rx.cond(v != "", v.to(float), 0.0)),
+                    size="2", width="100%"
+                )
+            ),
+            custom_form_field(
+                "币种",
+                rx.select.root(
+                    rx.select.trigger(),
+                    rx.select.content(
+                        rx.foreach(
+                            FinanceState.all_currencies,
+                            lambda curr: rx.select.item(curr, value=curr)
+                        )
+                    ),
+                    value=FinanceState.f_currency,
+                    on_change=FinanceState.set_f_currency,
+                    size="2", width="100%"
+                )
+            ),
+            columns="3", spacing="4", width="100%"
+        ),
+        rx.grid(
+            custom_form_field(
+                "待付商家/收款方 (选填)",
+                rx.input(
+                    placeholder="如：某淘宝店、公司A",
+                    value=FinanceState.f_shop,
+                    on_change=FinanceState.set_f_shop,
+                    size="2", width="100%"
+                )
+            ),
+            custom_form_field(
+                "业务明细描述/其他备注 (必填)",
+                rx.input(
+                    placeholder="如：欠某某的服务费/待付项目款",
+                    value=FinanceState.f_desc,
+                    on_change=FinanceState.set_f_desc,
+                    size="2", width="100%"
+                )
+            ),
+            columns="2", spacing="4", width="100%"
+        ),
         spacing="3", width="100%"
     )
 
@@ -614,6 +834,17 @@ def debt_form() -> rx.Component:
                             FinanceState.debt_repay_type == "💸 资金还款",
                             # 资金偿还
                             rx.vstack(
+                                rx.cond(
+                                    FinanceState.selected_debt_source_type == "商品成本待付款",
+                                    rx.callout(
+                                        "ℹ️ 偿还商品成本待付款负债，系统将自动把此笔还款（含超额款）同步记录到商品成本明细的【实付】中，用于商品成本核算与大货资产计算。",
+                                        icon="info",
+                                        color_scheme="violet",
+                                        size="1",
+                                        width="100%"
+                                    ),
+                                    rx.fragment()
+                                ),
                                 rx.grid(
                                     custom_form_field("偿还金额", rx.input(type="number", placeholder="金额", value=FinanceState.debt_repay_amount.to_string(), on_change=lambda v: FinanceState.set_debt_repay_amount(rx.cond(v != "", v.to(float), 0.0)), size="2")),
                                     custom_form_field("付款现金账户", rx.select.root(
@@ -752,11 +983,23 @@ def add_transaction_accordion() -> rx.Component:
                         rx.cond(
                             FinanceState.rec_type == "资金移动",
                             fund_transfer_form(),
-                            # 判定普通支出如果是商品成本或资产等，使用批量分割表单
                             rx.cond(
-                                rx.Var.create((FinanceState.rec_type == "支出") & (FinanceState.f_category.contains("商品成本") | FinanceState.f_category.contains("资产购入"))),
-                                batch_expense_form(),
-                                common_single_form()
+                                FinanceState.f_category == "商品成本待付款",
+                                pending_cost_form(),
+                                rx.cond(
+                                    FinanceState.f_category == "其他待付款",
+                                    pending_other_form(),
+                                    # 判定普通支出如果是商品成本或资产等，使用批量分割表单
+                                    rx.cond(
+                                        rx.Var.create((FinanceState.rec_type == "支出") & (
+                                            (FinanceState.f_category == "商品成本") | 
+                                            (FinanceState.f_category == "固定资产购入") | 
+                                            (FinanceState.f_category == "其他资产购入")
+                                        )),
+                                        batch_expense_form(),
+                                        common_single_form()
+                                    )
+                                )
                             )
                         )
                     )
