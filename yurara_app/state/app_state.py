@@ -93,9 +93,14 @@ class AppState(rx.State):
     # --- 导航栏折叠状态 ---
     sidebar_collapsed: bool = False
 
-    # --- 新增货币对话框输入字段 ---
+    # — 新增货币对话框输入字段 —
     new_currency_code: str = ""
     new_currency_rate: str = ""
+
+    # — 汇率计算器状态 —
+    calc_from: str = "JPY"
+    calc_to: str = "CNY"
+    calc_amount: str = "100"
 
 
 
@@ -125,6 +130,44 @@ class AppState(rx.State):
                 "reverse_rate_str": f"{reverse_rate:.4f}",  # 以"1 CNY = X 外币"显示
             })
         return result
+
+    @rx.var
+    def calc_result(self) -> str:
+        """实时计算 calc_from -> calc_to 的换算结果。"""
+        try:
+            amount = float(self.calc_amount)
+        except (ValueError, TypeError):
+            return "-"
+        if amount <= 0:
+            return "-"
+
+        from_c = self.calc_from
+        to_c = self.calc_to
+
+        # CNY 中间转换：from_c -> CNY -> to_c
+        def to_cny_val(c: str, v: float) -> float:
+            if c == "CNY":
+                return v
+            r = self.rates_map.get(c, 0.0)
+            return v * r if r > 0 else 0.0
+
+        def from_cny_val(c: str, v: float) -> float:
+            if c == "CNY":
+                return v
+            r = self.rates_map.get(c, 0.0)
+            return v / r if r > 0 else 0.0
+
+        cny_val = to_cny_val(from_c, amount)
+        result = from_cny_val(to_c, cny_val)
+
+        if to_c == "JPY" or (to_c != "CNY" and result > 10):
+            return f"{result:,.2f} {to_c}"
+        return f"{result:,.4f} {to_c}"
+
+    @rx.var
+    def calc_currencies(self) -> list[str]:
+        """所有可选择的币种（CNY + 已登记外币）。"""
+        return ["CNY"] + sorted(list(self.rates_map.keys()))
 
     @rx.var
     def all_currencies(self) -> list[str]:
@@ -508,6 +551,19 @@ class AppState(rx.State):
     @rx.event
     def set_delete_confirm_code(self, val: str):
         self.delete_confirm_code = val
+
+    @rx.event
+    def set_calc_from(self, val: str): self.calc_from = val
+
+    @rx.event
+    def set_calc_to(self, val: str): self.calc_to = val
+
+    @rx.event
+    def set_calc_amount(self, val: str): self.calc_amount = val
+
+    @rx.event
+    def swap_calc_currencies(self):
+        self.calc_from, self.calc_to = self.calc_to, self.calc_from
 
     @rx.event
     def clear_environment_data(self):

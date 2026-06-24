@@ -676,7 +676,98 @@ def view_rates_button(collapsed: bool) -> rx.Component:
             spacing="3",
             width="100%",
         ),
+
+        rx.divider(margin_y="1rem"),
+
+        # ── 汇率计算器 ──
+        rx.vstack(
+            rx.hstack(
+                rx.icon("calculator", size=14, color=rx.color("violet", 9)),
+                rx.text("汇率计算器", size="1", weight="bold", color=rx.color("slate", 10)),
+                spacing="1",
+                align="center",
+            ),
+            rx.hstack(
+                # 输入金额
+                rx.input(
+                    value=AppState.calc_amount,
+                    on_change=AppState.set_calc_amount,
+                    type="number",
+                    size="2",
+                    width="110px",
+                    placeholder="金额",
+                ),
+                # 源币种
+                rx.select.root(
+                    rx.select.trigger(),
+                    rx.select.content(
+                        rx.foreach(
+                            AppState.calc_currencies,
+                            lambda c: rx.select.item(c, value=c),
+                        )
+                    ),
+                    value=AppState.calc_from,
+                    on_change=AppState.set_calc_from,
+                    size="2",
+                    width="90px",
+                ),
+                # 换向按钮
+                rx.tooltip(
+                    rx.icon_button(
+                        rx.icon("arrow_left_right", size=14),
+                        on_click=AppState.swap_calc_currencies,
+                        variant="soft",
+                        color_scheme="violet",
+                        size="2",
+                        cursor="pointer",
+                    ),
+                    content="交换币种方向",
+                    side="top",
+                ),
+                # 目标币种
+                rx.select.root(
+                    rx.select.trigger(),
+                    rx.select.content(
+                        rx.foreach(
+                            AppState.calc_currencies,
+                            lambda c: rx.select.item(c, value=c),
+                        )
+                    ),
+                    value=AppState.calc_to,
+                    on_change=AppState.set_calc_to,
+                    size="2",
+                    width="90px",
+                ),
+                spacing="2",
+                align="center",
+                width="100%",
+                flex_wrap="wrap",
+            ),
+            # 计算结果展示
+            rx.hstack(
+                rx.text("=", size="2", color=rx.color("slate", 9), weight="bold"),
+                rx.text(
+                    AppState.calc_result,
+                    size="4",
+                    weight="bold",
+                    color=rx.color("violet", 11),
+                ),
+                spacing="2",
+                align="center",
+                padding="0.5rem 0.75rem",
+                background=rx.color("violet", 2),
+                border_radius="8px",
+                width="100%",
+            ),
+            spacing="2",
+            width="100%",
+            padding="0.75rem",
+            background=rx.color("slate", 2),
+            border_radius="8px",
+        ),
+
         style={"maxWidth": "540px"},
+
     )
 
     btn = rx.cond(
