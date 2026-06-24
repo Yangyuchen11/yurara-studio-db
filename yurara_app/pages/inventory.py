@@ -182,12 +182,17 @@ def movement_entry_form() -> rx.Component:
                 ),
                 custom_form_field(
                     "变动操作类型",
-                    rx.select(
-                        InventoryState.all_movement_types,
-                        value=InventoryState.op_type,
+                    rx.select.root(
+    rx.select.trigger(),
+    rx.select.content(
+        rx.foreach(InventoryState.all_movement_types, lambda item: rx.select.item(item, value=item)),
+        position="popper",
+        side="bottom",
+    ),
+    value=InventoryState.op_type,
                         on_change=InventoryState.set_op_type,
                         size="2"
-                    )
+)
                 ),
                 columns="2",
                 spacing="3",
@@ -198,33 +203,48 @@ def movement_entry_form() -> rx.Component:
                     InventoryState.is_transfer_mode,
                     custom_form_field(
                         "移出仓库 (源库)",
-                        rx.select(
-                            InventoryState.transfer_warehouse_options,
-                            value=InventoryState.op_wh_name,
+                        rx.select.root(
+    rx.select.trigger(),
+    rx.select.content(
+        rx.foreach(InventoryState.transfer_warehouse_options, lambda item: rx.select.item(item, value=item)),
+        position="popper",
+        side="bottom",
+    ),
+    value=InventoryState.op_wh_name,
                             on_change=InventoryState.set_op_wh_name,
                             size="2"
-                        )
+)
                     ),
                     custom_form_field(
                         "目标操作仓库",
-                        rx.select(
-                            InventoryState.warehouse_options,
-                            value=InventoryState.op_wh_name,
+                        rx.select.root(
+    rx.select.trigger(),
+    rx.select.content(
+        rx.foreach(InventoryState.warehouse_options, lambda item: rx.select.item(item, value=item)),
+        position="popper",
+        side="bottom",
+    ),
+    value=InventoryState.op_wh_name,
                             on_change=InventoryState.set_op_wh_name,
                             size="2"
-                        )
+)
                     )
                 ),
                 rx.cond(
                     InventoryState.is_transfer_mode,
                     custom_form_field(
                         "移入仓库 (目的库)",
-                        rx.select(
-                            InventoryState.warehouse_options,
-                            value=InventoryState.op_to_wh_name,
+                        rx.select.root(
+    rx.select.trigger(),
+    rx.select.content(
+        rx.foreach(InventoryState.warehouse_options, lambda item: rx.select.item(item, value=item)),
+        position="popper",
+        side="bottom",
+    ),
+    value=InventoryState.op_to_wh_name,
                             on_change=InventoryState.set_op_to_wh_name,
                             size="2"
-                        )
+)
                     ),
                     rx.fragment()
                 ),
@@ -235,12 +255,17 @@ def movement_entry_form() -> rx.Component:
             rx.grid(
                 custom_form_field(
                     "选择款式",
-                    rx.select(
-                        InventoryState.active_variants,
-                        value=InventoryState.op_variant,
+                    rx.select.root(
+    rx.select.trigger(),
+    rx.select.content(
+        rx.foreach(InventoryState.active_variants, lambda item: rx.select.item(item, value=item)),
+        position="popper",
+        side="bottom",
+    ),
+    value=InventoryState.op_variant,
                         on_change=InventoryState.set_op_variant,
                         size="2"
-                    )
+)
                 ),
                 custom_form_field(
                     "变动套数/物理件数",
@@ -277,12 +302,17 @@ def movement_entry_form() -> rx.Component:
                         rx.fragment(),
                         custom_form_field(
                             "选择归属物理散件",
-                            rx.select(
-                                InventoryState.active_parts,
-                                value=InventoryState.op_part,
+                            rx.select.root(
+    rx.select.trigger(),
+    rx.select.content(
+        rx.foreach(InventoryState.active_parts, lambda item: rx.select.item(item, value=item)),
+        position="popper",
+        side="bottom",
+    ),
+    value=InventoryState.op_part,
                                 on_change=InventoryState.set_op_part,
                                 size="2"
-                            )
+)
                         )
                     ),
                     columns="2",
@@ -311,12 +341,17 @@ def movement_entry_form() -> rx.Component:
                         rx.grid(
                             custom_form_field(
                                 "计入商品成本科目",
-                                rx.select(
-                                    InventoryState.cost_categories,
-                                    value=InventoryState.op_cons_cat,
+                                rx.select.root(
+    rx.select.trigger(),
+    rx.select.content(
+        rx.foreach(InventoryState.cost_categories, lambda item: rx.select.item(item, value=item)),
+        position="popper",
+        side="bottom",
+    ),
+    value=InventoryState.op_cons_cat,
                                     on_change=InventoryState.set_op_cons_cat,
                                     size="2"
-                                )
+)
                             ),
                             custom_form_field(
                                 "消耗内容 (必填描述)",
@@ -420,13 +455,18 @@ def inventory_page() -> rx.Component:
                         rx.card(
                             rx.hstack(
                                 rx.text("当前核算商品:", size="2", weight="medium"),
-                                rx.select(
-                                    InventoryState.product_names,
-                                    value=InventoryState.selected_product_name,
+                                rx.select.root(
+    rx.select.trigger(),
+    rx.select.content(
+        rx.foreach(InventoryState.product_names, lambda item: rx.select.item(item, value=item)),
+        position="popper",
+        side="bottom",
+    ),
+    value=InventoryState.selected_product_name,
                                     on_change=InventoryState.select_product,
                                     size="2",
                                     width="200px"
-                                ),
+),
                                 rx.spacer(),
                                 rx.cond(
                                     InventoryState.is_production_completed,
@@ -676,14 +716,19 @@ def inventory_page() -> rx.Component:
                             rx.hstack(
                                 rx.icon("filter", size=14, color=rx.color("violet", 9)),
                                 rx.text("商品筛选:", size="2", weight="medium", color=rx.color("slate", 11)),
-                                rx.select(
-                                    InventoryState.wh_product_options,
-                                    value=InventoryState.wh_filter_display,
+                                rx.select.root(
+    rx.select.trigger(),
+    rx.select.content(
+        rx.foreach(InventoryState.wh_product_options, lambda item: rx.select.item(item, value=item)),
+        position="popper",
+        side="bottom",
+    ),
+    value=InventoryState.wh_filter_display,
                                     on_change=InventoryState.set_wh_filter_product,
                                     size="2",
                                     width="160px",
                                     color_scheme="violet"
-                                ),
+),
                                 rx.cond(
                                     InventoryState.wh_filter_product != "",
                                     rx.button(

@@ -64,7 +64,7 @@ class FinanceService:
         return db.query(CostItem).filter(
             CostItem.product_id == product_id,
             CostItem.category == category,
-            CostItem.supplier == "预算设定"
+            CostItem.is_budget == True
         ).all()
 
     @staticmethod
@@ -307,7 +307,7 @@ class FinanceService:
             product_name = product.name if product else f"商品#{product_id}"
 
             # 构建物品摘要描述
-            parts = [f"{item['name']} ×{item['qty']}" for item in items_data]
+            parts = [item['name'] for item in items_data]
             if shipping_fee > 0:
                 parts.append(f"邮费 {shipping_fee:.2f}")
             items_summary = " + ".join(parts) if parts else "待付款商品成本"
@@ -1180,7 +1180,7 @@ class FinanceService:
                         
                     product_id_to_sync = target_cost.product_id # ✨ 捕捉
                     
-                    if include_budget and target_cost.supplier == "预算设定":
+                    if include_budget and target_cost.is_budget:
                         db.delete(target_cost)
                         msg_list.append(f"预算成本项【{target_cost.item_name}】已一并删除")
                     else:

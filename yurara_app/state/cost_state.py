@@ -123,12 +123,12 @@ class CostState(AppState):
         rates = dict(self.rates_map)
         budget_map = {}
         for item in self.cost_items:
-            if item.supplier == "预算设定":
+            if item.is_budget:
                 equiv = to_cny(item.unit_price * item.quantity, item.currency, rates)
                 budget_map[item.item_name] = equiv
         total_b = sum(budget_map.values())
         for item in self.cost_items:
-            if item.supplier != "预算设定" and item.item_name not in budget_map:
+            if not item.is_budget and item.item_name not in budget_map:
                 total_b += item.actual_cost
         return total_b
 
@@ -178,7 +178,7 @@ class CostState(AppState):
             if cat not in grouped:
                 grouped[cat] = []
             
-            is_budget_item = (item.supplier == "预算设定")
+            is_budget_item = item.is_budget
             budget_qty = item.quantity if is_budget_item else None
             budget_unit_price = item.unit_price if is_budget_item else None
             budget_total = (item.unit_price * item.quantity) if is_budget_item else None
@@ -189,6 +189,7 @@ class CostState(AppState):
             grouped[cat].append({
                 "id": item.id,
                 "item_name": item.item_name,
+                "category": item.category,
                 "unit": item.unit,
                 "currency": item.currency,
                 "budget_qty": budget_qty or 0,
@@ -226,12 +227,12 @@ class CostState(AppState):
             
             budget_map = {}
             for i in cat_items:
-                if i.supplier == "预算设定":
+                if i.is_budget:
                     equiv = to_cny(i.unit_price * i.quantity, i.currency, rates)
                     budget_map[i.item_name] = equiv
             budget_total = sum(budget_map.values())
             for i in cat_items:
-                if i.supplier != "预算设定" and i.item_name not in budget_map:
+                if not i.is_budget and i.item_name not in budget_map:
                     budget_total += i.actual_cost
                     
             real_unit = real_total / self.make_qty if self.make_qty > 0 else 0.0
@@ -375,7 +376,7 @@ class CostState(AppState):
                 supplier=i.supplier or "",
                 url=i.url or "",
                 remarks=i.remarks or "",
-                is_budget=(i.supplier == "预算设定"),
+                is_budget=i.is_budget,
                 actual_qty=getattr(i, 'actual_qty', 0.0) or 0.0,
                 actual_unit_price=getattr(i, 'actual_unit_price', 0.0) or 0.0
             ))

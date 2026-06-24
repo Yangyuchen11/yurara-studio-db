@@ -75,7 +75,7 @@ def platform_form() -> rx.Component:
                                 PlatformsState.currency_options,
                                 lambda c: rx.select.item(c, value=c)
                             )
-                        ),
+                        , position="popper", side="bottom"),
                         value=PlatformsState.new_currency,
                         on_change=PlatformsState.set_new_currency,
                         size="2",

@@ -45,7 +45,7 @@ class CostService:
         new_cost = CostItem(
             product_id=product_id, item_name=name, actual_cost=0, supplier="预算设定", 
             category=category, unit_price=unit_price, quantity=quantity, unit=unit, remarks=remarks,
-            currency=currency
+            currency=currency, is_budget=True
         )
         self.db.add(new_cost)
         self.db.commit()
@@ -75,7 +75,7 @@ class CostService:
             target_item.url = updates["url"]
             has_change = True
             
-        if updates.get("is_budget", False):
+        if target_item.is_budget:
             if "quantity" in updates:
                 new_q = float(updates["quantity"])
                 if abs(new_q - target_item.quantity) > 0.001:
@@ -109,7 +109,7 @@ class CostService:
             raise ValueError("项目不存在")
 
         # 如果是预算设定项且实际花费大于 0，禁止直接删除
-        if item_to_del.supplier == "预算设定" and (item_to_del.actual_cost or 0.0) > 0.01:
+        if item_to_del.is_budget and (item_to_del.actual_cost or 0.0) > 0.01:
             raise ValueError("⚠️ 无法删除：该预算项已包含实际付款（实付金额大于 0）。如需删除，请先在财务流水模块中删除对应的实付记录。")
 
         product_id = item_to_del.product_id

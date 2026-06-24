@@ -89,7 +89,7 @@ def asset_write_off_card() -> rx.Component:
                                         AssetState.active_assets_options,
                                         lambda opt: rx.select.item(opt["label"], value=opt["value"])
                                     )
-                                ),
+                                , position="popper", side="bottom"),
                                 placeholder="选择资产...",
                                 value=AssetState.write_off_asset_id,
                                 on_change=AssetState.on_select_write_off_asset,

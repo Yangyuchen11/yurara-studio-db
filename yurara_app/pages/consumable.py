@@ -28,7 +28,7 @@ def operation_panel() -> rx.Component:
                                 ConsumableState.active_item_names,
                                 lambda name: rx.select.item(name, value=name)
                             )
-                        ),
+                        , position="popper", side="bottom"),
                         value=ConsumableState.op_item_name,
                         on_change=ConsumableState.on_change_item_name,
                         size="2",
@@ -94,7 +94,7 @@ def operation_panel() -> rx.Component:
                                         rx.select.content(
                                             rx.select.item("CNY", value="CNY"),
                                             rx.select.item("JPY", value="JPY")
-                                        ),
+                                        , position="popper", side="bottom"),
                                         value=ConsumableState.sale_currency,
                                         on_change=ConsumableState.set_sale_currency,
                                         size="2"
@@ -109,7 +109,7 @@ def operation_panel() -> rx.Component:
                                                 ConsumableState.cash_accounts,
                                                 lambda acc: rx.select.item(acc.label, value=acc.value)
                                             )
-                                        ),
+                                        , position="popper", side="bottom"),
                                         placeholder="选择现金账户...",
                                         value=ConsumableState.sale_account_id,
                                         on_change=ConsumableState.set_sale_account_id,
@@ -140,7 +140,7 @@ def operation_panel() -> rx.Component:
                                                     ConsumableState.products_list,
                                                     lambda p: rx.select.item(p.label, value=p.value)
                                                 )
-                                            ),
+                                            , position="popper", side="bottom"),
                                             value=ConsumableState.target_product_id,
                                             on_change=ConsumableState.set_target_product_id,
                                             size="2"
@@ -159,7 +159,7 @@ def operation_panel() -> rx.Component:
                                                     PRODUCT_COST_CATEGORIES,
                                                     lambda cat: rx.select.item(cat, value=cat)
                                                 )
-                                            ),
+                                            , position="popper", side="bottom"),
                                             value=ConsumableState.target_cost_category,
                                             on_change=ConsumableState.set_target_cost_category,
                                             size="2"
@@ -250,7 +250,7 @@ def edit_consumable_dialog() -> rx.Component:
                             rx.select.content(
                                 rx.select.item("CNY", value="CNY"),
                                 rx.select.item("JPY", value="JPY")
-                            ),
+                            , position="popper", side="bottom"),
                             value=ConsumableState.edit_currency,
                             on_change=ConsumableState.set_edit_currency,
                             size="2"
@@ -378,7 +378,7 @@ def consumable_list_table() -> rx.Component:
                             ConsumableState.available_currencies,
                             lambda c: rx.select.item(c, value=c)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=ConsumableState.filter_currency,
                     on_change=ConsumableState.set_filter_currency,
                     size="2",
@@ -392,7 +392,7 @@ def consumable_list_table() -> rx.Component:
                             ConsumableState.available_categories,
                             lambda cat: rx.select.item(cat, value=cat)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=ConsumableState.filter_category,
                     on_change=ConsumableState.set_filter_category,
                     size="2",

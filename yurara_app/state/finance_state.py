@@ -460,7 +460,7 @@ class FinanceState(AppState):
                 rec = FinanceService.get_record_by_id(db, rec_id)
                 if rec and rec.category == "商品成本" and rec.related_item_id:
                     target_cost = db.query(CostItem).filter(CostItem.id == rec.related_item_id).first()
-                    if target_cost and target_cost.supplier == "预算设定":
+                    if target_cost and target_cost.is_budget:
                         self.is_selected_delete_budget_related = True
             except Exception:
                 pass

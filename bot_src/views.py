@@ -368,7 +368,7 @@ class ProductDashboardView(ui.View):
             total_actual += i.actual_cost
             
             # 预算累加 (仅统计明确标记为预算的条目)
-            if i.supplier == "预算设定":
+            if i.is_budget:
                 cat_data[cat]["budget"] += (i.unit_price * i.quantity)
 
         # 3. 构建显示

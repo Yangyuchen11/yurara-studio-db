@@ -51,6 +51,13 @@ def migrate_db(engine):
                     print("[Migration] Added column actual_unit_price to cost_items")
                 except Exception as e:
                     print(f"[Migration] Failed to add actual_unit_price: {e}")
+            if "is_budget" not in columns:
+                try:
+                    conn.execute(text("ALTER TABLE cost_items ADD COLUMN is_budget BOOLEAN DEFAULT FALSE;"))
+                    conn.execute(text("UPDATE cost_items SET is_budget = TRUE WHERE supplier = '预算设定';"))
+                    print("[Migration] Added column is_budget to cost_items and set defaults")
+                except Exception as e:
+                    print(f"[Migration] Failed to add is_budget: {e}")
 
     if "finance_records" in inspector.get_table_names():
         fr_columns = [c["name"] for c in inspector.get_columns("finance_records")]

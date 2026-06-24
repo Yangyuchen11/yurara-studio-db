@@ -63,6 +63,7 @@ class CostItem(Base):
     original_amount = Column(Float, nullable=True)
     actual_qty = Column(Float, nullable=True, default=0.0)
     actual_unit_price = Column(Float, nullable=True, default=0.0)
+    is_budget = Column(Boolean, default=False)
 
     # 关联流水 (删除流水时自动清理关联的成本项)
     finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="CASCADE"), nullable=True)
