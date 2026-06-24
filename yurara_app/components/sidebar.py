@@ -718,39 +718,86 @@ def view_rates_button(collapsed: bool) -> rx.Component:
 
 
 
-def sidebar_toggle_button() -> rx.Component:
-    """侧边栏收起/展开切换按钮。"""
-    btn = rx.icon_button(
-        rx.cond(
-            AppState.sidebar_collapsed,
-            rx.icon("chevron_right", size=16),
-            rx.icon("chevron_left", size=16),
+def sidebar_bottom_toolbar() -> rx.Component:
+    """侧边栏底部工具栏：左侧主题切换按钮 + 右侧折叠按钮。"""
+
+    # ── 展开状态布局：左侧主题 | spacer | 右侧折叠 ──
+    expanded_bar = rx.hstack(
+        rx.tooltip(
+            rx.icon_button(
+                rx.color_mode_cond(
+                    rx.icon("moon", size=15),
+                    rx.icon("sun", size=15),
+                ),
+                on_click=rx.toggle_color_mode,
+                variant="ghost",
+                color_scheme="gray",
+                cursor="pointer",
+            ),
+            content="切换主题",
+            side="top",
         ),
-        on_click=AppState.toggle_sidebar,
-        variant="ghost",
-        color_scheme="gray",
-        cursor="pointer",
-    )
-    
-    collapsed_btn = rx.center(
-        rx.tooltip(btn, content="展开侧边栏", side="right"),
-        width="100%",
-        padding="0.5rem 0",
-    )
-    
-    expanded_btn = rx.hstack(
         rx.spacer(),
-        rx.tooltip(btn, content="收起侧边栏", side="right"),
+        rx.tooltip(
+            rx.icon_button(
+                rx.icon("chevron_left", size=16),
+                on_click=AppState.toggle_sidebar,
+                variant="ghost",
+                color_scheme="gray",
+                cursor="pointer",
+            ),
+            content="收起侧边栏",
+            side="top",
+        ),
         width="100%",
         padding="0.5rem 0.75rem",
-        align_items="center",
+        align="center",
     )
-    
+
+    # ── 收起状态布局：主题按钮居中 + 折叠按钮居中 ──
+    collapsed_bar = rx.vstack(
+        rx.center(
+            rx.tooltip(
+                rx.icon_button(
+                    rx.color_mode_cond(
+                        rx.icon("moon", size=15),
+                        rx.icon("sun", size=15),
+                    ),
+                    on_click=rx.toggle_color_mode,
+                    variant="ghost",
+                    color_scheme="gray",
+                    cursor="pointer",
+                ),
+                content="切换主题",
+                side="right",
+            ),
+            width="100%",
+        ),
+        rx.center(
+            rx.tooltip(
+                rx.icon_button(
+                    rx.icon("chevron_right", size=16),
+                    on_click=AppState.toggle_sidebar,
+                    variant="ghost",
+                    color_scheme="gray",
+                    cursor="pointer",
+                ),
+                content="展开侧边栏",
+                side="right",
+            ),
+            width="100%",
+        ),
+        spacing="1",
+        padding="0.5rem 0",
+        width="100%",
+    )
+
     return rx.cond(
         AppState.sidebar_collapsed,
-        collapsed_btn,
-        expanded_btn,
+        collapsed_bar,
+        expanded_bar,
     )
+
 
 
 def sidebar() -> rx.Component:
@@ -936,7 +983,7 @@ def sidebar() -> rx.Component:
                 test_mode_toggle(collapsed=True),
                 data_management_popover(),
                 rx.divider(margin="0"),
-                sidebar_toggle_button(),
+                sidebar_bottom_toolbar(),
                 spacing="3",
                 padding="0.75rem 0",
                 width="100%",
@@ -951,7 +998,7 @@ def sidebar() -> rx.Component:
                 test_mode_toggle(collapsed=False),
                 data_management_popover(),
                 rx.divider(margin="0"),
-                sidebar_toggle_button(),
+                sidebar_bottom_toolbar(),
                 spacing="2",
                 padding="0.75rem",
                 width="100%",

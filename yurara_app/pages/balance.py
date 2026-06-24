@@ -85,7 +85,7 @@ def create_account_accordion() -> rx.Component:
                 align="center",
             ),
             content=rx.vstack(
-                rx.text("在此处可以开设备用金、独立银行卡等专属现金账户。", size="1", color=rx.color("slate", 9)),
+                rx.text("在此处可以开设备用金、独立银行卡等专属现金账户。", size="1", color=rx.color("white", 9)),
                 rx.hstack(
                     custom_form_field(
                         "账户名称",
@@ -108,7 +108,7 @@ def create_account_accordion() -> rx.Component:
                                 size="2",
                                 width="120px",
                             ),
-                            rx.text("（直接输入货币代码）", size="1", color=rx.color("slate", 9)),
+                            rx.text("（直接输入货币代码）", size="1", color=rx.color("white", 9)),
                             align="center",
                             spacing="2",
                         ),
