@@ -254,7 +254,7 @@ def cashier_pos_tab() -> rx.Component:
                             OfflineSalesState.template_options,
                             lambda opt: rx.select.item(opt, value=opt)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=OfflineSalesState.template_selected_value,
                     on_change=OfflineSalesState.change_template_by_option,
                     size="2",
@@ -475,7 +475,7 @@ def cashier_pos_tab() -> rx.Component:
                                             OfflineSalesState.cash_account_options,
                                             lambda acc: rx.select.item(acc, value=acc)
                                         )
-                                    ),
+                                    , position="popper", side="bottom"),
                                     value=OfflineSalesState.selected_account_name,
                                     on_change=OfflineSalesState.set_selected_account_name,
                                     size="2",
@@ -538,7 +538,7 @@ def template_config_tab() -> rx.Component:
                                 OfflineSalesState.template_options,
                                 lambda opt: rx.select.item(opt, value=opt)
                             )
-                        ),
+                        , position="popper", side="bottom"),
                         placeholder="请选择模板进行编辑...",
                         value=OfflineSalesState.edit_template_selected_value,
                         on_change=OfflineSalesState.select_template_for_edit_by_option,
@@ -579,7 +579,7 @@ def template_config_tab() -> rx.Component:
                             OfflineSalesState.all_currencies,
                             lambda curr: rx.select.item(curr, value=curr)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=OfflineSalesState.tpl_currency,
                     on_change=OfflineSalesState.set_tpl_currency,
                     size="2",
@@ -595,7 +595,7 @@ def template_config_tab() -> rx.Component:
                             OfflineSalesState.warehouse_options,
                             lambda w: rx.select.item(w, value=w)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=OfflineSalesState.tpl_wh_name,
                     on_change=OfflineSalesState.set_tpl_wh_name,
                     size="2",
@@ -611,7 +611,7 @@ def template_config_tab() -> rx.Component:
                             OfflineSalesState.platform_options,
                             lambda p: rx.select.item(p, value=p)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=OfflineSalesState.tpl_platform,
                     on_change=OfflineSalesState.set_tpl_platform,
                     size="2",

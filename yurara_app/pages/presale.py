@@ -124,7 +124,7 @@ def build_presale_create_form() -> rx.Component:
                                     PresaleState.platform_options,
                                     lambda p: rx.select.item(p, value=p)
                                 )
-                            ),
+                            , position="popper", side="bottom"),
                             value=PresaleState.pre_plat,
                             on_change=PresaleState.set_pre_plat,
                             size="2",
@@ -140,7 +140,7 @@ def build_presale_create_form() -> rx.Component:
                                      PresaleState.all_currencies,
                                      lambda curr: rx.select.item(curr, value=curr)
                                  )
-                             ),
+                             , position="popper", side="bottom"),
                             value=PresaleState.pre_curr,
                             on_change=PresaleState.set_pre_curr,
                             size="2",
@@ -156,7 +156,7 @@ def build_presale_create_form() -> rx.Component:
                                     PresaleState.cash_account_options,
                                     lambda acc: rx.select.item(acc, value=acc)
                                 )
-                            ),
+                            , position="popper", side="bottom"),
                             value=PresaleState.pre_target_account,
                             on_change=PresaleState.set_pre_target_account,
                             size="2",
@@ -179,7 +179,7 @@ def build_presale_create_form() -> rx.Component:
                                     PresaleState.product_options,
                                     lambda p: rx.cond(p != "全部商品", rx.select.item(p, value=p), rx.fragment())
                                 )
-                            ),
+                            , position="popper", side="bottom"),
                             value=PresaleState.sel_p_name,
                             on_change=PresaleState.select_p_name,
                             size="2",
@@ -195,7 +195,7 @@ def build_presale_create_form() -> rx.Component:
                                     PresaleState.active_variants,
                                     lambda v: rx.select.item(v, value=v)
                                 )
-                            ),
+                            , position="popper", side="bottom"),
                             value=PresaleState.sel_v_name,
                             on_change=PresaleState.set_sel_v_name,
                             size="2",
@@ -221,7 +221,7 @@ def build_presale_create_form() -> rx.Component:
                                     PresaleState.warehouse_options,
                                     lambda w: rx.select.item(w, value=w)
                                 )
-                            ),
+                            , position="popper", side="bottom"),
                             value=PresaleState.sel_wh_name,
                             on_change=PresaleState.set_sel_wh_name,
                             size="2",
@@ -909,7 +909,7 @@ def refund_dialog_modal() -> rx.Component:
                                                 item.part_options,
                                                 lambda part: rx.select.item(part, value=part)
                                             )
-                                        ),
+                                        , position="popper", side="bottom"),
                                         value=item.part_name,
                                         on_change=lambda val: PresaleState.update_resend_part(item.order_item_id, val),
                                         size="1",
@@ -921,7 +921,7 @@ def refund_dialog_modal() -> rx.Component:
                                                 PresaleState.warehouse_options,
                                                 lambda w: rx.cond(w != "未分配", rx.select.item(w, value=w), rx.fragment())
                                             )
-                                        ),
+                                        , position="popper", side="bottom"),
                                         value=item.warehouse_name,
                                         on_change=lambda val: PresaleState.update_resend_warehouse(item.order_item_id, val),
                                         size="1",
@@ -999,7 +999,7 @@ def presale_page() -> rx.Component:
                             PresaleState.product_options,
                             lambda p: rx.select.item(p, value=p)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=PresaleState.selected_product_filter,
                     on_change=PresaleState.select_product_filter,
                     size="2",

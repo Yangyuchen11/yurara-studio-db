@@ -53,7 +53,7 @@ def common_single_form() -> rx.Component:
                             rx.foreach(CATS_INCOME, lambda c: rx.select.item(c, value=c)),
                             rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.f_category,
                     on_change=FinanceState.set_f_category,
                     size="2", width="100%"
@@ -78,7 +78,7 @@ def common_single_form() -> rx.Component:
                             FinanceState.all_currencies,
                             lambda curr: rx.select.item(curr, value=curr)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.f_currency,
                     on_change=FinanceState.set_f_currency,
                     size="2", width="100%"
@@ -99,7 +99,7 @@ def common_single_form() -> rx.Component:
                             FinanceState.cash_accounts,
                             lambda acc: rx.select.item(acc.label, value=acc.id)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     placeholder="选择账户",
                     value=FinanceState.f_account_id,
                     on_change=FinanceState.set_f_account_id,
@@ -273,7 +273,7 @@ def batch_expense_form() -> rx.Component:
                     rx.select.trigger(),
                     rx.select.content(
                         rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.f_category,
                     on_change=FinanceState.set_f_category,
                     size="2", width="100%"
@@ -291,7 +291,7 @@ def batch_expense_form() -> rx.Component:
                                 FinanceState.products_list,
                                 lambda p: rx.select.item(p.label, value=p.id)
                             )
-                        ),
+                        , position="popper", side="bottom"),
                         value=FinanceState.batch_product_id,
                         on_change=FinanceState.set_batch_product_id,
                         size="2", width="100%"
@@ -310,7 +310,7 @@ def batch_expense_form() -> rx.Component:
                                 rx.select.item("其他", value="其他"),
                                 rx.select.item("商品周边", value="商品周边"),
                                 rx.select.item("办公用品", value="办公用品")
-                            ),
+                            , position="popper", side="bottom"),
                             value=FinanceState.batch_asset_cat,
                             on_change=FinanceState.set_batch_asset_cat,
                             size="2", width="100%"
@@ -327,7 +327,7 @@ def batch_expense_form() -> rx.Component:
                         rx.select.trigger(width="400px"),
                         rx.select.content(
                             rx.foreach(PRODUCT_COST_CATEGORIES, lambda cat: rx.select.item(cat, value=cat))
-                        ),
+                        , position="popper", side="bottom"),
                         value=FinanceState.batch_cost_cat,
                         on_change=FinanceState.set_batch_cost_cat,
                         size="2", width="100%"
@@ -350,7 +350,7 @@ def batch_expense_form() -> rx.Component:
                             FinanceState.budgets_list,
                             lambda b: rx.select.item(b.label, value=b.id)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     placeholder="➕ 不匹配预算 (批量录入新成本)",
                     value=FinanceState.batch_selected_budget_id,
                     on_change=FinanceState.set_batch_selected_budget_id,
@@ -374,7 +374,7 @@ def batch_expense_form() -> rx.Component:
                             FinanceState.cash_accounts,
                             lambda acc: rx.select.item(acc.label, value=acc.id)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.f_account_id,
                     on_change=FinanceState.set_f_account_id,
                     size="2", width="100%"
@@ -398,7 +398,7 @@ def batch_expense_form() -> rx.Component:
                             FinanceState.all_currencies,
                             lambda curr: rx.select.item(curr, value=curr)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.f_currency,
                     on_change=FinanceState.set_f_currency,
                     size="2", width="100%"
@@ -439,7 +439,7 @@ def pending_cost_form() -> rx.Component:
                     rx.select.trigger(),
                     rx.select.content(
                         rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.f_category,
                     on_change=FinanceState.set_f_category,
                     size="2", width="100%"
@@ -454,7 +454,7 @@ def pending_cost_form() -> rx.Component:
                             FinanceState.products_list,
                             lambda p: rx.select.item(p.label, value=p.id)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.batch_product_id,
                     on_change=FinanceState.set_batch_product_id,
                     size="2", width="100%"
@@ -466,7 +466,7 @@ def pending_cost_form() -> rx.Component:
                     rx.select.trigger(width="400px"),
                     rx.select.content(
                         rx.foreach(PRODUCT_COST_CATEGORIES, lambda cat: rx.select.item(cat, value=cat))
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.batch_cost_cat,
                     on_change=FinanceState.set_batch_cost_cat,
                     size="2", width="100%"
@@ -485,7 +485,7 @@ def pending_cost_form() -> rx.Component:
                         FinanceState.budgets_list,
                         lambda b: rx.select.item(b.label, value=b.id)
                     )
-                ),
+                , position="popper", side="bottom"),
                 placeholder="➕ 不匹配预算 (自动创建并绑定新预算项)",
                 value=FinanceState.batch_selected_budget_id,
                 on_change=FinanceState.set_batch_selected_budget_id,
@@ -516,7 +516,7 @@ def pending_cost_form() -> rx.Component:
                             FinanceState.all_currencies,
                             lambda curr: rx.select.item(curr, value=curr)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.f_currency,
                     on_change=FinanceState.set_f_currency,
                     size="2", width="100%"
@@ -557,7 +557,7 @@ def pending_other_form() -> rx.Component:
                     rx.select.trigger(),
                     rx.select.content(
                         rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.f_category,
                     on_change=FinanceState.set_f_category,
                     size="2", width="100%"
@@ -582,7 +582,7 @@ def pending_other_form() -> rx.Component:
                             FinanceState.all_currencies,
                             lambda curr: rx.select.item(curr, value=curr)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.f_currency,
                     on_change=FinanceState.set_f_currency,
                     size="2", width="100%"
@@ -629,7 +629,7 @@ def exchange_form() -> rx.Component:
                             FinanceState.all_currencies,
                             lambda curr: rx.select.item(curr, value=curr)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.ex_source_curr,
                     on_change=FinanceState.set_ex_source_curr,
                     size="2", width="100%"
@@ -644,7 +644,7 @@ def exchange_form() -> rx.Component:
                             FinanceState.cash_accounts,
                             lambda acc: rx.select.item(acc.label, value=acc.id)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.ex_source_acc_id,
                     on_change=FinanceState.set_ex_source_acc_id,
                     size="2", width="100%"
@@ -662,7 +662,7 @@ def exchange_form() -> rx.Component:
                             FinanceState.all_currencies,
                             lambda curr: rx.select.item(curr, value=curr)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.ex_target_curr,
                     on_change=FinanceState.set_ex_target_curr,
                     size="2", width="100%"
@@ -677,7 +677,7 @@ def exchange_form() -> rx.Component:
                             FinanceState.cash_accounts,
                             lambda acc: rx.select.item(acc.label, value=acc.id)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=FinanceState.ex_target_acc_id,
                     on_change=FinanceState.set_ex_target_acc_id,
                     size="2", width="100%"
@@ -732,7 +732,7 @@ def debt_form() -> rx.Component:
                 rx.select.content(
                     rx.select.item("➕ 新增债务", value="➕ 新增债务"),
                     rx.select.item("💸 偿还债务", value="💸 偿还债务")
-                ),
+                , position="popper", side="bottom"),
                 value=FinanceState.debt_op,
                 on_change=FinanceState.set_debt_op,
                 size="2", width="100%"
@@ -750,7 +750,7 @@ def debt_form() -> rx.Component:
                         rx.select.content(
                             rx.select.item("存入流动资金 (拿到现金)", value="存入流动资金 (拿到现金)"),
                             rx.select.item("新增资产项 (形成实物/挂账资产)", value="新增资产项 (形成实物/挂账资产)")
-                        ),
+                        , position="popper", side="bottom"),
                         value=FinanceState.debt_dest, on_change=FinanceState.set_debt_dest, size="2"
                     )),
                     columns="2", spacing="4", width="100%"
@@ -769,7 +769,7 @@ def debt_form() -> rx.Component:
                                 FinanceState.all_currencies,
                                 lambda curr: rx.select.item(curr, value=curr)
                             )
-                        ),
+                        , position="popper", side="bottom"),
                         value=FinanceState.debt_curr, on_change=FinanceState.set_debt_curr, size="2"
                     )),
                     columns="2", spacing="4", width="100%"
@@ -783,7 +783,7 @@ def debt_form() -> rx.Component:
                                 FinanceState.cash_accounts,
                                 lambda acc: rx.select.item(acc.label, value=acc.id)
                             )
-                        ),
+                        , position="popper", side="bottom"),
                         value=FinanceState.debt_target_acc_id, on_change=FinanceState.set_debt_target_acc_id, size="2"
                     )),
                     rx.fragment()
@@ -810,7 +810,7 @@ def debt_form() -> rx.Component:
                                         FinanceState.unsettled_debts,
                                         lambda d: rx.select.item(d.label, value=d.id)
                                     )
-                                ),
+                                , position="popper", side="bottom"),
                                 placeholder="请选择债务",
                                 value=FinanceState.debt_selected_id,
                                 on_change=FinanceState.set_debt_selected_id,
@@ -824,7 +824,7 @@ def debt_form() -> rx.Component:
                                 rx.select.content(
                                     rx.select.item("💸 资金还款", value="💸 资金还款"),
                                     rx.select.item("🔄 资产抵消", value="🔄 资产抵消")
-                                ),
+                                , position="popper", side="bottom"),
                                 value=FinanceState.debt_repay_type,
                                 on_change=FinanceState.set_debt_repay_type,
                                 size="2", width="100%"
@@ -854,7 +854,7 @@ def debt_form() -> rx.Component:
                                                 FinanceState.cash_accounts,
                                                 lambda acc: rx.select.item(acc.label, value=acc.id)
                                             )
-                                        ),
+                                        , position="popper", side="bottom"),
                                         value=FinanceState.debt_repay_source_acc_id, on_change=FinanceState.set_debt_repay_source_acc_id, size="2"
                                     )),
                                     columns="2", spacing="4", width="100%"
@@ -870,7 +870,7 @@ def debt_form() -> rx.Component:
                                             FinanceState.offset_assets,
                                             lambda a: rx.select.item(a.label, value=a.id)
                                         )
-                                    ),
+                                    , position="popper", side="bottom"),
                                     value=FinanceState.debt_repay_offset_asset_id, on_change=FinanceState.set_debt_repay_offset_asset_id, size="2"
                                 )),
                                 custom_form_field("抵消挂账金额", rx.input(type="number", placeholder="金额", value=FinanceState.debt_repay_amount.to_string(), on_change=lambda v: FinanceState.set_debt_repay_amount(rx.cond(v != "", v.to(float), 0.0)), size="2")),
@@ -904,7 +904,7 @@ def fund_transfer_form() -> rx.Component:
                                 FinanceState.cash_accounts,
                                 lambda acc: rx.select.item(acc.label, value=acc.id)
                             )
-                        ),
+                        , position="popper", side="bottom"),
                         value=FinanceState.move_from_asset_id, on_change=FinanceState.set_move_from_asset_id, size="2"
                     )),
                     custom_form_field("转入账户 (To)", rx.select.root(
@@ -914,7 +914,7 @@ def fund_transfer_form() -> rx.Component:
                                 FinanceState.cash_accounts,
                                 lambda acc: rx.select.item(acc.label, value=acc.id)
                             )
-                        ),
+                        , position="popper", side="bottom"),
                         value=FinanceState.move_to_asset_id, on_change=FinanceState.set_move_to_asset_id, size="2"
                     )),
                     columns="2", spacing="4", width="100%"
@@ -960,7 +960,7 @@ def add_transaction_accordion() -> rx.Component:
                                 rx.select.item("货币兑换", value="货币兑换"),
                                 rx.select.item("债务", value="债务"),
                                 rx.select.item("资金移动", value="资金移动")
-                            ),
+                            , position="popper", side="bottom"),
                             value=FinanceState.rec_type,
                             on_change=FinanceState.set_rec_type,
                             size="2"
@@ -1160,7 +1160,7 @@ def edit_transaction_accordion() -> rx.Component:
                                     value=r.id.to_string()
                                 )
                             )
-                        ),
+                        , position="popper", side="bottom"),
                         placeholder="请选择一条记录",
                         value=FinanceState.edit_selected_id,
                         on_change=FinanceState.set_edit_selected_id,
@@ -1177,7 +1177,7 @@ def edit_transaction_accordion() -> rx.Component:
                                 rx.select.content(
                                     rx.select.item("收入", value="收入"),
                                     rx.select.item("支出", value="支出")
-                                ),
+                                , position="popper", side="bottom"),
                                 value=FinanceState.edit_type, on_change=FinanceState.set_edit_type, size="2"
                             ), width="auto"),
                             spacing="3",
@@ -1196,7 +1196,7 @@ def edit_transaction_accordion() -> rx.Component:
                                     FinanceState.cash_accounts,
                                     lambda acc: rx.select.item(acc.label, value=acc.id)
                                 )
-                            ),
+                            , position="popper", side="bottom"),
                             value=FinanceState.edit_acc_id, on_change=FinanceState.set_edit_acc_id, size="2"
                         ), width="auto"),
                         custom_form_field("相关页面网址", rx.input(value=FinanceState.edit_url, on_change=FinanceState.set_edit_url, size="2")),
@@ -1245,7 +1245,7 @@ def delete_transaction_accordion() -> rx.Component:
                                     value=r.id.to_string()
                                 )
                             )
-                        ),
+                        , position="popper", side="bottom"),
                         placeholder="请选择要删除的记录",
                         value=FinanceState.delete_selected_id,
                         on_change=FinanceState.set_delete_selected_id,

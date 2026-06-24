@@ -106,7 +106,7 @@ def build_manual_order_form() -> rx.Component:
                             SalesOrderState.platform_options,
                             lambda p: rx.select.item(p, value=p)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=SalesOrderState.platform_input,
                     on_change=SalesOrderState.set_platform_input,
                     size="2",
@@ -122,7 +122,7 @@ def build_manual_order_form() -> rx.Component:
                             SalesOrderState.all_currencies,
                             lambda curr: rx.select.item(curr, value=curr)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=SalesOrderState.currency_input,
                     on_change=SalesOrderState.set_currency_input,
                     size="2",
@@ -138,7 +138,7 @@ def build_manual_order_form() -> rx.Component:
                             SalesOrderState.cash_account_options,
                             lambda acc: rx.select.item(acc, value=acc)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=SalesOrderState.target_account_input,
                     on_change=SalesOrderState.set_target_account_input,
                     size="2",
@@ -161,7 +161,7 @@ def build_manual_order_form() -> rx.Component:
                             SalesOrderState.product_options,
                             lambda p: rx.cond(p != "全部商品", rx.select.item(p, value=p), rx.fragment())
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=SalesOrderState.sel_p_name,
                     on_change=SalesOrderState.select_p_name,
                     size="2",
@@ -177,7 +177,7 @@ def build_manual_order_form() -> rx.Component:
                             SalesOrderState.active_variants,
                             lambda v: rx.select.item(v, value=v)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=SalesOrderState.sel_v_name,
                     on_change=SalesOrderState.set_sel_v_name,
                     size="2",
@@ -203,7 +203,7 @@ def build_manual_order_form() -> rx.Component:
                             SalesOrderState.warehouse_options,
                             lambda w: rx.select.item(w, value=w)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=SalesOrderState.sel_wh_name,
                     on_change=SalesOrderState.set_sel_wh_name,
                     size="2",
@@ -770,7 +770,7 @@ def refund_dialog_modal() -> rx.Component:
                                                 item.part_options,
                                                 lambda part: rx.select.item(part, value=part)
                                             )
-                                        ),
+                                        , position="popper", side="bottom"),
                                         value=item.part_name,
                                         on_change=lambda val: SalesOrderState.update_resend_part(item.order_item_id, val),
                                         size="1",
@@ -783,7 +783,7 @@ def refund_dialog_modal() -> rx.Component:
                                                 SalesOrderState.warehouse_options,
                                                 lambda w: rx.cond(w != "未分配", rx.select.item(w, value=w), rx.fragment())
                                             )
-                                        ),
+                                        , position="popper", side="bottom"),
                                         value=item.warehouse_name,
                                         on_change=lambda val: SalesOrderState.update_resend_warehouse(item.order_item_id, val),
                                         size="1",
@@ -862,7 +862,7 @@ def sales_order_page() -> rx.Component:
                             SalesOrderState.product_options,
                             lambda p: rx.select.item(p, value=p)
                         )
-                    ),
+                    , position="popper", side="bottom"),
                     value=SalesOrderState.selected_product_filter,
                     on_change=SalesOrderState.select_product_filter,
                     size="2",
