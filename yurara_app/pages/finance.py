@@ -338,6 +338,24 @@ def batch_expense_form() -> rx.Component:
             columns="3", spacing="4", width="100%"
         ),
         
+        # 购入模式选择 (仅当收支细分类型为"其他资产购入"时展示)
+        rx.cond(
+            FinanceState.f_category == "其他资产购入",
+            custom_form_field(
+                "购入模式",
+                rx.radio_group.root(
+                    rx.hstack(
+                        rx.radio_group.item("新增项目 (新建物品并展开明细表)", value="new"),
+                        rx.radio_group.item("补充现有项目库存", value="replenish"),
+                        spacing="5"
+                    ),
+                    value=FinanceState.asset_purchase_mode,
+                    on_change=FinanceState.set_asset_purchase_mode
+                )
+            ),
+            rx.fragment()
+        ),
+        
         # 联动加载预算匹配选择
         rx.cond(
             FinanceState.f_category == "商品成本",
@@ -407,9 +425,11 @@ def batch_expense_form() -> rx.Component:
             columns="3", spacing="4", width="100%"
         ),
         
-        # 共同邮费录入 (不匹配预算时显示)
+        # 共同邮费录入 (不匹配预算且非其他资产补充库存模式时显示)
         rx.cond(
-            FinanceState.batch_selected_budget_id == "",
+            (FinanceState.batch_selected_budget_id == "") & ~(
+                (FinanceState.f_category == "其他资产购入") & (FinanceState.asset_purchase_mode == "replenish")
+            ),
             custom_form_field(
                 "订单共同邮费",
                 rx.input(
@@ -424,7 +444,61 @@ def batch_expense_form() -> rx.Component:
         ),
         
         # 物品明细表格与输入行
-        batch_editor_table(),
+        rx.cond(
+            (FinanceState.f_category == "其他资产购入") & (FinanceState.asset_purchase_mode == "replenish"),
+            rx.vstack(
+                rx.grid(
+                    custom_form_field(
+                        "选择补充项目",
+                        rx.select.root(
+                            rx.select.trigger(width="100%"),
+                            rx.select.content(
+                                rx.foreach(
+                                    FinanceState.active_consumables_list,
+                                    lambda c: rx.select.item(c.label, value=c.id)
+                                )
+                            , position="popper", side="bottom"),
+                            placeholder="请选择项目...",
+                            value=FinanceState.replenish_asset_id,
+                            on_change=FinanceState.set_replenish_asset_id,
+                            size="2", width="100%"
+                        )
+                    ),
+                    custom_form_field(
+                        "补充金额 (总价)",
+                        rx.input(
+                            type="number",
+                            placeholder="请输入总价",
+                            value=FinanceState.f_amount.to_string(),
+                            on_change=lambda v: FinanceState.set_f_amount(rx.cond(v != "", v.to(float), 0.0)),
+                            size="2", width="100%"
+                        )
+                    ),
+                    custom_form_field(
+                        "补充数量",
+                        rx.input(
+                            type="number",
+                            placeholder="请输入数量",
+                            value=FinanceState.replenish_qty.to_string(),
+                            on_change=lambda v: FinanceState.set_replenish_qty(rx.cond(v != "", v.to(float), 1.0)),
+                            size="2", width="100%"
+                        )
+                    ),
+                    columns="3", spacing="4", width="100%"
+                ),
+                custom_form_field(
+                    "补充备注",
+                    rx.input(
+                        placeholder="补充备注/说明 (如：自主补货)",
+                        value=FinanceState.f_desc,
+                        on_change=FinanceState.set_f_desc,
+                        size="2", width="100%"
+                    )
+                ),
+                spacing="3", width="100%"
+            ),
+            batch_editor_table()
+        ),
         spacing="3", width="100%"
     )
 

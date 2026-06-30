@@ -141,6 +141,12 @@ class FinanceState(AppState):
     temp_url: str = ""
     batch_items: list[TempBatchItem] = []
     
+    # === 其他资产购入补充库存专属 ===
+    asset_purchase_mode: str = "new"  # "new" (新增项目) / "replenish" (补充现有项目库存)
+    replenish_asset_id: str = ""
+    replenish_qty: float = 1.0
+    active_consumables_list: list[AssetOption] = []
+    
     # === 编辑/删除面板专属 ===
     edit_selected_id: str = ""
     edit_date: str = ""
@@ -396,6 +402,13 @@ class FinanceState(AppState):
     def set_batch_shipping_fee(self, val: float): self.batch_shipping_fee = val
 
     @rx.event
+    def set_asset_purchase_mode(self, val: str): self.asset_purchase_mode = val
+    @rx.event
+    def set_replenish_asset_id(self, val: str): self.replenish_asset_id = val
+    @rx.event
+    def set_replenish_qty(self, val: float): self.replenish_qty = val
+
+    @rx.event
     def set_temp_name(self, val: str): self.temp_name = val
     @rx.event
     def set_temp_amount(self, val: float): self.temp_amount = val
@@ -526,6 +539,11 @@ class FinanceState(AppState):
         self.move_desc = ""
         self.batch_items = []
         self.batch_shipping_fee = 0.0
+        self.asset_purchase_mode = "new"
+        self.replenish_asset_id = ""
+        self.replenish_qty = 1.0
+        if self.active_consumables_list:
+            self.replenish_asset_id = self.active_consumables_list[0].id
         # 切换业务大类时同步重置细分类型，避免旧值残留导致 Select 渲染异常
         if self.rec_type == "收入":
             self.f_category = "销售收入"
@@ -667,6 +685,14 @@ class FinanceState(AppState):
                 for p in p_list
             ]
             
+            # E. 现有其他资产列表 (用于选择补充项目)
+            from models import ConsumableItem
+            cons_list = db.query(ConsumableItem).all()
+            self.active_consumables_list = [
+                AssetOption(id=str(c.id), label=c.name)
+                for c in cons_list
+            ]
+            
             # 初始化默认的外键 ID
             if self.cash_accounts:
                 if not self.f_account_id:
@@ -692,6 +718,9 @@ class FinanceState(AppState):
                 
             if self.offset_assets and not self.debt_repay_offset_asset_id:
                 self.debt_repay_offset_asset_id = self.offset_assets[0].id
+
+            if self.active_consumables_list and not self.replenish_asset_id:
+                self.replenish_asset_id = self.active_consumables_list[0].id
 
             self.load_budgets_options()
 
@@ -919,6 +948,8 @@ class FinanceState(AppState):
                 else:
                     # C-3: 批量录入模式或单项录入模式
                     is_batch_mode = self.rec_type == "支出" and self.f_category in ["商品成本", "固定资产购入", "其他资产购入"]
+                    if is_batch_mode and self.f_category == "其他资产购入" and self.asset_purchase_mode == "replenish":
+                        is_batch_mode = False
                 
                     # A. 批量录入模式
                     if is_batch_mode:
@@ -987,29 +1018,71 @@ class FinanceState(AppState):
 
                     # B. 单项通用录入模式
                     else:
-                        if self.f_amount <= 0:
-                            yield rx.toast("录入金额必须大于 0！", level="warning")
-                            return
+                        if self.f_category == "其他资产购入" and self.asset_purchase_mode == "replenish":
+                            if not self.replenish_asset_id:
+                                yield rx.toast("请选择要补充的资产项目！", level="warning")
+                                return
+                            if self.f_amount <= 0:
+                                yield rx.toast("金额必须大于 0！", level="warning")
+                                return
+                            if self.replenish_qty <= 0:
+                                yield rx.toast("数量必须大于 0！", level="warning")
+                                return
+                            if not self.f_account_id:
+                                yield rx.toast("未指定操作现金扣款账户！", level="warning")
+                                return
+                                
+                            from models import ConsumableItem
+                            target_con = db.query(ConsumableItem).filter(ConsumableItem.id == int(self.replenish_asset_id)).first()
+                            if not target_con:
+                                yield rx.toast("所选资产项目不存在！", level="warning")
+                                return
+                                
+                            note_detail = f"{self.f_shop.strip()}" if self.f_shop.strip() else ""
+                            note_detail += f" (x{self.replenish_qty})"
+                            if self.f_desc.strip():
+                                note_detail += f" | {self.f_desc.strip()}"
+                                
+                            base_data = {
+                                "date": date.fromisoformat(self.f_date), "type": "支出", "currency": self.f_currency,
+                                "amount": self.f_amount, "category": self.f_category, "shop": self.f_shop.strip(),
+                                "desc": self.f_desc.strip(), "url": self.f_url.strip(), "account_id": int(self.f_account_id),
+                                "is_non_cash": False
+                            }
                             
-                        # 非现金类别不需要现金账户
-                        is_non_cash = self.f_category in FinanceService.NON_CASH_CATEGORIES
-                        acc_id = int(self.f_account_id) if (not is_non_cash and self.f_account_id) else None
-                        
-                        base_data = {
-                            "date": date.fromisoformat(self.f_date), "type": self.rec_type, "currency": self.f_currency,
-                            "amount": self.f_amount, "category": self.f_category, "shop": self.f_shop.strip(),
-                            "desc": self.f_desc.strip(), "url": self.f_url.strip(), "account_id": acc_id,
-                            "is_non_cash": is_non_cash
-                        }
-                        
-                        # 确定业务映射类型
-                        link_config = {
-                            "link_type": None, "is_new": False, "target_id": None,
-                            "name": "", "qty": 1.0, "unit_price": self.f_amount, "product_id": None, "cat": ""
-                        }
-                        
-                        msg = FinanceService.create_general_transaction(db, base_data, link_config, dict(self.rates_map))
-                        yield rx.toast(f"💾 记账成功: {msg}")
+                            link_config = {
+                                "link_type": "consumable", "is_new": False, "target_id": target_con.id,
+                                "name": target_con.name, "qty": self.replenish_qty, 
+                                "unit_price": self.f_amount / self.replenish_qty if self.replenish_qty > 0 else 0,
+                                "product_id": None, "cat": target_con.category
+                            }
+                            
+                            msg = FinanceService.create_general_transaction(db, base_data, link_config, dict(self.rates_map))
+                            yield rx.toast(f"💾 记账并补充库存成功: {msg}")
+                        else:
+                            if self.f_amount <= 0:
+                                yield rx.toast("录入金额必须大于 0！", level="warning")
+                                return
+                                
+                            # 非现金类别不需要现金账户
+                            is_non_cash = self.f_category in FinanceService.NON_CASH_CATEGORIES
+                            acc_id = int(self.f_account_id) if (not is_non_cash and self.f_account_id) else None
+                            
+                            base_data = {
+                                "date": date.fromisoformat(self.f_date), "type": self.rec_type, "currency": self.f_currency,
+                                "amount": self.f_amount, "category": self.f_category, "shop": self.f_shop.strip(),
+                                "desc": self.f_desc.strip(), "url": self.f_url.strip(), "account_id": acc_id,
+                                "is_non_cash": is_non_cash
+                            }
+                            
+                            # 确定业务映射类型
+                            link_config = {
+                                "link_type": None, "is_new": False, "target_id": None,
+                                "name": "", "qty": 1.0, "unit_price": self.f_amount, "product_id": None, "cat": ""
+                            }
+                            
+                            msg = FinanceService.create_general_transaction(db, base_data, link_config, dict(self.rates_map))
+                            yield rx.toast(f"💾 记账成功: {msg}")
 
             # ---- 场景 D: 资金移动 ----
             elif self.rec_type == "资金移动":

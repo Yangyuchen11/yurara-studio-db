@@ -685,6 +685,7 @@ class FinanceService:
                 if base_data.get('url'): target_item.url = base_data['url']
                 log_note = f"资产增加(收入): {base_data['desc']}" if is_income else f"购入入库: {base_data['desc']}"
                 link_msg += f" + 其他资产库存 (已合并: {target_item.name})"
+                new_record.related_item_id = target_item.id
             else:
                 new_con = ConsumableItem(
                     name=link_config['name'], category=link_config.get('cat', '其他'),
@@ -695,6 +696,8 @@ class FinanceService:
                     url=base_data.get('url', '')
                 )
                 db.add(new_con)
+                db.flush()
+                new_record.related_item_id = new_con.id
                 log_note = f"资产增加(初始): {base_data['desc']}" if is_income else f"初始购入: {base_data['desc']}"
                 link_msg += " + 新其他资产库存"
             
@@ -857,6 +860,9 @@ class FinanceService:
         rec = FinanceService.get_record_by_id(db, record_id)
         if not rec: return False
 
+        old_amount = rec.amount
+        old_description = rec.description
+
         # 检查这条流水是否关联了多个明细项（即是否为批量录入产生的）
         related_costs_count = db.query(CostItem).filter(CostItem.finance_record_id == record_id).count()
         related_fixed_assets_count = db.query(FixedAsset).filter(FixedAsset.finance_record_id == record_id).count()
@@ -909,7 +915,16 @@ class FinanceService:
         
         # 提取原有 description 中可能隐藏的 [cost_item:\d+] 标签
         match = re.search(r'\[cost_item:\d+\]', rec.description or "")
+        # 提取原有 description 中的 (x...) 数量标识 (针对其他资产购入补充库存模式)
+        match_qty = re.search(r'\(x[\d\.]+\)', rec.description or "")
         new_desc = re.sub(r'\s*\[cost_item:\d+\]', '', updates['desc'])
+        if match_qty and not re.search(r'\(x[\d\.]+\)', new_desc):
+            if "|" in new_desc:
+                parts = new_desc.split("|", 1)
+                new_desc = f"{parts[0].strip()} {match_qty.group(0)} | {parts[1].strip()}"
+            else:
+                new_desc = f"{new_desc.strip()} {match_qty.group(0)}"
+                
         if match:
             tag = match.group(0)
             if "|" in new_desc:
@@ -966,9 +981,50 @@ class FinanceService:
             fa.currency = new_currency 
             fa.remarks = updates['desc'] # 同步更新备注
             
-        for ci in db.query(ConsumableItem).filter(ConsumableItem.finance_record_id == record_id).all():
-            if ci.initial_quantity > 0: ci.unit_price = updates['amount_abs'] / ci.initial_quantity
-            ci.currency = new_currency
+        if rec.category == "其他资产购入" and rec.related_item_id:
+            target_con = db.query(ConsumableItem).filter(ConsumableItem.id == rec.related_item_id).first()
+            if target_con:
+                if target_con.finance_record_id == record_id:
+                    if target_con.initial_quantity > 0:
+                        target_con.unit_price = updates['amount_abs'] / target_con.initial_quantity
+                    target_con.currency = new_currency
+                else:
+                    qty_to_sub = FinanceService.extract_qty_from_desc(old_description)
+                    if target_con.remaining_qty > 0:
+                        old_total = target_con.unit_price * target_con.remaining_qty - abs(old_amount)
+                        target_con.unit_price = max(0.0, (old_total + updates['amount_abs']) / target_con.remaining_qty)
+                    target_con.currency = new_currency
+                
+                from models import SystemSetting, ConsumableLog
+                rates_map = {}
+                settings = db.query(SystemSetting).filter(SystemSetting.key.like("rate_CNY_per_%")).all()
+                for s in settings:
+                    parts = s.key.split("_")
+                    if len(parts) >= 5:
+                        rates_map[parts[3]] = float(s.value) / 100.0
+                if "JPY" not in rates_map:
+                    old_set = db.query(SystemSetting).filter(SystemSetting.key == "exchange_rate").first()
+                    rates_map["JPY"] = float(old_set.value) / 100.0 if old_set else 0.048
+                
+                rate = to_cny(1.0, new_currency, rates_map)
+                val_cny = updates['amount_abs'] * rate
+                
+                qty_to_sub = FinanceService.extract_qty_from_desc(old_description)
+                log_to_upd = db.query(ConsumableLog).filter(
+                    ConsumableLog.item_name == target_con.name,
+                    ConsumableLog.change_qty == qty_to_sub,
+                    ConsumableLog.date == rec.date
+                ).order_by(ConsumableLog.id.desc()).first()
+                if log_to_upd:
+                    log_to_upd.value_cny = val_cny
+                    if "补充现有库存:" in log_to_upd.note:
+                        log_to_upd.note = f"补充现有库存: {updates['desc']}"
+                    else:
+                        log_to_upd.note = updates['desc']
+        else:
+            for ci in db.query(ConsumableItem).filter(ConsumableItem.finance_record_id == record_id).all():
+                if ci.initial_quantity > 0: ci.unit_price = updates['amount_abs'] / ci.initial_quantity
+                ci.currency = new_currency
             
         for bi in db.query(CompanyBalanceItem).filter(CompanyBalanceItem.finance_record_id == record_id).all():
             bi.amount = updates['amount_abs']
@@ -1209,8 +1265,38 @@ class FinanceService:
                 if cost: product_id_to_sync = cost.product_id
                 db.query(CostItem).filter(CostItem.finance_record_id == record_id).delete()
             
+            if rec.category == "其他资产购入" and rec.related_item_id:
+                target_con = db.query(ConsumableItem).filter(ConsumableItem.id == rec.related_item_id).first()
+                if target_con:
+                    if target_con.finance_record_id == record_id:
+                        db.query(ConsumableLog).filter(
+                            ConsumableLog.item_name == target_con.name,
+                            ConsumableLog.change_qty == target_con.initial_quantity,
+                            ConsumableLog.date == rec.date
+                        ).delete()
+                        db.delete(target_con)
+                        msg_list.append(f"已级联删除新资产项【{target_con.name}】")
+                    else:
+                        qty_to_sub = FinanceService.extract_qty_from_desc(rec.description)
+                        old_qty = target_con.remaining_qty - qty_to_sub
+                        if old_qty > 0:
+                            old_total = target_con.unit_price * target_con.remaining_qty - abs(rec.amount)
+                            target_con.unit_price = max(0.0, old_total / old_qty)
+                            target_con.remaining_qty = old_qty
+                        else:
+                            target_con.remaining_qty = 0.0
+                            target_con.unit_price = 0.0
+                        msg_list.append(f"已回滚资产【{target_con.name}】补充库存 {qty_to_sub} 个及均价")
+                        
+                        db.query(ConsumableLog).filter(
+                            ConsumableLog.item_name == target_con.name,
+                            ConsumableLog.change_qty == qty_to_sub,
+                            ConsumableLog.date == rec.date
+                        ).delete()
+            else:
+                db.query(ConsumableItem).filter(ConsumableItem.finance_record_id == record_id).delete()
+
             db.query(FixedAsset).filter(FixedAsset.finance_record_id == record_id).delete()
-            db.query(ConsumableItem).filter(ConsumableItem.finance_record_id == record_id).delete()
             db.query(CompanyBalanceItem).filter(CompanyBalanceItem.finance_record_id == record_id).delete()
         
         db.delete(rec)
