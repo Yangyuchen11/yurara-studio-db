@@ -72,7 +72,7 @@ class FinanceService:
         return db.query(ConsumableItem).all()
 
     @staticmethod
-    def get_finance_records_page(db, page=1, page_size=100, search_query=""):
+    def get_finance_records_page(db, page=1, page_size=100, search_query="", filter_type="", filter_category=""):
         """
         🚀 真正的数据库级分页查询：只抓取当前页所需数据。
         通过 SQL 窗口函数在数据库层计算当前行余额，避免拉取全表到 Python 内存。
@@ -116,6 +116,24 @@ class FinanceService:
             if "支出" in search_query:
                 conditions.append(subq.c.amount < 0)
             q = q.filter(or_(*conditions))
+
+        # 业务大类筛选（精确，独立于关键字搜索）
+        if filter_type == "收入":
+            q = q.filter(subq.c.amount > 0)
+        elif filter_type == "支出":
+            q = q.filter(subq.c.amount < 0)
+        elif filter_type == "货币兑换":
+            q = q.filter(subq.c.category == "货币兑换")
+        elif filter_type == "负债":
+            q = q.filter(subq.c.category.in_([
+                "借入资金", "新增挂账资产", "债务偿还", "资产抚消", "其他待付款", "商品成本待付款"
+            ]))
+        elif filter_type == "资金移动":
+            q = q.filter(subq.c.category == "资金移动")
+
+        # 收支细分类型筛选（精确匹配，独立于其他筛选）
+        if filter_category and filter_category.strip():
+            q = q.filter(subq.c.category == filter_category.strip())
 
         total_count = q.count()
 

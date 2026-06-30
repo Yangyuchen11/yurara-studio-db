@@ -34,7 +34,7 @@ def stat_indicator_card(label: str, value: rx.Var, unit: str = "CNY", color_sche
     )
 
 CATS_INCOME = ["销售收入", "退款", "投资", "现有资产增加", "其他资产增加", "新资产增加", "其他现金收入"]
-CATS_EXPENSE = ["商品成本", "商品成本待付款", "固定资产购入", "其他资产购入", "其他待付款", "撤资", "分红", "现有资产减少", "其他"]
+CATS_EXPENSE = ["商品成本", "商品成本待付款", "固定资产购入", "其他资产购入", "其他待付款", "撤资", "分红", "现有资产减少", "公司经营费用", "其他"]
 
 
 # ===================== 表单场景子组件 =====================
@@ -1065,13 +1065,92 @@ def render_table_row(rec: FinanceRecordItem) -> rx.Component:
 
 def records_table_area() -> rx.Component:
     """真分页流水表格组件"""
+
+    # 业务大类对应的细分类型映射（用 rx.cond 链处理联动）
+    def sub_category_items() -> rx.Component:
+        """根据 filter_type 动态渲染细分类型选项"""
+        return rx.cond(
+            FinanceState.filter_type == "收入",
+            rx.foreach(CATS_INCOME, lambda c: rx.select.item(c, value=c)),
+            rx.cond(
+                FinanceState.filter_type == "支出",
+                rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c)),
+                # 其他业务大类没有细分类型，仅显示占位
+                rx.select.item("（无细分选项）", value="__none__", disabled=True),
+            )
+        )
+
+    # 细分筛选是否可用（仅收入/支出有细分类型）
+    sub_enabled = (FinanceState.filter_type == "收入") | (FinanceState.filter_type == "支出")
+
+    # 是否有任何激活的筛选/搜索
+    has_any_filter = (
+        (FinanceState.search_query != "") |
+        (FinanceState.filter_type != "") |
+        (FinanceState.filter_category != "")
+    )
+
     return rx.vstack(
-        rx.input(
-            placeholder="🔍 输入关键字搜索分类、说明备注、币种、金额、收支类型或日期...",
-            value=FinanceState.search_query,
-            on_change=FinanceState.set_search_query,
+        # ---- 顶部工具栏：搜索 + 业务大类筛选 + 细分类型筛选 + 清除 ----
+        rx.hstack(
+            # 关键字搜索
+            rx.input(
+                placeholder="🔍 输入关键字搜索分类、说明备注、币种、金额、收支类型或日期...",
+                value=FinanceState.search_query,
+                on_change=FinanceState.set_search_query,
+                flex="1",
+                size="2",
+            ),
+            # 第一个筛选框：业务大类
+            rx.select.root(
+                rx.select.trigger(
+                    placeholder="业务大类",
+                    width="120px",
+                ),
+                rx.select.content(
+                    rx.select.item("全部", value="__all__"),
+                    rx.select.separator(),
+                    rx.select.item("收入", value="收入"),
+                    rx.select.item("支出", value="支出"),
+                    rx.select.item("货币兑换", value="货币兑换"),
+                    rx.select.item("债务", value="债务"),
+                    rx.select.item("资金移动", value="资金移动"),
+                    position="popper", side="bottom",
+                ),
+                value=FinanceState.filter_type,
+                on_change=FinanceState.set_filter_type,
+                size="2",
+            ),
+            # 第二个筛选框：收支细分类型（联动）
+            rx.select.root(
+                rx.select.trigger(
+                    placeholder="收支细分类型",
+                    width="140px",
+                ),
+                rx.select.content(
+                    rx.select.item("全部细分", value="__all__"),
+                    rx.select.separator(),
+                    sub_category_items(),
+                    position="popper", side="bottom",
+                ),
+                value=FinanceState.filter_category,
+                on_change=FinanceState.set_filter_category,
+                disabled=~sub_enabled,
+                size="2",
+            ),
+            # 清除筛选条件按钮（固定显示，无条件时灰色禁用）
+            rx.button(
+                rx.icon("x", size=13),
+                "清除筛选条件",
+                on_click=FinanceState.clear_all_filters,
+                disabled=~has_any_filter,
+                size="2",
+                variant="soft",
+                color_scheme="red",
+            ),
+            spacing="2",
+            align="center",
             width="100%",
-            size="2",
         ),
         rx.cond(
             FinanceState.records.length() == 0,
@@ -1185,7 +1264,19 @@ def edit_transaction_accordion() -> rx.Component:
                         ),
                         rx.hstack(
                             custom_form_field("金额", rx.input(type="number", value=FinanceState.edit_amount.to_string(), on_change=lambda v: FinanceState.set_edit_amount(rx.cond(v != "", v.to(float), 0.0)), size="2"), width="auto"),
-                            custom_form_field("具体分类", rx.input(value=FinanceState.edit_category, on_change=FinanceState.set_edit_category, size="2"), width="auto"),
+                            custom_form_field("具体分类", rx.select.root(
+                                rx.select.trigger(width="220px"),
+                                rx.select.content(
+                                    rx.cond(
+                                        FinanceState.edit_type == "收入",
+                                        rx.foreach(CATS_INCOME, lambda c: rx.select.item(c, value=c)),
+                                        rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
+                                    )
+                                , position="popper", side="bottom"),
+                                value=FinanceState.edit_category,
+                                on_change=FinanceState.set_edit_category,
+                                size="2", width="100%"
+                            ), width="auto"),
                             spacing="3",
                             align="end"
                         ),

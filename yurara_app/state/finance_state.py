@@ -75,6 +75,8 @@ class FinanceState(AppState):
     total_cash_cny_str: str = "¥ 0.00"
     is_loading: bool = False
     search_query: str = ""
+    filter_type: str = ""      # "" = 全部 / "收入" / "支出"
+    filter_category: str = ""  # "" = 全部 / 具体分类名
     
     # === 表单共用控制 ===
     active_tab: str = "list"  # list / add / edit / delete
@@ -233,6 +235,28 @@ class FinanceState(AppState):
     @rx.event
     def set_search_query(self, val: str):
         self.search_query = val
+        self.page = 1
+        yield FinanceState.load_finance_page()
+
+    @rx.event
+    def set_filter_type(self, val: str):
+        self.filter_type = "" if val == "__all__" else val
+        self.filter_category = ""   # 切换业务大类时重置细分类型
+        self.page = 1
+        yield FinanceState.load_finance_page()
+
+    @rx.event
+    def set_filter_category(self, val: str):
+        self.filter_category = "" if val == "__all__" else val
+        self.page = 1
+        yield FinanceState.load_finance_page()
+
+    @rx.event
+    def clear_all_filters(self):
+        """一键清除搜索词和所有筛选条件"""
+        self.search_query = ""
+        self.filter_type = ""
+        self.filter_category = ""
         self.page = 1
         yield FinanceState.load_finance_page()
 
@@ -516,14 +540,14 @@ class FinanceState(AppState):
             import math
             
             # 1. 抓取真分页明细 (50条/页)
-            df, total_rows = FinanceService.get_finance_records_page(db, page=self.page, page_size=50, search_query=self.search_query)
+            df, total_rows = FinanceService.get_finance_records_page(db, page=self.page, page_size=50, search_query=self.search_query, filter_type=self.filter_type, filter_category=self.filter_category)
             self.total_records = total_rows
             self.total_pages = max(1, math.ceil(total_rows / 50))
             
             # 页码溢出容错
             if self.page > self.total_pages:
                 self.page = self.total_pages
-                df, _ = FinanceService.get_finance_records_page(db, page=self.page, page_size=50, search_query=self.search_query)
+                df, _ = FinanceService.get_finance_records_page(db, page=self.page, page_size=50, search_query=self.search_query, filter_type=self.filter_type, filter_category=self.filter_category)
 
             # 解析为 Pydantic 强类型记录
             processed_records = []
