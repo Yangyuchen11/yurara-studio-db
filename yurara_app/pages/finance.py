@@ -1295,7 +1295,8 @@ def edit_transaction_accordion() -> rx.Component:
                         rx.button(
                             rx.icon("save", size=13), "保存修改内容",
                             on_click=FinanceState.submit_edit_record,
-                            size="2", color_scheme="violet"
+                            size="2",
+                            style={"background": "#10b981", "color": "white", "font_weight": "bold", "cursor": "pointer"}
                         ),
                         spacing="3", width="100%", padding_top="0.5rem"
                     ),
