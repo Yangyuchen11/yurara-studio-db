@@ -46,7 +46,7 @@ def common_single_form() -> rx.Component:
             custom_form_field(
                 "收支细分类型",
                 rx.select.root(
-                    rx.select.trigger(),
+                    rx.select.trigger(width="100%"),
                     rx.select.content(
                         rx.cond(
                             FinanceState.rec_type == "收入",
@@ -93,7 +93,7 @@ def common_single_form() -> rx.Component:
             custom_form_field(
                 rx.cond(FinanceState.rec_type == "收入", "入账账户", "操作账户"),
                 rx.select.root(
-                    rx.select.trigger(),
+                    rx.select.trigger(width="100%"),
                     rx.select.content(
                         rx.foreach(
                             FinanceState.cash_accounts,
@@ -268,9 +268,9 @@ def batch_expense_form() -> rx.Component:
     return rx.vstack(
         rx.grid(
             custom_form_field(
-                "操作大类",
+                "收支细分类型",
                 rx.select.root(
-                    rx.select.trigger(),
+                    rx.select.trigger(width="400px"),
                     rx.select.content(
                         rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
                     , position="popper", side="bottom"),
@@ -434,9 +434,9 @@ def pending_cost_form() -> rx.Component:
     return rx.vstack(
         rx.grid(
             custom_form_field(
-                "操作大类",
+                "收支细分类型",
                 rx.select.root(
-                    rx.select.trigger(),
+                    rx.select.trigger(width="400px"),
                     rx.select.content(
                         rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
                     , position="popper", side="bottom"),
@@ -552,9 +552,9 @@ def pending_other_form() -> rx.Component:
     return rx.vstack(
         rx.grid(
             custom_form_field(
-                "操作大类",
+                "收支细分类型",
                 rx.select.root(
-                    rx.select.trigger(),
+                    rx.select.trigger(width="400px"),
                     rx.select.content(
                         rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
                     , position="popper", side="bottom"),

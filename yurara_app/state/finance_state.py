@@ -526,6 +526,13 @@ class FinanceState(AppState):
         self.move_desc = ""
         self.batch_items = []
         self.batch_shipping_fee = 0.0
+        # 切换业务大类时同步重置细分类型，避免旧值残留导致 Select 渲染异常
+        if self.rec_type == "收入":
+            self.f_category = "销售收入"
+        elif self.rec_type == "支出":
+            self.f_category = "其他"
+        else:
+            self.f_category = ""
 
     # ===================== 加载列表数据 =====================
 
