@@ -244,7 +244,7 @@ def index_page() -> rx.Component:
         height="100vh",
     )
 
-app.add_page(index_page, route="/", on_load=rx.redirect("/finance"))
+app.add_page(index_page, route="/", on_load=AuthState.index_redirect)
 
 # === 自定义 API：全量数据备份 ZIP 下载接口 ===
 def download_backup(request):

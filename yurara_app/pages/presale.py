@@ -718,14 +718,6 @@ def order_detail_modal() -> rx.Component:
                     )
                 ),
                 rx.hstack(
-                    rx.button("💾 保存修改", on_click=PresaleState.submit_update_notes, size="2", color_scheme="violet"),
-                    rx.spacer(),
-                    # 仅在有尾款时显示物理撤回尾款
-                    rx.cond(
-                        PresaleState.detail_final_order_no != "-",
-                        rx.button("🟠 物理撤销/解绑尾款", on_click=PresaleState.unbind_presale_final, size="2", color_scheme="orange"),
-                        rx.fragment()
-                    ),
                     rx.cond(
                         PresaleState.show_delete_confirm,
                         rx.hstack(
@@ -736,6 +728,14 @@ def order_detail_modal() -> rx.Component:
                         ),
                         rx.button("🗑️ 彻底删除整个预售订单", on_click=PresaleState.open_delete_confirm, size="2", color_scheme="red")
                     ),
+                    rx.spacer(),
+                    # 仅在有尾款时显示物理撤回尾款
+                    rx.cond(
+                        PresaleState.detail_final_order_no != "-",
+                        rx.button("🟠 物理撤销/解绑尾款", on_click=PresaleState.unbind_presale_final, size="2", color_scheme="orange"),
+                        rx.fragment()
+                    ),
+                    rx.button("💾 保存修改", on_click=PresaleState.submit_update_notes, size="2", color_scheme="violet"),
                     width="100%",
                     align="center",
                 ),

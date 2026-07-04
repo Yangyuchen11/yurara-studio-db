@@ -104,3 +104,16 @@ class AuthState(rx.State):
         self.auth_token = ""
         self.authenticated = False
         yield rx.redirect("/login")
+
+    @rx.event
+    async def index_redirect(self):
+        """
+        根目录入口跳转逻辑。
+        已登录（Cookie 有效）则跳转到财务页；未登录则跳转到登录页。
+        """
+        if self.auth_user and self.auth_token:
+            self.authenticated = True
+            yield rx.redirect("/finance")
+        else:
+            self.authenticated = False
+            yield rx.redirect("/login")
