@@ -131,7 +131,9 @@ class BalanceState(AppState):
         self.new_acc_curr = curr
 
     @rx.event
-    def load_balance_data(self):
+    async def load_balance_data(self):
+        if not await self.is_authenticated_user():
+            return
         db = self.get_db()
         try:
             from services.balance_service import BalanceService

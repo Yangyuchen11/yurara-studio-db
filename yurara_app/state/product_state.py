@@ -110,7 +110,9 @@ class ProductState(AppState):
     # ===================== 加载数据 =====================
 
     @rx.event
-    def load_products(self):
+    async def load_products(self):
+        if not await self.is_authenticated_user():
+            return
         self.is_loading = True
         yield
         db = self.get_db()

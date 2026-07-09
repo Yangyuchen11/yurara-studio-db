@@ -397,7 +397,9 @@ class PresaleState(AppState):
     # ===================== 核心事件处理器 =====================
 
     @rx.event
-    def load_presale_page(self):
+    async def load_presale_page(self):
+        if not await self.is_authenticated_user():
+            return
         self.pre_date_input = date.today().isoformat()
         self.selected_order_ids = []
         db = self.get_db()

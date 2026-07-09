@@ -184,6 +184,100 @@ POS_TRANSLATIONS = {
 }
 
 
+def _sync_load_offline_data(is_test: bool, selected_template_id: int):
+    """在后台线程中执行的所有数据库查询"""
+    import os
+    from sqlalchemy.orm import sessionmaker
+    from .app_state import get_cached_engine
+    from models import OfflineTemplate
+    
+    engine = get_cached_engine(is_test)
+    Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    db = Session()
+    try:
+        service = OfflineSalesService(db)
+        
+        # 1. 加载模板列表
+        _api_url = os.environ.get("API_URL", f"http://localhost:{os.environ.get('BACKEND_PORT', '8000')}")
+        tpls = service.get_all_templates()
+        prod_service = ProductService(service.db)
+        all_prods = prod_service.get_all_products()
+        img_lookup = {f"{p.name}_{c.color_name}": f"{_api_url}/color-image/{c.id}" if c.image_data else "" for p in all_prods for c in p.colors}
+        
+        inv_service = InventoryService(service.db)
+        wh_details = inv_service.get_warehouse_inventory_details()
+        prod_lookup = {p.name: p for p in all_prods}
+        
+        tpl_list = []
+        for t in tpls:
+            stock_in_wh = wh_details.get(t.warehouse_id, {}).get("stock", {})
+            items_list = []
+            for item in t.items:
+                prod_obj = prod_lookup.get(item.product_name)
+                reqs = {"整套": 1}
+                if prod_obj:
+                    color_obj = next((c for c in prod_obj.colors if c.color_name == item.variant), None)
+                    if color_obj and color_obj.parts:
+                        reqs = {p.part_name: p.quantity for p in color_obj.parts}
+                
+                pt_dict = stock_in_wh.get(item.product_name, {}).get(item.variant, {})
+                possible_sets = 0
+                if reqs:
+                    possible_sets = min((pt_dict.get(pt, 0) // req) for pt, req in reqs.items())
+                
+                key = f"{item.product_name}_{item.variant}"
+                img_data = img_lookup.get(key, "")
+                
+                items_list.append(POSTemplateItemModel(
+                    id=item.id,
+                    product_name=item.product_name,
+                    variant=item.variant,
+                    preset_price=round(float(item.preset_price), 2),
+                    remaining_quantity=item.remaining_quantity,
+                    max_limit=max(0, possible_sets),
+                    image_data=img_data
+                ))
+            
+            tpl_list.append(POSTemplateModel(
+                id=t.id,
+                name=t.name,
+                code=t.code,
+                currency=t.currency,
+                warehouse_id=t.warehouse_id or 0,
+                warehouse_name=t.warehouse.name if t.warehouse else "未分配",
+                platform=t.platform or "中国线下",
+                template_items=items_list
+            ))
+            
+        # 2. 加载选定模板的订单
+        active_tpl_id = selected_template_id if selected_template_id else (tpl_list[0].id if tpl_list else 0)
+        orders_list = []
+        if active_tpl_id:
+            tpl = service.db.query(OfflineTemplate).filter(OfflineTemplate.id == active_tpl_id).first()
+            if tpl:
+                orders = service.get_orders_by_template(tpl.code)
+                for o in orders:
+                    items_str = ", ".join([f"{i.product_name}-{i.variant} ×{i.quantity}" for i in o.items])
+                    fee = 0.0
+                    if "手续费" in (o.notes or ""):
+                        try:
+                            fee = float(o.notes.split("扣除手续费")[1].replace(")", "").strip())
+                        except:
+                            pass
+                    orders_list.append(POSOrderRow(
+                        order_no=o.order_no,
+                        date=o.created_date.strftime("%Y-%m-%d") if o.created_date else "",
+                        items_str=items_str,
+                        original_amount=round(float(o.total_amount), 2),
+                        received_amount=round(float(o.total_amount - fee), 2),
+                        notes=o.notes or ""
+                    ))
+        
+        return tpl_list, orders_list, active_tpl_id
+    finally:
+        db.close()
+
+
 class OfflineSalesState(AppState):
     pos_lang: str = "zh"  # "zh", "en", "ja"
     active_tab: str = "pos"  # "pos" 或 "template"
@@ -357,35 +451,44 @@ class OfflineSalesState(AppState):
     # ===================== 事件处理器 =====================
 
     @rx.event
-    def load_offline_page(self):
+    async def load_offline_page(self):
         """初始化加载展会收银页面。"""
+        # 1. 登录验证守卫（方案 A）
+        from .auth_state import AuthState
+        auth_state = await self.get_state(AuthState)
+        if not auth_state.authenticated:
+            return
+
         if self._page_initialized:
             # 页面已初始化且其间没有发生数据变更（结账/删单/模板修改均已内联刷新状态）
             # 直接跳过所有数据库查询，实现页面秒开入场
             self.auto_match_cash_account()
             return
         
-        db = self.get_db()
-        try:
-            service = OfflineSalesService(db)
-            self.load_templates_list(service)
-            if self.templates and not self.selected_template_id:
-                self.selected_template_id = self.templates[0].id
-                
-            if self.selected_template_id:
-                self.load_template_orders(service)
-            
-            # 懒加载优化：仅预设模板配置Tab的仓库默认值，不触发重量级库存查询
-            self._assignable_loaded = False
-            if self.templates:
-                first_tpl = self.templates[0]
-                self.tpl_wh_id = first_tpl.warehouse_id
-                self.tpl_wh_name = first_tpl.warehouse_name
-            self.tpl_platform = "国内线下"
-            self.is_edit_mode = False
-            self._page_initialized = True
-        finally:
-            db.close()
+        # 2. 将同步阻塞的数据库操作交付线程池运行（方案 C）
+        import asyncio
+        loop = asyncio.get_running_loop()
+        tpl_list, orders_list, active_tpl_id = await loop.run_in_executor(
+            None,
+            _sync_load_offline_data,
+            self.test_mode,
+            self.selected_template_id
+        )
+        
+        self.templates = tpl_list
+        self.pos_orders = orders_list
+        self.selected_template_id = active_tpl_id
+        
+        # 补全其他的状态初始化逻辑
+        self._assignable_loaded = False
+        if self.templates:
+            first_tpl = self.templates[0]
+            self.tpl_wh_id = first_tpl.warehouse_id
+            self.tpl_wh_name = first_tpl.warehouse_name
+        self.tpl_platform = "国内线下"
+        self.is_edit_mode = False
+        self._page_initialized = True
+        
         self.auto_match_cash_account()
 
     @rx.event

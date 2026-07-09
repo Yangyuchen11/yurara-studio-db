@@ -64,6 +64,178 @@ class CashBalanceIndicator(BaseModel):
     color: str = "blue"
 
 
+def _sync_load_finance_data(is_test: bool, rates_map: dict[str, float], page: int, search_query: str, filter_type: str, filter_category: str, batch_product_id: str, batch_cost_cat: str):
+    """在后台线程中执行 finance 页面的所有数据库查询和数据处理"""
+    from sqlalchemy.orm import sessionmaker
+    from .app_state import get_cached_engine
+    from services.finance_service import FinanceService
+    import math
+    import re
+    from models import CompanyBalanceItem, ConsumableItem
+    
+    engine = get_cached_engine(is_test)
+    Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    db = Session()
+    try:
+        # 1. 抓取真分页明细 (50条/页)
+        df, total_rows = FinanceService.get_finance_records_page(
+            db, page=page, page_size=50, 
+            search_query=search_query, 
+            filter_type=filter_type, 
+            filter_category=filter_category
+        )
+        total_pages = max(1, math.ceil(total_rows / 50))
+        
+        # 页码溢出容错
+        cur_page = page
+        if cur_page > total_pages:
+            cur_page = total_pages
+            df, _ = FinanceService.get_finance_records_page(
+                db, page=cur_page, page_size=50, 
+                search_query=search_query, 
+                filter_type=filter_type, 
+                filter_category=filter_category
+            )
+
+        processed_records = []
+        for _, row in df.iterrows():
+            processed_records.append(
+                FinanceRecordItem(
+                    id=int(row["ID"]),
+                    date=row["日期"].strftime("%Y-%m-%d"),
+                    currency=row["币种"],
+                    type=row["收支"],
+                    amount=round(float(row["金额"]), 2),
+                    category=row["分类"],
+                    desc=re.sub(r'\s*\[cost_item:\d+\]', '', row["备注"] or ""),
+                    url=row["网址"],
+                    cny_bal=round(float(row["当前CNY余额"]), 2),
+                    jpy_bal=round(float(row["当前JPY余额"]), 2)
+                )
+            )
+            
+        # 2. 当前总额指标
+        cash_accs = db.query(CompanyBalanceItem).filter(
+            CompanyBalanceItem.category == "asset",
+            CompanyBalanceItem.asset_type == "现金"
+        ).all()
+        
+        balances_by_curr = {}
+        for acc in cash_accs:
+            curr = acc.currency or "CNY"
+            balances_by_curr[curr] = balances_by_curr.get(curr, 0.0) + acc.amount
+            
+        indicators = []
+        rates = dict(rates_map)
+        
+        # CNY 始终第一个
+        cny_total = balances_by_curr.get("CNY", 0.0)
+        indicators.append(CashBalanceIndicator(
+            currency="CNY",
+            amount_str=f"¥ {cny_total:,.2f}",
+            cny_equiv_str="CNY",
+            color="green"
+        ))
+        
+        colors_palette = ["blue", "purple", "pink", "teal", "indigo"]
+        color_idx = 0
+        total_equiv_cny = cny_total
+        
+        for curr in sorted(balances_by_curr.keys()):
+            if curr == "CNY":
+                continue
+            amt = balances_by_curr[curr]
+            equiv = to_cny(amt, curr, rates)
+            total_equiv_cny += equiv
+            
+            indicators.append(CashBalanceIndicator(
+                currency=curr,
+                amount_str=f"{amt:,.2f} {curr}",
+                cny_equiv_str=f"折合 ¥ {equiv:,.2f}",
+                color=colors_palette[color_idx % len(colors_palette)]
+            ))
+            color_idx += 1
+            
+        # 3. 加载下拉选项
+        # A. 现金账户
+        cash_list = FinanceService.get_transferable_assets(db)
+        cash_accounts = [
+            CashAccountOption(
+                id=str(a.id),
+                label=f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})",
+                currency=a.currency
+            )
+            for a in cash_list
+        ]
+        
+        # B. 负债
+        liab_list = FinanceService.get_balance_items(db, "liability")
+        unsettled_debts = [
+            DebtOption(
+                id=str(l.id),
+                label=f"{l.name} (待还余额: {l.amount:,.2f})",
+                amount=float(l.amount),
+                currency=l.currency,
+                source_type=(
+                    "商品成本待付款" if l.name.startswith("商品成本待付款:")
+                    else "其他待付款" if l.name.startswith("其他待付款:")
+                    else ""
+                )
+            )
+            for l in liab_list
+        ]
+        
+        # C. 抵债资产
+        asset_list = FinanceService.get_balance_items(db, "asset")
+        offset_assets = [
+            AssetOption(id=str(a.id), label=f"{a.name} (余额: {a.amount:,.2f})")
+            for a in asset_list if not a.name.startswith(("在制", "预入库", "流动资金"))
+        ]
+        
+        # D. 商品列表
+        p_list = FinanceService.get_all_products(db)
+        products_list = [
+            ProductOption(id=str(p.id), label=p.name)
+            for p in p_list
+        ]
+        
+        # E. 现有其他资产列表
+        cons_list = db.query(ConsumableItem).all()
+        active_consumables_list = [
+            AssetOption(id=str(c.id), label=c.name)
+            for c in cons_list
+        ]
+        
+        # F. 联动加载预算项
+        budgets_list = []
+        if batch_product_id:
+            p_id = int(batch_product_id)
+            budgets = FinanceService.get_budget_items(db, p_id, batch_cost_cat)
+            budgets_list = [
+                BudgetOption(id=str(b.id), label=b.item_name)
+                for b in budgets
+            ]
+            
+        return {
+            "processed_records": processed_records,
+            "total_records": total_rows,
+            "total_pages": total_pages,
+            "cur_page": cur_page,
+            "indicators": indicators,
+            "total_equiv_cny": total_equiv_cny,
+            "cny_total": cny_total,
+            "jpy_total": balances_by_curr.get("JPY", 0.0),
+            "cash_accounts": cash_accounts,
+            "unsettled_debts": unsettled_debts,
+            "offset_assets": offset_assets,
+            "products_list": products_list,
+            "active_consumables_list": active_consumables_list,
+            "budgets_list": budgets_list,
+        }
+    finally:
+        db.close()
+
+
 class FinanceState(AppState):
     records: list[FinanceRecordItem] = []
     total_records: int = 0
@@ -555,180 +727,81 @@ class FinanceState(AppState):
     # ===================== 加载列表数据 =====================
 
     @rx.event
-    def load_finance_page(self):
+    async def load_finance_page(self):
+        # 1. 验证登录守卫 (方案 A)
+        if not await self.is_authenticated_user():
+            return
+            
         self.f_date = date.today().strftime("%Y-%m-%d")
         self.is_loading = True
         yield
-        db = self.get_db()
-        try:
-            from services.finance_service import FinanceService
-            import math
+        
+        # 2. 线程池后台查询 (方案 C)
+        import asyncio
+        loop = asyncio.get_running_loop()
+        res = await loop.run_in_executor(
+            None,
+            _sync_load_finance_data,
+            self.test_mode,
+            self.rates_map,
+            self.page,
+            self.search_query,
+            self.filter_type,
+            self.filter_category,
+            self.batch_product_id,
+            self.batch_cost_cat
+        )
+        
+        # 3. 更新主线程状态
+        self.records = res["processed_records"]
+        self.total_records = res["total_records"]
+        self.total_pages = res["total_pages"]
+        self.page = res["cur_page"]
+        self.dynamic_cash_indicators = res["indicators"]
+        self.total_cash_cny_str = f"¥ {res['total_equiv_cny']:,.2f}"
+        self.cur_cny = round(float(res["cny_total"]), 2)
+        self.cur_jpy = round(float(res["jpy_total"]), 2)
+        self.cash_accounts = res["cash_accounts"]
+        self.unsettled_debts = res["unsettled_debts"]
+        self.offset_assets = res["offset_assets"]
+        self.products_list = res["products_list"]
+        self.active_consumables_list = res["active_consumables_list"]
+        self.budgets_list = res["budgets_list"]
+        
+        # 初始化默认的外键 ID
+        if self.cash_accounts:
+            if not self.f_account_id:
+                self.f_account_id = self.cash_accounts[0].id
+                self.f_currency = self.cash_accounts[0].currency
+            else:
+                for acc in self.cash_accounts:
+                    if acc.id == self.f_account_id:
+                        self.f_currency = acc.currency
+                        break
+            if not self.ex_source_acc_id: self.ex_source_acc_id = self.cash_accounts[0].id
+            if not self.ex_target_acc_id: self.ex_target_acc_id = self.cash_accounts[0].id
+            if not self.debt_target_acc_id: self.debt_target_acc_id = self.cash_accounts[0].id
+            if not self.debt_repay_source_acc_id: self.debt_repay_source_acc_id = self.cash_accounts[0].id
+            if not self.move_from_asset_id: self.move_from_asset_id = self.cash_accounts[0].id
+            if not self.move_to_asset_id: self.move_to_asset_id = self.cash_accounts[0].id
             
-            # 1. 抓取真分页明细 (50条/页)
-            df, total_rows = FinanceService.get_finance_records_page(db, page=self.page, page_size=50, search_query=self.search_query, filter_type=self.filter_type, filter_category=self.filter_category)
-            self.total_records = total_rows
-            self.total_pages = max(1, math.ceil(total_rows / 50))
+        if self.products_list and not self.batch_product_id:
+            self.batch_product_id = self.products_list[0].id
             
-            # 页码溢出容错
-            if self.page > self.total_pages:
-                self.page = self.total_pages
-                df, _ = FinanceService.get_finance_records_page(db, page=self.page, page_size=50, search_query=self.search_query, filter_type=self.filter_type, filter_category=self.filter_category)
+        if self.unsettled_debts and not self.debt_selected_id:
+            self.debt_selected_id = self.unsettled_debts[0].id
+            
+        if self.offset_assets and not self.debt_repay_offset_asset_id:
+            self.debt_repay_offset_asset_id = self.offset_assets[0].id
 
-            # 解析为 Pydantic 强类型记录
-            processed_records = []
-            for _, row in df.iterrows():
-                processed_records.append(
-                    FinanceRecordItem(
-                        id=int(row["ID"]),
-                        date=row["日期"].strftime("%Y-%m-%d"),
-                        currency=row["币种"],
-                        type=row["收支"],
-                        amount=round(float(row["金额"]), 2),
-                        category=row["分类"],
-                        desc=re.sub(r'\s*\[cost_item:\d+\]', '', row["备注"] or ""),
-                        url=row["网址"],
-                        cny_bal=round(float(row["当前CNY余额"]), 2),
-                        jpy_bal=round(float(row["当前JPY余额"]), 2)
-                    )
-                )
-            self.records = processed_records
-            
-            # 2. 当前总额指标
-            from models import CompanyBalanceItem
-            cash_accs = db.query(CompanyBalanceItem).filter(
-                CompanyBalanceItem.category == "asset",
-                CompanyBalanceItem.asset_type == "现金"
-            ).all()
-            
-            balances_by_curr = {}
-            for acc in cash_accs:
-                curr = acc.currency or "CNY"
-                balances_by_curr[curr] = balances_by_curr.get(curr, 0.0) + acc.amount
-                
-            indicators = []
-            rates = dict(self.rates_map)
-            
-            # CNY 始终第一个
-            cny_total = balances_by_curr.get("CNY", 0.0)
-            indicators.append(CashBalanceIndicator(
-                currency="CNY",
-                amount_str=f"¥ {cny_total:,.2f}",
-                cny_equiv_str="CNY",
-                color="green"
-            ))
-            
-            colors_palette = ["blue", "purple", "pink", "teal", "indigo"]
-            color_idx = 0
-            total_equiv_cny = cny_total
-            
-            for curr in sorted(balances_by_curr.keys()):
-                if curr == "CNY":
-                    continue
-                amt = balances_by_curr[curr]
-                equiv = to_cny(amt, curr, rates)
-                total_equiv_cny += equiv
-                
-                indicators.append(CashBalanceIndicator(
-                    currency=curr,
-                    amount_str=f"{amt:,.2f} {curr}",
-                    cny_equiv_str=f"折合 ¥ {equiv:,.2f}",
-                    color=colors_palette[color_idx % len(colors_palette)]
-                ))
-                color_idx += 1
-                
-            self.dynamic_cash_indicators = indicators
-            self.total_cash_cny_str = f"¥ {total_equiv_cny:,.2f}"
-            
-            self.cur_cny = round(float(cny_total), 2)
-            self.cur_jpy = round(float(balances_by_curr.get("JPY", 0.0)), 2)
-            
-            # 3. 加载缓存的下拉选项
-            # A. 现金账户
-            cash_list = FinanceService.get_transferable_assets(db)
-            self.cash_accounts = [
-                CashAccountOption(
-                    id=str(a.id),
-                    label=f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})",
-                    currency=a.currency
-                )
-                for a in cash_list
-            ]
-            
-            # B. 负债
-            liab_list = FinanceService.get_balance_items(db, "liability")
-            self.unsettled_debts = [
-                DebtOption(
-                    id=str(l.id),
-                    label=f"{l.name} (待还余额: {l.amount:,.2f})",
-                    amount=float(l.amount),
-                    currency=l.currency,
-                    source_type=(
-                        "商品成本待付款" if l.name.startswith("商品成本待付款:")
-                        else "其他待付款" if l.name.startswith("其他待付款:")
-                        else ""
-                    )
-                )
-                for l in liab_list
-            ]
-            
-            # C. 抵债资产
-            asset_list = FinanceService.get_balance_items(db, "asset")
-            self.offset_assets = [
-                AssetOption(id=str(a.id), label=f"{a.name} (余额: {a.amount:,.2f})")
-                for a in asset_list if not a.name.startswith(("在制", "预入库", "流动资金"))
-            ]
-            
-            # D. 商品列表
-            p_list = FinanceService.get_all_products(db)
-            self.products_list = [
-                ProductOption(id=str(p.id), label=p.name)
-                for p in p_list
-            ]
-            
-            # E. 现有其他资产列表 (用于选择补充项目)
-            from models import ConsumableItem
-            cons_list = db.query(ConsumableItem).all()
-            self.active_consumables_list = [
-                AssetOption(id=str(c.id), label=c.name)
-                for c in cons_list
-            ]
-            
-            # 初始化默认的外键 ID
-            if self.cash_accounts:
-                if not self.f_account_id:
-                    self.f_account_id = self.cash_accounts[0].id
-                    self.f_currency = self.cash_accounts[0].currency
-                else:
-                    for acc in self.cash_accounts:
-                        if acc.id == self.f_account_id:
-                            self.f_currency = acc.currency
-                            break
-                if not self.ex_source_acc_id: self.ex_source_acc_id = self.cash_accounts[0].id
-                if not self.ex_target_acc_id: self.ex_target_acc_id = self.cash_accounts[0].id
-                if not self.debt_target_acc_id: self.debt_target_acc_id = self.cash_accounts[0].id
-                if not self.debt_repay_source_acc_id: self.debt_repay_source_acc_id = self.cash_accounts[0].id
-                if not self.move_from_asset_id: self.move_from_asset_id = self.cash_accounts[0].id
-                if not self.move_to_asset_id: self.move_to_asset_id = self.cash_accounts[0].id
-                
-            if self.products_list and not self.batch_product_id:
-                self.batch_product_id = self.products_list[0].id
-                
-            if self.unsettled_debts and not self.debt_selected_id:
-                self.debt_selected_id = self.unsettled_debts[0].id
-                
-            if self.offset_assets and not self.debt_repay_offset_asset_id:
-                self.debt_repay_offset_asset_id = self.offset_assets[0].id
+        if self.active_consumables_list and not self.replenish_asset_id:
+            self.replenish_asset_id = self.active_consumables_list[0].id
 
-            if self.active_consumables_list and not self.replenish_asset_id:
-                self.replenish_asset_id = self.active_consumables_list[0].id
-
-            self.load_budgets_options()
-
-        except Exception as e:
-            print(f"[FinanceState] load_finance_page error: {e}")
-        finally:
-            db.close()
-            self.is_loading = False
+        if self.budgets_list and not self.batch_selected_budget_id:
+            self.batch_selected_budget_id = ""
+            self.load_selected_budget_details()
+            
+        self.is_loading = False
 
     def load_budgets_options(self):
         """联动加载当前选定商品下的预算项选项"""

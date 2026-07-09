@@ -173,8 +173,10 @@ class ConsumableState(AppState):
     # ===================== 事件处理器 =====================
 
     @rx.event
-    def load_consumable_page(self):
+    async def load_consumable_page(self):
         """加载耗材清单、汇总指标、日志、商品和收款账户列表"""
+        if not await self.is_authenticated_user():
+            return
         self.is_loading = True
         db = self.get_db()
         try:

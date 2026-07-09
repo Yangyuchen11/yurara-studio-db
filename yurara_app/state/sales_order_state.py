@@ -401,8 +401,10 @@ class SalesOrderState(AppState):
     # ===================== 核心事件处理器 =====================
 
     @rx.event
-    def load_orders_page(self):
+    async def load_orders_page(self):
         """主页面加载。"""
+        if not await self.is_authenticated_user():
+            return
         self.order_date_input = date.today().isoformat()
         self.selected_order_ids = []
         db = self.get_db()

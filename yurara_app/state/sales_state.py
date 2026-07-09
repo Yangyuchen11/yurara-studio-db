@@ -145,8 +145,10 @@ class SalesState(AppState):
         yield SalesState.load_sales_data()
 
     @rx.event
-    def load_sales_data(self):
+    async def load_sales_data(self):
         """从后端服务加载全局销售指标和商品热卖榜单"""
+        if not await self.is_authenticated_user():
+            return
         self.is_loading = True
         self._cached_df = None  # 全量重新加载时清除缓存
         db = self.get_db()

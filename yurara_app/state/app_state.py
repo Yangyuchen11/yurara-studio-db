@@ -190,6 +190,12 @@ class AppState(rx.State):
         Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         return Session()
 
+    async def is_authenticated_user(self) -> bool:
+        """检查当前 Session 是否已登录。"""
+        from .auth_state import AuthState
+        auth_state = await self.get_state(AuthState)
+        return auth_state.authenticated
+
 
     @rx.event
     def set_currency_rate(self, currency: str, rate_per_100: str):
@@ -359,8 +365,10 @@ class AppState(rx.State):
             self.rates_fetching = False
 
     @rx.event
-    def load_all_rates(self):
+    async def load_all_rates(self):
         """从数据库加载所有货币汇率（同时兼容旧的 exchange_rate key）。"""
+        if not await self.is_authenticated_user():
+            return
         db = self.get_db()
         try:
             from models import SystemSetting
@@ -398,9 +406,11 @@ class AppState(rx.State):
 
     # 向后兼容旧接口
     @rx.event
-    def load_exchange_rate(self):
+    async def load_exchange_rate(self):
         """向后兼容旧接口，内部调用 load_all_rates。"""
-        return AppState.load_all_rates()
+        if not await self.is_authenticated_user():
+            return
+        await self.load_all_rates()
 
     @rx.event
     def set_exchange_rate(self, rate_val: str):

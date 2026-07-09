@@ -316,8 +316,10 @@ class CostState(AppState):
     # ===================== 事件处理器 =====================
 
     @rx.event
-    def load_cost_page(self):
+    async def load_cost_page(self):
         """拉取所有商品列表，并默认载入第一个商品。"""
+        if not await self.is_authenticated_user():
+            return
         db = self.get_db()
         try:
             service = CostService(db)

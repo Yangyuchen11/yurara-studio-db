@@ -53,8 +53,10 @@ class MemoState(AppState):
     # ---- 事件处理器 ----
 
     @rx.event
-    def load_memos(self):
+    async def load_memos(self):
         """从数据库加载所有备忘录。"""
+        if not await self.is_authenticated_user():
+            return
         db = self.get_db()
         try:
             from services.memo_service import get_all_memos

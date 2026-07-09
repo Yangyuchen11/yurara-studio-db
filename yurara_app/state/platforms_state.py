@@ -33,8 +33,10 @@ class PlatformsState(AppState):
         return ["CNY"] + list(self.rates_map.keys())
 
     @rx.event
-    def load_platforms(self):
+    async def load_platforms(self):
         """从数据库读取所有平台信息"""
+        if not await self.is_authenticated_user():
+            return
         db = self.get_db()
         try:
             raw_platforms = db.query(SalesPlatform).order_by(SalesPlatform.id.asc()).all()

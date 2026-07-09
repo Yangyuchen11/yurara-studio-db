@@ -102,8 +102,10 @@ class AssetState(AppState):
     # ===================== 事件处理器 =====================
 
     @rx.event
-    def load_asset_page(self):
+    async def load_asset_page(self):
         """加载所有的固定资产信息、计算指标与核销审计日志"""
+        if not await self.is_authenticated_user():
+            return
         self.is_loading = True
         db = self.get_db()
         try:

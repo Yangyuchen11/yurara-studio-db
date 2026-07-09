@@ -211,8 +211,10 @@ class InventoryState(AppState):
     # ===================== 事件处理器 =====================
 
     @rx.event
-    def load_inventory_page(self):
+    async def load_inventory_page(self):
         """初始化加载库存主页面。"""
+        if not await self.is_authenticated_user():
+            return
         self.op_date = date.today().strftime("%Y-%m-%d")
         db = self.get_db()
         try:
