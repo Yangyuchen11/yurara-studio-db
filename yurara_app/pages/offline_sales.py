@@ -50,14 +50,14 @@ def cashier_product_card(item: POSTemplateItemModel) -> rx.Component:
             # 余量
             rx.cond(
                 is_out_of_stock,
-                rx.badge("🚫 售罄", color_scheme="red", variant="solid", size="2"),
+                rx.badge(OfflineSalesState.tr["out_of_stock"], color_scheme="red", variant="solid", size="2"),
                 rx.badge(rx.fragment("📦 ", item.remaining_quantity.to_string()), color_scheme="green", variant="solid", size="2")
             ),
             # 价格
             rx.badge(
                 rx.cond(
                     is_out_of_stock,
-                    "无货",
+                    OfflineSalesState.tr["no_stock"],
                     rx.fragment("¥", item.preset_price.to_string())
                 ),
                 color_scheme=rx.cond(is_out_of_stock, "red", "violet"),
@@ -80,7 +80,7 @@ def cashier_product_card(item: POSTemplateItemModel) -> rx.Component:
                 rx.vstack(
                     rx.icon("shopping_cart", size=20, color="white"),
                     rx.text(
-                        rx.fragment("已加购 ", OfflineSalesState.cart_qty_map[f"{item.product_name}_{item.variant}"].to_string(), " 件"),
+                        rx.fragment(OfflineSalesState.tr["added_cart_prefix"], OfflineSalesState.cart_qty_map[f"{item.product_name}_{item.variant}"].to_string(), OfflineSalesState.tr["added_cart_suffix"]),
                         size="1",
                         weight="bold",
                         color="white"
@@ -173,18 +173,18 @@ def ledger_order_row(o: POSOrderRow) -> rx.Component:
             confirm_dialog(
                 trigger=rx.button(
                     rx.icon("trash-2", size=14),
-                    "撤销",
+                    OfflineSalesState.tr["revoke"],
                     color_scheme="red",
                     size="1",
                     variant="soft",
                 ),
-                title="确定要删除此订单并回滚吗？",
+                title=OfflineSalesState.tr["delete_confirm_title"],
                 description=rx.fragment(
-                    "此操作将永久删除展会订单 ",
+                    OfflineSalesState.tr["delete_confirm_desc_1"],
                     o.order_no,
-                    "，回滚已扣减的模板分配额度、还原出货仓库对应的实物库存，并全额扣减已记账的现金流水与资产！是否确定？"
+                    OfflineSalesState.tr["delete_confirm_desc_2"]
                 ),
-                confirm_label="确定删除",
+                confirm_label=OfflineSalesState.tr["delete_confirm_btn"],
                 on_confirm=OfflineSalesState.delete_offline_order(o.order_no),
             )
         ),
@@ -254,13 +254,13 @@ def cashier_pos_tab() -> rx.Component:
     """1. POS收银台大屏组件"""
     return rx.cond(
         ~OfflineSalesState.has_templates,
-        rx.callout("⚠️ 线下展会收银模板为空！请先点击右侧“模板配置”Tab建立至少一个收银模板配置。", icon="triangle_alert", color_scheme="orange", size="2", width="100%"),
+        rx.callout(OfflineSalesState.tr["empty_template_warning"], icon="triangle_alert", color_scheme="orange", size="2", width="100%"),
         
         # 收银场景主显示
         rx.vstack(
             # 顶部操作栏
             rx.hstack(
-                rx.text("当前活动收银模板：", size="2", weight="medium", margin_top="0.5rem"),
+                rx.text(OfflineSalesState.tr["active_template"], size="2", weight="medium", margin_top="0.5rem"),
                 rx.select.root(
                     rx.select.trigger(),
                     rx.select.content(
@@ -271,19 +271,20 @@ def cashier_pos_tab() -> rx.Component:
                     , position="popper", side="bottom"),
                     value=OfflineSalesState.template_selected_value,
                     on_change=OfflineSalesState.change_template_by_option,
+                    disabled=OfflineSalesState.is_fullscreen,
                     size="2",
                     style={"maxWidth": "250px"},
                 ),
                 rx.spacer(),
                 rx.button(
-                    rx.cond(OfflineSalesState.show_history_only, "🔙 返回收银台", "📜 历史交易流水"),
+                    rx.cond(OfflineSalesState.show_history_only, OfflineSalesState.tr["back_to_cashier"], OfflineSalesState.tr["history_orders"]),
                     on_click=OfflineSalesState.toggle_history_only,
                     size="2",
                     variant="soft",
                     color_scheme="violet"
                 ),
                 rx.button(
-                    rx.cond(OfflineSalesState.is_fullscreen, "📴 退出专注全屏", "📺 开启收银全屏"),
+                    rx.cond(OfflineSalesState.is_fullscreen, OfflineSalesState.tr["exit_fullscreen"], OfflineSalesState.tr["open_fullscreen"]),
                     on_click=OfflineSalesState.toggle_fullscreen,
                     size="2",
                     variant="soft",
@@ -300,17 +301,17 @@ def cashier_pos_tab() -> rx.Component:
             rx.cond(
                 OfflineSalesState.show_history_only,
                 rx.vstack(
-                    rx.heading(rx.fragment("📜 已结账历史交易全览"), size="3", weight="bold"),
+                    rx.heading(rx.fragment(OfflineSalesState.tr["history_orders_title"]), size="3", weight="bold"),
                     rx.table.root(
                         rx.table.header(
                             rx.table.row(
-                                rx.table.column_header_cell("交易单号", size="1"),
-                                rx.table.column_header_cell("成交日期", size="1"),
-                                rx.table.column_header_cell("购买商品明细", size="1"),
-                                rx.table.column_header_cell("交易额", size="1"),
-                                rx.table.column_header_cell("实收记账额", size="1"),
-                                rx.table.column_header_cell("流向备注", size="1"),
-                                rx.table.column_header_cell("操作", size="1"),
+                                rx.table.column_header_cell(OfflineSalesState.tr["order_no"], size="1"),
+                                rx.table.column_header_cell(OfflineSalesState.tr["order_date"], size="1"),
+                                rx.table.column_header_cell(OfflineSalesState.tr["order_items"], size="1"),
+                                rx.table.column_header_cell(OfflineSalesState.tr["order_amount"], size="1"),
+                                rx.table.column_header_cell(OfflineSalesState.tr["received_amount"], size="1"),
+                                rx.table.column_header_cell(OfflineSalesState.tr["notes"], size="1"),
+                                rx.table.column_header_cell(OfflineSalesState.tr["action"], size="1"),
                             )
                         ),
                         rx.table.body(
@@ -328,9 +329,9 @@ def cashier_pos_tab() -> rx.Component:
                     # 左侧：商品选购区 (矩阵)
                     rx.vstack(
                         rx.hstack(
-                            rx.text("🛍️ 展会选购面板：", size="2", weight="bold"),
+                            rx.text(OfflineSalesState.tr["exhibition_panel"], size="2", weight="bold"),
                             rx.badge(
-                                rx.fragment("大货库存提取来源仓: ", OfflineSalesState.active_template.warehouse_name), 
+                                rx.fragment(OfflineSalesState.tr["source_warehouse"], OfflineSalesState.active_template.warehouse_name), 
                                 color_scheme="orange", 
                                 size="1"
                             ),
@@ -350,18 +351,18 @@ def cashier_pos_tab() -> rx.Component:
                             ~OfflineSalesState.is_fullscreen,
                             rx.fragment(
                                 rx.divider(margin_top="1.5rem"),
-                                rx.text("📋 近期本地模板成交流水 (快捷对账)", size="1", weight="bold", color="slate"),
+                                rx.text(OfflineSalesState.tr["recent_ledger"], size="1", weight="bold", color="slate"),
                                 rx.scroll_area(
                                     rx.table.root(
                                         rx.table.header(
                                             rx.table.row(
-                                                rx.table.column_header_cell("交易单号", size="1"),
-                                                rx.table.column_header_cell("成交日期", size="1"),
-                                                rx.table.column_header_cell("商品明细", size="1"),
-                                                rx.table.column_header_cell("原价小计", size="1"),
-                                                rx.table.column_header_cell("实收净额", size="1"),
-                                                rx.table.column_header_cell("备注", size="1"),
-                                                rx.table.column_header_cell("操作", size="1"),
+                                                rx.table.column_header_cell(OfflineSalesState.tr["order_no"], size="1"),
+                                                rx.table.column_header_cell(OfflineSalesState.tr["order_date"], size="1"),
+                                                rx.table.column_header_cell(OfflineSalesState.tr["items_detail"], size="1"),
+                                                rx.table.column_header_cell(OfflineSalesState.tr["original_subtotal"], size="1"),
+                                                rx.table.column_header_cell(OfflineSalesState.tr["net_received"], size="1"),
+                                                rx.table.column_header_cell(OfflineSalesState.tr["notes"], size="1"),
+                                                rx.table.column_header_cell(OfflineSalesState.tr["action"], size="1"),
                                             )
                                         ),
                                         rx.table.body(
@@ -383,7 +384,7 @@ def cashier_pos_tab() -> rx.Component:
                     # 右侧：POS 结账购物车
                     rx.card(
                         rx.vstack(
-                            rx.heading("🧾 POS 结账清单", size="3", weight="bold"),
+                            rx.heading(OfflineSalesState.tr["cart_title"], size="3", weight="bold"),
                             rx.divider(),
                             
                             # 购物车列表
@@ -401,7 +402,7 @@ def cashier_pos_tab() -> rx.Component:
                                         style={"overflowX": "hidden"}
                                     ),
                                     rx.button(
-                                        "清空选购",
+                                        OfflineSalesState.tr["clear_cart"],
                                         on_click=OfflineSalesState.clear_cart,
                                         size="1",
                                         variant="soft",
@@ -412,7 +413,7 @@ def cashier_pos_tab() -> rx.Component:
                                     width="100%"
                                 ),
                                 rx.center(
-                                    rx.text("购物车为空", size="2", color=rx.color("slate", 9)),
+                                    rx.text(OfflineSalesState.tr["cart_empty"], size="2", color=rx.color("slate", 9)),
                                     padding="2rem 0",
                                     width="100%"
                                 )
@@ -422,17 +423,17 @@ def cashier_pos_tab() -> rx.Component:
                             
                             # 支付方式选择
                             rx.vstack(
-                                rx.text("💵 选择支付媒介：", size="1", weight="bold"),
+                                rx.text(OfflineSalesState.tr["select_payment"], size="1", weight="bold"),
                                 rx.grid(
                                     rx.button(
-                                        "💵 现金支付",
+                                        OfflineSalesState.tr["pay_cash"],
                                         on_click=lambda: OfflineSalesState.set_pay_method("现金"),
                                         color_scheme="violet",
                                         variant=rx.cond(OfflineSalesState.pay_method == "现金", "solid", "soft"),
                                         size="2"
                                     ),
                                     rx.button(
-                                        "📱 PayPay 扫码",
+                                        OfflineSalesState.tr["pay_paypay"],
                                         on_click=lambda: OfflineSalesState.set_pay_method("PayPay"),
                                         color_scheme="violet",
                                         variant=rx.cond(OfflineSalesState.pay_method == "PayPay", "solid", "soft"),
@@ -451,7 +452,7 @@ def cashier_pos_tab() -> rx.Component:
                             # 金额结算显示
                             rx.vstack(
                                 rx.hstack(
-                                    rx.text("应收总价:", size="2", weight="bold"),
+                                    rx.text(OfflineSalesState.tr["total_due"], size="2", weight="bold"),
                                     rx.spacer(),
                                     rx.text(OfflineSalesState.cart_total_str, size="4", weight="bold", color="red"),
                                     width="100%"
@@ -460,13 +461,13 @@ def cashier_pos_tab() -> rx.Component:
                                     OfflineSalesState.pay_method == "PayPay",
                                     rx.vstack(
                                         rx.hstack(
-                                            rx.text("PayPay 扣减扣点 (1.98%):", size="1", color="slate"),
+                                            rx.text(OfflineSalesState.tr["paypay_fee_label"], size="1", color="slate"),
                                             rx.spacer(),
                                             rx.text(OfflineSalesState.paypay_fee_str, size="1", color="red"),
                                             width="100%"
                                         ),
                                         rx.hstack(
-                                            rx.text("预计实际收款入账金额:", size="1", weight="medium", color="green"),
+                                            rx.text(OfflineSalesState.tr["net_receive_label"], size="1", weight="medium", color="green"),
                                             rx.spacer(),
                                             rx.text(OfflineSalesState.paypay_receive_str, size="2", weight="bold", color="green"),
                                             width="100%"
@@ -482,7 +483,7 @@ def cashier_pos_tab() -> rx.Component:
                             
                             # 收款账户绑定
                             custom_form_field(
-                                "物理入账账户",
+                                OfflineSalesState.tr["deposit_account"],
                                 rx.select.root(
                                     rx.select.trigger(),
                                     rx.select.content(
@@ -500,7 +501,7 @@ def cashier_pos_tab() -> rx.Component:
                             
                             # 巨大化结账按钮
                             rx.button(
-                                "✅ 完成交易并扣减库存记账",
+                                OfflineSalesState.tr["checkout_btn"],
                                 on_click=OfflineSalesState.submit_pos_checkout,
                                 disabled=OfflineSalesState.is_cart_empty,
                                 size="3",
@@ -722,6 +723,29 @@ def offline_sales_page() -> rx.Component:
                 width="100%",
                 padding="1rem",
             ),
+            
+            # 语言切换器：仅在非全屏且活动Tab为收银台时在左下角（大卡片外部）显示
+            rx.cond(
+                (~OfflineSalesState.is_fullscreen) & (OfflineSalesState.active_tab == "pos"),
+                rx.hstack(
+                    rx.icon("languages", size=16, color=rx.color("slate", 9)),
+                    rx.segmented_control.root(
+                        rx.segmented_control.item("English", value="en"),
+                        rx.segmented_control.item("日本語", value="ja"),
+                        rx.segmented_control.item("中文", value="zh"),
+                        value=OfflineSalesState.pos_lang,
+                        on_change=OfflineSalesState.set_pos_lang,
+                        size="1",
+                    ),
+                    align="center",
+                    spacing="2",
+                    justify="start",
+                    width="100%",
+                    padding_left="0.5rem",
+                ),
+                rx.fragment()
+            ),
+            
             spacing="4",
             width="100%"
         ),

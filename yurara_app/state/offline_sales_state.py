@@ -54,7 +54,138 @@ class POSOrderRow(BaseModel):
     notes: str = ""
 
 
+POS_TRANSLATIONS = {
+    "zh": {
+        "active_template": "当前活动收银模板：",
+        "back_to_cashier": "🔙 返回收银台",
+        "history_orders": "📜 历史交易流水",
+        "exit_fullscreen": "📴 退出专注全屏",
+        "open_fullscreen": "📺 开启收银全屏",
+        "history_orders_title": "📜 已结账历史交易全览",
+        "order_no": "交易单号",
+        "order_date": "成交日期",
+        "order_items": "购买商品明细",
+        "order_amount": "交易额",
+        "received_amount": "实收记账额",
+        "notes": "流向备注",
+        "action": "操作",
+        "delete_confirm_title": "确定要删除此订单并回滚吗？",
+        "delete_confirm_desc_1": "此操作将永久删除展会订单 ",
+        "delete_confirm_desc_2": "，回滚已扣减的模板分配额度、还原出货仓库对应的实物库存，并全额扣减已记账的现金流水与资产！是否确定？",
+        "delete_confirm_btn": "确定删除",
+        "exhibition_panel": "🛍️ 展会选购面板：",
+        "source_warehouse": "大货库存提取来源仓: ",
+        "added_cart_prefix": "已加购 ",
+        "added_cart_suffix": " 件",
+        "recent_ledger": "📋 近期本地模板成交流水 (快捷对账)",
+        "items_detail": "商品明细",
+        "original_subtotal": "原价小计",
+        "net_received": "实收净额",
+        "cart_title": "🧾 POS 结账清单",
+        "clear_cart": "清空选购",
+        "cart_empty": "购物车为空",
+        "select_payment": "💵 选择支付媒介：",
+        "pay_cash": "💵 现金支付",
+        "pay_paypay": "📱 PayPay 扫码",
+        "total_due": "应收总价:",
+        "paypay_fee_label": "PayPay 扣减扣点 (1.98%):",
+        "net_receive_label": "预计实际收款入账金额:",
+        "deposit_account": "物理入账账户",
+        "checkout_btn": "✅ 完成交易并扣减库存记账",
+        "out_of_stock": "🚫 售罄",
+        "no_stock": "无货",
+        "revoke": "撤销",
+        "empty_template_warning": "⚠️ 线下展会收银模板为空！请先点击右侧“模板配置”Tab建立至少一个收银模板配置。",
+    },
+    "en": {
+        "active_template": "Active Template:",
+        "back_to_cashier": "🔙 Back to Cashier",
+        "history_orders": "📜 History Orders",
+        "exit_fullscreen": "📴 Exit Fullscreen",
+        "open_fullscreen": "📺 Open Fullscreen",
+        "history_orders_title": "📜 History Transaction List",
+        "order_no": "Order No",
+        "order_date": "Date",
+        "order_items": "Items Detail",
+        "order_amount": "Total Amt",
+        "received_amount": "Received Amt",
+        "notes": "Remarks",
+        "action": "Action",
+        "delete_confirm_title": "Delete Order & Rollback?",
+        "delete_confirm_desc_1": "This will permanently delete order ",
+        "delete_confirm_desc_2": ", rollback template quantity, restore physical stock, and reverse all asset ledgers! Confirm?",
+        "delete_confirm_btn": "Confirm Delete",
+        "exhibition_panel": "🛍️ Exhibition Panel:",
+        "source_warehouse": "Source Warehouse: ",
+        "added_cart_prefix": "Added ",
+        "added_cart_suffix": " qty",
+        "recent_ledger": "📋 Recent Template Transactions (Quick Audit)",
+        "items_detail": "Items Detail",
+        "original_subtotal": "Subtotal",
+        "net_received": "Net Received",
+        "cart_title": "🧾 POS Checkout List",
+        "clear_cart": "Clear Cart",
+        "cart_empty": "Cart is empty",
+        "select_payment": "💵 Select Payment:",
+        "pay_cash": "💵 Cash",
+        "pay_paypay": "📱 PayPay Scan",
+        "total_due": "Total Due:",
+        "paypay_fee_label": "PayPay Fee (1.98%):",
+        "net_receive_label": "Est. Net Income:",
+        "deposit_account": "Deposit Account",
+        "checkout_btn": "✅ Checkout & Update Stock/Ledger",
+        "out_of_stock": "🚫 Out of stock",
+        "no_stock": "No Stock",
+        "revoke": "Revoke",
+        "empty_template_warning": "⚠️ Offline checkout template is empty! Please click 'Template Config' on the right to create at least one template.",
+    },
+    "ja": {
+        "active_template": "現在のレジテンプレート：",
+        "back_to_cashier": "🔙 レジに戻る",
+        "history_orders": "📜 取引履歴",
+        "exit_fullscreen": "📴 フルスクリーン終了",
+        "open_fullscreen": "📺 フルスクリーン開始",
+        "history_orders_title": "📜 会計済み取引履歴一覧",
+        "order_no": "注文番号",
+        "order_date": "成約日",
+        "order_items": "購入商品明細",
+        "order_amount": "取引額",
+        "received_amount": "実収額",
+        "notes": "備考",
+        "action": "操作",
+        "delete_confirm_title": "この注文を削除してロールバックしますか？",
+        "delete_confirm_desc_1": "この操作は展示会注文 ",
+        "delete_confirm_desc_2": " を永久に削除し、テンプレート割当量を戻し、実物在庫を復元し、記帳されたキャッシュフローと資産を全額差し引きます！よろしいですか？",
+        "delete_confirm_btn": "削除確定",
+        "exhibition_panel": "🛍️ 展示会商品パネル：",
+        "source_warehouse": "出庫元倉庫: ",
+        "added_cart_prefix": "加算済み ",
+        "added_cart_suffix": " 点",
+        "recent_ledger": "📋 最近のローカル取引履歴 (簡易照合)",
+        "items_detail": "商品明细",
+        "original_subtotal": "小計",
+        "net_received": "実収純額",
+        "cart_title": "🧾 POS 会計リスト",
+        "clear_cart": "カートを空にする",
+        "cart_empty": "カートは空です",
+        "select_payment": "💵 決済方法選択：",
+        "pay_cash": "💵 現金決済",
+        "pay_paypay": "📱 PayPay決済",
+        "total_due": "お会計金額：",
+        "paypay_fee_label": "PayPay決済手数料 (1.98%):",
+        "net_receive_label": "入金予定額：",
+        "deposit_account": "入金先口座",
+        "checkout_btn": "✅ 会計完了（在庫減算・記帳）",
+        "out_of_stock": "🚫 完売",
+        "no_stock": "在庫なし",
+        "revoke": "キャンセル",
+        "empty_template_warning": "⚠️ 展示会レジテンプレートが空です！右側の「テンプレート設定」タブをクリックして、少なくとも1つのテンプレートを作成してください。",
+    }
+}
+
+
 class OfflineSalesState(AppState):
+    pos_lang: str = "zh"  # "zh", "en", "ja"
     active_tab: str = "pos"  # "pos" 或 "template"
     templates: list[POSTemplateModel] = []
     selected_template_id: int = 0
@@ -84,6 +215,10 @@ class OfflineSalesState(AppState):
     @rx.var
     def has_templates(self) -> bool:
         return len(self.templates) > 0
+
+    @rx.var
+    def tr(self) -> dict[str, str]:
+        return POS_TRANSLATIONS.get(self.pos_lang, POS_TRANSLATIONS["zh"])
 
     @rx.var
     def active_template(self) -> POSTemplateModel | None:
@@ -528,6 +663,12 @@ class OfflineSalesState(AppState):
             return rx.toast(f"交易清结失败: {e}", level="error")
         finally:
             db.close()
+
+    @rx.event
+    def set_pos_lang(self, val: str | list[str]):
+        if isinstance(val, list):
+            val = val[0] if val else "zh"
+        self.pos_lang = val
 
     @rx.event
     def toggle_history_only(self):
