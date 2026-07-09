@@ -451,10 +451,8 @@ def cashier_pos_tab() -> rx.Component:
                             
                             # 金额结算显示
                             rx.vstack(
-                                rx.hstack(
-                                    rx.text(OfflineSalesState.tr["total_due"], size="2", weight="bold"),
-                                    rx.spacer(),
-                                    rx.text(OfflineSalesState.cart_total_str, size="4", weight="bold", color="red"),
+                                rx.center(
+                                    rx.text(OfflineSalesState.cart_total_str, weight="bold", color="var(--violet-11)", style={"fontSize": "2.25rem"}),
                                     width="100%"
                                 ),
                                 rx.cond(
