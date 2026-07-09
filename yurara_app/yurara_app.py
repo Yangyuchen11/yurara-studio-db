@@ -294,6 +294,51 @@ def download_backup(request):
 app._api.add_route("/backup", download_backup, methods=["GET"])
 
 
+# === 自定义 API：根据 Color ID 动态渲染二进制图片接口 ===
+def serve_color_image(request):
+    import base64
+    from starlette.responses import Response
+    from database import SessionLocal
+    from models import ProductColor
+    
+    color_id_str = request.path_params.get("color_id")
+    if not color_id_str:
+        return Response(status_code=400)
+    try:
+        color_id = int(color_id_str)
+    except ValueError:
+        return Response(status_code=400)
+        
+    db = SessionLocal()
+    try:
+        color = db.query(ProductColor).filter(ProductColor.id == color_id).first()
+        if not color or not color.image_data:
+            return Response(status_code=404)
+        
+        data_str = color.image_data
+        if data_str.startswith("data:image/"):
+            header, encoded = data_str.split(",", 1)
+            mime_type = header.split(";")[0].split(":")[1]
+            image_bytes = base64.b64decode(encoded)
+            return Response(
+                content=image_bytes,
+                media_type=mime_type,
+                headers={
+                    "Cache-Control": "public, max-age=86400",
+                    "Access-Control-Allow-Origin": "*"
+                }
+            )
+        else:
+            return Response(status_code=404)
+    except Exception as e:
+        print(f"[Image API] Error serving image for color_id {color_id}: {e}")
+        return Response(status_code=500)
+    finally:
+        db.close()
+
+app._api.add_route("/color-image/{color_id}", serve_color_image, methods=["GET"])
+
+
 # ==========================================
 # 自动数据库结构建立与迁移 (正式环境 / SQLite)
 # ==========================================

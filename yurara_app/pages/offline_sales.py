@@ -16,55 +16,63 @@ def cashier_product_card(item: POSTemplateItemModel) -> rx.Component:
     is_out_of_stock = (item.remaining_quantity <= 0)
     
     return rx.card(
+        # 1. 缩略图/渐变占位符充当背景
+        rx.cond(
+            item.image_data != "",
+            rx.image(src=item.image_data, width="100%", height="100%", object_fit="cover", position="absolute", top="0", left="0", z_index="0"),
+            rx.center(
+                rx.icon("shopping_bag", size=24, color=rx.color("violet", 8)),
+                width="100%",
+                height="100%",
+                background="linear-gradient(135deg, var(--violet-2) 0%, var(--violet-3) 100%)",
+                position="absolute",
+                top="0",
+                left="0",
+                z_index="0"
+            )
+        ),
+        
+        # 2. 商品名与款式名放置在左上角，使用黑色字体（带有白色文字阴影以确保可读性）
         rx.vstack(
-            # 缩略图/渐变占位符
-            rx.cond(
-                item.image_data != "",
-                rx.image(src=item.image_data, width="100%", height="90px", object_fit="cover", border_radius="4px"),
-                rx.center(
-                    rx.icon("shopping_bag", size=20, color=rx.color("violet", 8)),
-                    width="100%",
-                    height="90px",
-                    background="linear-gradient(135deg, var(--violet-2) 0%, var(--violet-3) 100%)",
-                    border_radius="4px"
-                )
-            ),
-            
-            # 商品信息
-            rx.vstack(
-                rx.text(item.product_name, size="1", weight="bold", line_clamp=1, width="100%"),
-                rx.text(item.variant, size="1", color=rx.color("slate", 10), line_clamp=1, width="100%"),
-                spacing="0",
-                width="100%"
-            ),
-            
-            # 库存与价格
+            rx.text(item.product_name, size="1", weight="bold", color="black", line_clamp=1, width="100%", style={"textShadow": "0 1px 2px rgba(255, 255, 255, 0.85)"}),
+            rx.text(item.variant, size="1", color="black", line_clamp=1, width="100%", style={"textShadow": "0 1px 2px rgba(255, 255, 255, 0.85)", "opacity": 0.85}),
+            spacing="0",
+            align_items="start",
+            position="absolute",
+            top="0.5rem",
+            left="0.5rem",
+            z_index="1",
+            max_width="calc(100% - 1rem)"
+        ),
+        
+        # 3. 余量和价格卡片悬浮于底部
+        rx.hstack(
+            # 余量
             rx.cond(
                 is_out_of_stock,
-                rx.badge("🚫 已售罄", color_scheme="red", variant="solid", size="1", width="100%", justify="center"),
-                rx.badge(rx.fragment("📦 余量: ", item.remaining_quantity.to_string()), color_scheme="green", variant="soft", size="1", width="100%", justify="center")
+                rx.badge("🚫 售罄", color_scheme="red", variant="solid", size="2"),
+                rx.badge(rx.fragment("📦 ", item.remaining_quantity.to_string()), color_scheme="green", variant="solid", size="2")
             ),
-            # 价格展示静态块
-            rx.center(
-                rx.text(
-                    rx.cond(
-                        is_out_of_stock,
-                        "无库存",
-                        rx.fragment("¥ ", item.preset_price.to_string())
-                    ),
-                    weight="bold",
-                    size="1",
-                    color=rx.cond(is_out_of_stock, "var(--red-11)", "var(--violet-11)")
+            # 价格
+            rx.badge(
+                rx.cond(
+                    is_out_of_stock,
+                    "无货",
+                    rx.fragment("¥", item.preset_price.to_string())
                 ),
-                width="100%",
-                padding="4px 0",
-                background=rx.cond(is_out_of_stock, rx.color("red", 3), rx.color("violet", 3)),
-                border_radius="4px"
+                color_scheme=rx.cond(is_out_of_stock, "red", "violet"),
+                variant="solid",
+                size="2"
             ),
-            spacing="2",
+            position="absolute",
+            bottom="0.5rem",
+            left="0.5rem",
+            right="0.5rem",
+            justify="between",
             align_items="center",
-            width="100%"
+            z_index="1"
         ),
+        
         # 购物车数量半透明覆盖层
         rx.cond(
             OfflineSalesState.cart_qty_map[f"{item.product_name}_{item.variant}"] > 0,
@@ -88,13 +96,16 @@ def cashier_product_card(item: POSTemplateItemModel) -> rx.Component:
                 background_color="rgba(15, 23, 42, 0.75)",
                 backdrop_filter="blur(2px)",
                 border_radius="inherit",
-                pointer_events="none"
+                pointer_events="none",
+                z_index="2"
             ),
             rx.fragment()
         ),
-        padding="0.5rem",
+        padding="0",
         style={
             "minWidth": "110px",
+            "aspectRatio": "1 / 1",
+            "overflow": "hidden",
             "position": "relative",
             "cursor": rx.cond(is_out_of_stock, "default", "pointer"),
             "transition": "transform 0.15s ease, box-shadow 0.15s ease"
@@ -104,7 +115,7 @@ def cashier_product_card(item: POSTemplateItemModel) -> rx.Component:
             "box_shadow": rx.cond(is_out_of_stock, "none", "0 8px 24px rgba(99, 102, 241, 0.2)"),
         },
         on_click=lambda: OfflineSalesState.add_to_cart(
-            item.product_name, item.variant, item.preset_price, item.max_limit, item.image_data
+            item.product_name, item.variant
         )
     )
 
@@ -124,19 +135,22 @@ def cashier_cart_item(ci: CartItemModel) -> rx.Component:
             )
         ),
         rx.vstack(
-            rx.text(ci.product_name, size="1", weight="bold", line_clamp=1),
-            rx.text(ci.variant, size="1", color=rx.color("slate", 10)),
+            rx.text(ci.product_name, size="1", weight="bold", line_clamp=1, width="100%"),
+            rx.text(ci.variant, size="1", color=rx.color("slate", 10), line_clamp=1, width="100%"),
             spacing="0",
             align_items="start",
-            flex="1"
+            flex="1",
+            min_width="0"
         ),
         rx.text("x", ci.qty.to_string(), size="1", weight="bold"),
+        rx.text(rx.fragment("¥", (ci.unit_price * ci.qty).to_string()), size="1", weight="bold", color="var(--violet-11)", style={"marginLeft": "0.75rem"}),
         rx.icon_button(
-            rx.icon("minus", size=12),
+            rx.icon("minus", size=14),
             on_click=lambda: OfflineSalesState.remove_from_cart(ci.product_name, ci.variant),
-            size="1",
-            variant="ghost",
-            color_scheme="red"
+            size="2",
+            variant="solid",
+            color_scheme="red",
+            style={"borderRadius": "4px", "marginLeft": "0.75rem"}
         ),
         spacing="2",
         align_items="center",
@@ -383,7 +397,8 @@ def cashier_pos_tab() -> rx.Component:
                                             width="100%"
                                         ),
                                         max_height="250px",
-                                        width="100%"
+                                        width="100%",
+                                        style={"overflowX": "hidden"}
                                     ),
                                     rx.button(
                                         "清空选购",

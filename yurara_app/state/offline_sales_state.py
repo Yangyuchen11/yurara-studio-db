@@ -76,6 +76,8 @@ class OfflineSalesState(AppState):
     all_assignable_items: list[dict[str, Any]] = []
     tpl_wh_name: str = ""
     selected_account_name: str = ""
+    _assignable_loaded: bool = False  # 懒加载标志：仅在首次切换模板配置Tab时触发
+    _page_initialized: bool = False   # 页面级缓存标志：驱驶页面时跳过重复加载
 
     # ===================== 计算属性 =====================
 
@@ -222,6 +224,12 @@ class OfflineSalesState(AppState):
     @rx.event
     def load_offline_page(self):
         """初始化加载展会收银页面。"""
+        if self._page_initialized:
+            # 页面已初始化且其间没有发生数据变更（结账/删单/模板修改均已内联刷新状态）
+            # 直接跳过所有数据库查询，实现页面秒开入场
+            self.auto_match_cash_account()
+            return
+        
         db = self.get_db()
         try:
             service = OfflineSalesService(db)
@@ -232,8 +240,15 @@ class OfflineSalesState(AppState):
             if self.selected_template_id:
                 self.load_template_orders(service)
             
-            # 自动初始化加载可分配的商品大货列表，防止切换至模板配置Tab时内容为空
-            self.open_create_template()
+            # 懒加载优化：仅预设模板配置Tab的仓库默认值，不触发重量级库存查询
+            self._assignable_loaded = False
+            if self.templates:
+                first_tpl = self.templates[0]
+                self.tpl_wh_id = first_tpl.warehouse_id
+                self.tpl_wh_name = first_tpl.warehouse_name
+            self.tpl_platform = "国内线下"
+            self.is_edit_mode = False
+            self._page_initialized = True
         finally:
             db.close()
         self.auto_match_cash_account()
@@ -243,6 +258,9 @@ class OfflineSalesState(AppState):
         self.active_tab = tab_name
         if tab_name == "pos":
             self.auto_match_cash_account()
+        elif tab_name == "template" and not self._assignable_loaded:
+            # 懒加载：首次切换至模板配置Tab才触发库存查询
+            self.open_create_template()
 
     @rx.event
     def select_template(self, tpl_id: int):
@@ -275,10 +293,12 @@ class OfflineSalesState(AppState):
 
     def load_templates_list(self, service: OfflineSalesService):
         """拉取收银场景模板配置列表。"""
+        import os
+        _api_url = os.environ.get("API_URL", f"http://localhost:{os.environ.get('BACKEND_PORT', '8000')}")
         tpls = service.get_all_templates()
         prod_service = ProductService(service.db)
         all_prods = prod_service.get_all_products()
-        img_lookup = {f"{p.name}_{c.color_name}": c.image_data or "" for p in all_prods for c in p.colors}
+        img_lookup = {f"{p.name}_{c.color_name}": f"{_api_url}/color-image/{c.id}" if c.image_data else "" for p in all_prods for c in p.colors}
         
         # 抓取仓库木桶原理真实大货可组装库存限额
         inv_service = InventoryService(service.db)
@@ -359,8 +379,21 @@ class OfflineSalesState(AppState):
 
     # --- 收银购物车操作 ---
     @rx.event
-    def add_to_cart(self, prod_name: str, variant: str, price: float, max_qty: int, image_data: str):
+    def add_to_cart(self, prod_name: str, variant: str):
         """加购逻辑：检查模板数量余量及库存上限。"""
+        target_item = None
+        for item in self.active_template_items:
+            if item.product_name == prod_name and item.variant == variant:
+                target_item = item
+                break
+                
+        if not target_item:
+            return rx.toast("未找到对应商品模板项目！", level="error")
+            
+        price = target_item.preset_price
+        max_qty = target_item.max_limit
+        image_data = target_item.image_data
+
         # 寻找购物车现有
         found = False
         for ci in self.cart:
@@ -586,14 +619,14 @@ class OfflineSalesState(AppState):
         self.tpl_currency = "CNY"
         self.tpl_platform = "国内线下"
         
-        db = self.get_db()
-        try:
-            whs = db.query(Warehouse).all()
-            self.tpl_wh_id = whs[0].id if whs else 0
-            self.tpl_wh_name = whs[0].name if whs else ""
-            self.load_assignable_stocks()
-        finally:
-            db.close()
+        # 直接从已加载的 templates 中取第一个仓库，避免再次查询数据库
+        if self.templates:
+            first_tpl = self.templates[0]
+            self.tpl_wh_id = first_tpl.warehouse_id
+            self.tpl_wh_name = first_tpl.warehouse_name
+        
+        self.load_assignable_stocks()
+        self._assignable_loaded = True
 
     @rx.event
     def open_edit_template(self, tpl: POSTemplateModel):
@@ -611,6 +644,8 @@ class OfflineSalesState(AppState):
 
     def load_assignable_stocks(self, exist_items=None):
         """动态加载所选仓库大货可分配的最大整套数，并作为限额校验。"""
+        import os
+        _api_url = os.environ.get("API_URL", f"http://localhost:{os.environ.get('BACKEND_PORT', '8000')}")
         db = self.get_db()
         try:
             prod_service = ProductService(db)
@@ -664,7 +699,7 @@ class OfflineSalesState(AppState):
                         "quantity": qty,
                         "max_stock": max_stock,
                         "is_selected": is_in,
-                        "img_data": c.image_data or ""
+                        "img_data": f"{_api_url}/color-image/{c.id}" if c.image_data else ""
                     })
             self.all_assignable_items = assign_list
         except Exception:
@@ -743,6 +778,7 @@ class OfflineSalesState(AppState):
             self.load_templates_list(service)
             self.selected_template_id = self.templates[0].id
             self.load_template_orders(service)
+            self._assignable_loaded = False  # 模板已更新，下次切换Tab时重新加载
             return rx.toast(msg)
         except Exception as e:
             return rx.toast(f"保存失败: {e}", level="error")
@@ -759,6 +795,7 @@ class OfflineSalesState(AppState):
             if self.templates:
                 self.selected_template_id = self.templates[0].id
                 self.load_template_orders(service)
+            self._assignable_loaded = False  # 模板已删除，下次切换Tab时重新加载
             return rx.toast("收银模板已成功注销！")
         except Exception as e:
             return rx.toast(f"注销失败: {e}", level="error")

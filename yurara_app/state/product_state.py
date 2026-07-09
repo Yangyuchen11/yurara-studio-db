@@ -317,7 +317,7 @@ class ProductState(AppState):
             img = Image.open(BytesIO(data))
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
-            img.thumbnail((100, 100))
+            img.thumbnail((300, 300))
             buf = BytesIO()
             img.save(buf, format="PNG")
             b64 = base64.b64encode(buf.getvalue()).decode()
