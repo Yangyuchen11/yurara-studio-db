@@ -95,6 +95,7 @@ POS_TRANSLATIONS = {
         "out_of_stock": "🚫 售罄",
         "no_stock": "无货",
         "revoke": "撤销",
+        "submitting_order": "正在提交订单中，请稍候...",
         "empty_template_warning": "⚠️ 线下展会收银模板为空！请先点击右侧“模板配置”Tab建立至少一个收银模板配置。",
     },
     "en": {
@@ -137,6 +138,7 @@ POS_TRANSLATIONS = {
         "out_of_stock": "🚫 Out of stock",
         "no_stock": "No Stock",
         "revoke": "Revoke",
+        "submitting_order": "Submitting order, please wait...",
         "empty_template_warning": "⚠️ Offline checkout template is empty! Please click 'Template Config' on the right to create at least one template.",
     },
     "ja": {
@@ -179,6 +181,7 @@ POS_TRANSLATIONS = {
         "out_of_stock": "🚫 完売",
         "no_stock": "在庫なし",
         "revoke": "キャンセル",
+        "submitting_order": "注文を送信中、しばらくお待ちください...",
         "empty_template_warning": "⚠️ 展示会レジテンプレートが空です！右側の「テンプレート設定」タブをクリックして、少なくとも1つのテンプレートを作成してください。",
     }
 }
@@ -289,6 +292,7 @@ class OfflineSalesState(AppState):
     show_history_only: bool = False
     pos_orders: list[POSOrderRow] = []
     is_fullscreen: bool = False
+    is_submitting: bool = False
     
     # 模板配置/编辑状态
     is_edit_mode: bool = False
@@ -729,10 +733,15 @@ class OfflineSalesState(AppState):
     def submit_pos_checkout(self):
         """执行订单支付清结。"""
         if self.is_cart_empty:
-            return rx.toast("购物车为空", level="error")
+            yield rx.toast("购物车为空", level="error")
+            return
         if not self.selected_account_id:
-            return rx.toast("请选择物理收款账户", level="error")
+            yield rx.toast("请选择物理收款账户", level="error")
+            return
             
+        self.is_submitting = True
+        yield
+        
         db = self.get_db()
         try:
             service = OfflineSalesService(db)
@@ -760,11 +769,12 @@ class OfflineSalesState(AppState):
             from cache_manager import sync_all_caches
             sync_all_caches()
             
-            return rx.toast(f"交易成功！订单号: {order_no}，实收入账: {net:,.2f}")
+            yield rx.toast(f"交易成功！订单号: {order_no}，实收入账: {net:,.2f}")
         except Exception as e:
             db.rollback()
-            return rx.toast(f"交易清结失败: {e}", level="error")
+            yield rx.toast(f"交易清结失败: {e}", level="error")
         finally:
+            self.is_submitting = False
             db.close()
 
     @rx.event

@@ -698,6 +698,27 @@ def offline_sales_page() -> rx.Component:
     """线下销售POS主页面入口"""
     return page_layout(
         rx.vstack(
+            # 提交中加载状态弹窗（防重复提交且匹配多语言）
+            rx.alert_dialog.root(
+                rx.alert_dialog.content(
+                    rx.vstack(
+                        rx.center(
+                            rx.spinner(size="3"),
+                            width="100%",
+                        ),
+                        rx.center(
+                            rx.text(OfflineSalesState.tr["submitting_order"], size="3", weight="medium"),
+                            width="100%",
+                        ),
+                        spacing="3",
+                        align="center",
+                        justify="center",
+                    ),
+                    style={"maxWidth": "300px"},
+                ),
+                open=OfflineSalesState.is_submitting,
+            ),
+            
             rx.cond(
                 OfflineSalesState.is_fullscreen,
                 rx.fragment(),
