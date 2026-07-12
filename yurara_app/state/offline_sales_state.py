@@ -212,7 +212,7 @@ def _sync_load_offline_data(is_test: bool, selected_template_id: int):
         for t in tpls:
             stock_in_wh = wh_details.get(t.warehouse_id, {}).get("stock", {})
             items_list = []
-            for item in t.items:
+            for item in sorted(t.items, key=lambda x: x.id):
                 prod_obj = prod_lookup.get(item.product_name)
                 reqs = {"整套": 1}
                 if prod_obj:
@@ -550,7 +550,7 @@ class OfflineSalesState(AppState):
             stock_in_wh = wh_details.get(t.warehouse_id, {}).get("stock", {})
             
             items_list = []
-            for item in t.items:
+            for item in sorted(t.items, key=lambda x: x.id):
                 # 从内存中快速检索产品，无需再次查询数据库
                 prod_obj = prod_lookup.get(item.product_name)
                 reqs = {"整套": 1}
