@@ -477,11 +477,11 @@ def report_page() -> rx.Component:
             rx.tabs.root(
                 rx.tabs.list(
                     rx.tabs.trigger(
-                        rx.hstack(rx.icon("calendar", size=14), rx.text("📅 公司资本月报看板"), spacing="1"),
+                        rx.hstack(rx.icon("calendar", size=14), rx.text("公司资本月报看板"), spacing="1"),
                         value="month",
                     ),
                     rx.tabs.trigger(
-                        rx.hstack(rx.icon("calendar_range", size=14), rx.text("📆 公司资本年报看板"), spacing="1"),
+                        rx.hstack(rx.icon("calendar_range", size=14), rx.text("公司资本年报看板"), spacing="1"),
                         value="year",
                     ),
                     width="100%"

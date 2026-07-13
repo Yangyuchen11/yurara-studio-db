@@ -272,9 +272,6 @@ def _sync_recalculate_report(
             closing_balance = current_db_balance - future_net
             opening_balance = closing_balance - current_net
             
-            if opening_balance < 0:
-                opening_balance = 0.0
-            
             current_in = curr_period_df[curr_period_df['amount'] > 0]['amount'].sum() if not curr_period_df.empty else 0.0
             current_out = abs(curr_period_df[curr_period_df['amount'] < 0]['amount'].sum()) if not curr_period_df.empty else 0.0
             
@@ -534,6 +531,7 @@ def _sync_recalculate_report(
         # 逆推细分项变动
         item_future = {cat: {} for cat in items_map.keys()}
         item_current = {cat: {} for cat in items_map.keys()}
+        item_past = {cat: {} for cat in items_map.keys()}
         
         for r in records:
             cat = r.category
@@ -545,12 +543,16 @@ def _sync_recalculate_report(
             
             if cat in ["固定资产购入", "其他资产购入", "商品成本"]:
                 nc_change = -equiv
-                if cat == "固定资产购入":
+                if cat == "固定资产购入" or "固定" in desc:
                     nc_cat = "fixed"
-                elif cat == "其他资产购入":
+                elif cat == "其他资产购入" or "耗材" in desc or "物料" in desc:
                     nc_cat = "consumable"
+                elif cat == "商品成本" or "在制" in desc or "在研" in desc or "wip" in desc:
+                    nc_cat = "wip"
+                elif "大货" in desc or "商品" in desc or "库存" in desc or "存货" in desc:
+                    nc_cat = "stock"
                 else:
-                    nc_cat = "wip" # 采购成本先作为在制资产增加
+                    nc_cat = "other"
             elif cat in ["现有资产增加", "新资产增加", "其他资产增加", "现有资产减少", "资产抵消"]:
                 nc_change = equiv
                 if "固定" in desc:
@@ -582,6 +584,8 @@ def _sync_recalculate_report(
                     item_future[nc_cat][matched_item] = item_future[nc_cat].get(matched_item, 0.0) + nc_change
                 elif r_period == period_key:
                     item_current[nc_cat][matched_item] = item_current[nc_cat].get(matched_item, 0.0) + nc_change
+                else:
+                    item_past[nc_cat][matched_item] = item_past[nc_cat].get(matched_item, 0.0) + nc_change
 
         # 结合物理库存变动日志 InventoryLog 重新计算大货与在制明细逆推
         from models import Product, InventoryLog, CostItem
@@ -599,42 +603,69 @@ def _sync_recalculate_report(
             for log in logs:
                 dt = pd.to_datetime(log.date)
                 log_period = dt.strftime("%Y-%m") if active_report_type == "month" else str(dt.year)
-                
                 val_change = log.change_amount * unit_cost
                 
+                if log.part_name:
+                    # 如果有部件名，我们需要按部件比例分配套装总成本，防止由于分开登记而导致成本翻倍
+                    c_variant = next((c for c in prod.colors if c.color_name == log.variant), None)
+                    if c_variant and c_variant.parts:
+                        parts_req = {p.part_name: p.quantity for p in c_variant.parts}
+                        if log.part_name in parts_req:
+                            req_qty = parts_req[log.part_name]
+                            num_parts = len(parts_req)
+                            val_change = (log.change_amount / req_qty) * (unit_cost / num_parts)
+                from constants import StockLogReason
+                valid_stock_reasons = [
+                    StockLogReason.INSPECT_COMPLETED, 
+                    StockLogReason.OTHER_IN, 
+                    StockLogReason.OUT_STOCK, 
+                    StockLogReason.IN_STOCK, 
+                    StockLogReason.RETURN_IN, 
+                    StockLogReason.TRANSFER,
+                    "成品入库", "打样入库", "销售出库"  # 兼容极早期数据
+                ]
+                
                 # 大货实物变动
-                if log_period > period_key:
-                    item_future["stock"][stock_name] = item_future["stock"].get(stock_name, 0.0) + val_change
-                elif log_period == period_key:
-                    item_current["stock"][stock_name] = item_current["stock"].get(stock_name, 0.0) + val_change
+                if log.reason in valid_stock_reasons:
+                    if log_period > period_key:
+                        item_future["stock"][stock_name] = item_future["stock"].get(stock_name, 0.0) + val_change
+                    elif log_period == period_key:
+                        item_current["stock"][stock_name] = item_current["stock"].get(stock_name, 0.0) + val_change
+                    else:
+                        item_past["stock"][stock_name] = item_past["stock"].get(stock_name, 0.0) + val_change
                     
                 # 生产成品入库，扣减在制
-                is_production_in = (log.change_amount > 0 and log.reason in ["成品入库", "生产入库", "打样入库"])
+                from constants import StockLogReason
+                is_production_in = (log.change_amount > 0 and log.reason in [
+                    StockLogReason.INSPECT_COMPLETED, 
+                    StockLogReason.IN_STOCK, 
+                    StockLogReason.EXTRA_PROD,
+                    "成品入库", "生产入库", "打样入库" # 兼容极早期历史数据
+                ])
                 if is_production_in:
                     wip_change = -val_change
                     if log_period > period_key:
                         item_future["wip"][wip_name] = item_future["wip"].get(wip_name, 0.0) + wip_change
                     elif log_period == period_key:
                         item_current["wip"][wip_name] = item_current["wip"].get(wip_name, 0.0) + wip_change
+                    else:
+                        item_past["wip"][wip_name] = item_past["wip"].get(wip_name, 0.0) + wip_change
 
         # 组装明细列表
         detail_lists = {cat: [] for cat in items_map.keys()}
         for cat in items_map.keys():
             all_keys = set(items_map[cat].keys()) | set(item_future[cat].keys()) | set(item_current[cat].keys())
             for name in all_keys:
-                curr_val = items_map[cat].get(name, 0.0)
                 fut_chg = item_future[cat].get(name, 0.0)
                 curr_chg = item_current[cat].get(name, 0.0)
                 
+                # 当前最新物理快照的账面价值（基准真相）
+                curr_val = items_map[cat].get(name, 0.0)
+                
+                # 统一采用倒推法（Backward Projection），确保“本期变动”永远等于真实流水，
+                # 而历史盘亏等账实不符差异由期初余额自然吸收（允许负数期初）
                 closing = curr_val - fut_chg
                 opening = closing - curr_chg
-                
-                # 防御性逻辑：物理非现金资产的期初不可能为负数。
-                # 如果为负，说明发生了“有采购流水但未建档”或“忘记登记消耗流水”。
-                # 我们应当强制期初为 0，并将期末推高至其应有的余量，从而在报表中暴露这个未分类资产。
-                if opening < 0:
-                    opening = 0.0
-                    closing = curr_chg
                 
                 if abs(opening) < 0.01 and abs(closing) < 0.01 and abs(curr_chg) < 0.01:
                     continue
