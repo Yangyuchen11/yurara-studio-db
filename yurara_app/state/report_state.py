@@ -651,10 +651,27 @@ def _sync_recalculate_report(
                     else:
                         item_past["wip"][wip_name] = item_past["wip"].get(wip_name, 0.0) + wip_change
 
+        # 结合耗材变动日志 ConsumableLog 重新计算耗材明细逆推
+        from models import ConsumableLog
+        c_logs = db.query(ConsumableLog).all()
+        for log in c_logs:
+            if log.note and (log.note.startswith("内部消耗") or log.note.startswith("库存操作") or log.note.startswith("补货入库")):
+                dt = pd.to_datetime(log.date)
+                log_period = dt.strftime("%Y-%m") if active_report_type == "month" else str(dt.year)
+                val_change = log.value_cny if log.value_cny is not None else 0.0
+                
+                c_name = log.item_name
+                if log_period > period_key:
+                    item_future["consumable"][c_name] = item_future["consumable"].get(c_name, 0.0) + val_change
+                elif log_period == period_key:
+                    item_current["consumable"][c_name] = item_current["consumable"].get(c_name, 0.0) + val_change
+                else:
+                    item_past["consumable"][c_name] = item_past["consumable"].get(c_name, 0.0) + val_change
+
         # 组装明细列表
         detail_lists = {cat: [] for cat in items_map.keys()}
         for cat in items_map.keys():
-            all_keys = set(items_map[cat].keys()) | set(item_future[cat].keys()) | set(item_current[cat].keys())
+            all_keys = set(items_map[cat].keys()) | set(item_future[cat].keys()) | set(item_current[cat].keys()) | set(item_past[cat].keys())
             for name in all_keys:
                 fut_chg = item_future[cat].get(name, 0.0)
                 curr_chg = item_current[cat].get(name, 0.0)
