@@ -87,6 +87,29 @@ class MonthProfitTrendRow(BaseModel):
     net_profit: float = 0.0
 
 
+class NonCashDetailRow(BaseModel):
+    item_name: str = ""
+    opening_balance: float = 0.0
+    change: float = 0.0
+    closing_balance: float = 0.0
+    
+    opening_str: str = ""
+    change_str: str = ""
+    closing_str: str = ""
+
+
+class BalanceChangeRow(BaseModel):
+    item_name: str = ""
+    opening_balance: float = 0.0
+    change: float = 0.0
+    closing_balance: float = 0.0
+    
+    opening_str: str = ""
+    change_str: str = ""
+    closing_str: str = ""
+    details: list[NonCashDetailRow] = []
+
+
 def _sync_recalculate_report(
     is_test: bool,
     exchange_rate: float,
@@ -156,6 +179,52 @@ def _sync_recalculate_report(
             is_cash_flow = r.category not in ["现有资产增加", "新资产增加", "现有资产减少", "其他资产增加", "资产抵消", "取消/冲销", "新增挂账资产"]
             
             dt = pd.to_datetime(r.date)
+            
+            # 特殊处理：资金移动若为0（在现金账户间划转），分裂为转出和转入两条记录，以支持个别账户期初期末对账逆推
+            if r.category == "资金移动" and r.amount == 0:
+                import re
+                transfer_amount = 0.0
+                m = re.search(r"金额:\s*([0-9.]+)", r.description or "")
+                if m:
+                    try:
+                        transfer_amount = float(m.group(1))
+                    except ValueError:
+                        pass
+                
+                if transfer_amount > 0:
+                    # 1. 账户 A (转出): 转出账户 r.account_id
+                    data.append({
+                        "id": r.id,
+                        "date": dt,
+                        "amount": -transfer_amount,
+                        "cny_original": -transfer_amount if r.currency == 'CNY' else 0.0,
+                        "jpy_original": -transfer_amount if r.currency == 'JPY' else 0.0,
+                        "currency": r.currency,
+                        "category": r.category,
+                        "nature": "内部流转",
+                        "account_id": final_acc_id,
+                        "is_cash_flow": True,
+                        "year": str(dt.year),
+                        "month": dt.strftime("%Y-%m")
+                    })
+                    # 2. 账户 B (转入): 转入账户 r.related_item_id
+                    if r.related_item_id:
+                        data.append({
+                            "id": r.id,
+                            "date": dt,
+                            "amount": transfer_amount,
+                            "cny_original": transfer_amount if r.currency == 'CNY' else 0.0,
+                            "jpy_original": transfer_amount if r.currency == 'JPY' else 0.0,
+                            "currency": r.currency,
+                            "category": r.category,
+                            "nature": "内部流转",
+                            "account_id": r.related_item_id,
+                            "is_cash_flow": True,
+                            "year": str(dt.year),
+                            "month": dt.strftime("%Y-%m")
+                        })
+                    continue
+            
             data.append({
                 "id": r.id,
                 "date": dt,
@@ -203,10 +272,13 @@ def _sync_recalculate_report(
             closing_balance = current_db_balance - future_net
             opening_balance = closing_balance - current_net
             
+            if opening_balance < 0:
+                opening_balance = 0.0
+            
             current_in = curr_period_df[curr_period_df['amount'] > 0]['amount'].sum() if not curr_period_df.empty else 0.0
             current_out = abs(curr_period_df[curr_period_df['amount'] < 0]['amount'].sum()) if not curr_period_df.empty else 0.0
             
-            if abs(opening_balance) < 0.01 and abs(current_net) < 0.01 and abs(closing_balance) < 0.01:
+            if abs(opening_balance) < 0.01 and abs(closing_balance) < 0.01 and current_in < 0.01 and current_out < 0.01:
                 continue
                 
             acc_list.append(AccountPeriodRow(
@@ -362,6 +434,335 @@ def _sync_recalculate_report(
                         month=m_label,
                         net_profit=m_profit
                     ))
+
+        # 8. 期初与期末资产、负债及资本变动逆推
+        # 1) 计算当前各资产大类 (CNY折合)
+        current_cash_cny = sum(to_cny(amount, curr, rates) for curr, amount in summary["cash"].items())
+        current_fixed_cny = sum(to_cny(amount, curr, rates) for curr, amount in summary["fixed"].items())
+        current_cons_cny = sum(to_cny(amount, curr, rates) for curr, amount in summary["consumable"].items())
+        current_wip_cny = summary["wip"]["total_cny"]
+        
+        current_stock_cny = stock_cny
+        current_other_cny = sum(to_cny(ma.amount, ma.currency, rates) for ma in summary["manual_assets"] if getattr(ma, 'product_id', None) is None)
+        
+        current_total_assets = current_cash_cny + current_fixed_cny + current_cons_cny + current_wip_cny + current_stock_cny + current_other_cny
+        current_liabilities = sum(to_cny(i.amount, i.currency, rates) for i in summary["liabilities"])
+        current_capital = sum(to_cny(i.amount, i.currency, rates) for i in summary["equities"])
+        
+        # 2) 演算总资产/负债/资本变动
+        def get_alc_changes(target_df):
+            assets_chg = 0.0
+            liab_chg = 0.0
+            cap_chg = 0.0
+            if target_df.empty:
+                return assets_chg, liab_chg, cap_chg
+            for _, row in target_df.iterrows():
+                val = row['amount']
+                curr = row['currency']
+                cat = row['category']
+                equiv = to_cny(val, curr, rates)
+                
+                # 资产变动：除去置换和内部流转
+                if cat in ["固定资产购入", "其他资产购入", "资金移动", "货币兑换"]:
+                    a_val = 0.0
+                else:
+                    a_val = equiv
+                assets_chg += a_val
+                
+                # 负债变动
+                if cat in ["借入资金", "新增挂账资产", "债务偿还", "资产抵消"]:
+                    l_val = equiv
+                else:
+                    l_val = 0.0
+                liab_chg += l_val
+                
+                # 资本变动
+                if cat in ["投资", "撤资"]:
+                    c_val = equiv
+                else:
+                    c_val = 0.0
+                cap_chg += c_val
+            return assets_chg, liab_chg, cap_chg
+
+        if active_report_type == "month":
+            df_future = df[df['month'] > period_key]
+        else:
+            df_future = df[df['year'] > period_key]
+            
+        future_assets_change, future_liabilities_change, future_capital_change = get_alc_changes(df_future)
+        current_assets_change, current_liabilities_change, current_capital_change = get_alc_changes(df_current)
+        
+        # 3) 计算历史负债与资本余额
+        closing_liabilities = current_liabilities - future_liabilities_change
+        opening_liabilities = closing_liabilities - current_liabilities_change
+        
+        closing_capital = current_capital - future_capital_change
+        opening_capital = closing_capital - current_capital_change
+        
+        # 4) 细分非现金资产项计算
+        items_map = {
+            "fixed": {},
+            "consumable": {},
+            "wip": {},
+            "stock": {},
+            "other": {}
+        }
+        
+        # 从数据库加载实体项目
+        from models import FixedAsset, ConsumableItem
+        fixed_assets = db.query(FixedAsset).all()
+        consumables = db.query(ConsumableItem).all()
+        
+        for fa in fixed_assets:
+            val = to_cny(fa.unit_price * fa.remaining_qty, fa.currency, rates)
+            items_map["fixed"][fa.name] = items_map["fixed"].get(fa.name, 0.0) + val
+            
+        for c in consumables:
+            val = to_cny(c.unit_price * c.remaining_qty, c.currency, rates)
+            items_map["consumable"][c.name] = items_map["consumable"].get(c.name, 0.0) + val
+            
+        for name, wip_val in summary["wip"]["list"]:
+            items_map["wip"][name] = wip_val
+            
+        for ma in summary["manual_assets"]:
+            val = to_cny(ma.amount, ma.currency, rates)
+            if getattr(ma, 'product_id', None) is not None:
+                items_map["stock"][ma.name] = items_map["stock"].get(ma.name, 0.0) + val
+            else:
+                items_map["other"][ma.name] = items_map["other"].get(ma.name, 0.0) + val
+
+        # 逆推细分项变动
+        item_future = {cat: {} for cat in items_map.keys()}
+        item_current = {cat: {} for cat in items_map.keys()}
+        
+        for r in records:
+            cat = r.category
+            desc = (r.description or "").lower()
+            equiv = to_cny(r.amount, r.currency, rates)
+            
+            nc_cat = None
+            nc_change = 0.0
+            
+            if cat in ["固定资产购入", "其他资产购入", "商品成本"]:
+                nc_change = -equiv
+                if cat == "固定资产购入":
+                    nc_cat = "fixed"
+                elif cat == "其他资产购入":
+                    nc_cat = "consumable"
+                else:
+                    nc_cat = "wip" # 采购成本先作为在制资产增加
+            elif cat in ["现有资产增加", "新资产增加", "其他资产增加", "现有资产减少", "资产抵消"]:
+                nc_change = equiv
+                if "固定" in desc:
+                    nc_cat = "fixed"
+                elif "耗材" in desc or "物料" in desc:
+                    nc_cat = "consumable"
+                elif "在制" in desc or "在研" in desc or "wip" in desc:
+                    nc_cat = "wip"
+                elif "大货" in desc or "商品" in desc or "库存" in desc or "存货" in desc:
+                    nc_cat = "stock"
+                else:
+                    nc_cat = "other"
+            
+            if nc_cat:
+                dt = pd.to_datetime(r.date)
+                r_period = dt.strftime("%Y-%m") if active_report_type == "month" else str(dt.year)
+                
+                # 匹配具体项名称
+                matched_item = None
+                for name in items_map[nc_cat].keys():
+                    clean_name = name.replace("大货资产-", "").replace("流动资金-", "").strip().lower()
+                    if clean_name and (clean_name in desc or clean_name in cat.lower()):
+                        matched_item = name
+                        break
+                if not matched_item:
+                    matched_item = "其他未分类资产"
+                    
+                if r_period > period_key:
+                    item_future[nc_cat][matched_item] = item_future[nc_cat].get(matched_item, 0.0) + nc_change
+                elif r_period == period_key:
+                    item_current[nc_cat][matched_item] = item_current[nc_cat].get(matched_item, 0.0) + nc_change
+
+        # 结合物理库存变动日志 InventoryLog 重新计算大货与在制明细逆推
+        from models import Product, InventoryLog, CostItem
+        from sqlalchemy import func
+        products = db.query(Product).all()
+        
+        for prod in products:
+            total_cost = db.query(func.sum(CostItem.actual_cost)).filter(CostItem.product_id == prod.id).scalar() or 0.0
+            unit_cost = total_cost / prod.marketable_quantity if (prod.marketable_quantity and prod.marketable_quantity > 0) else 0.0
+            
+            stock_name = f"大货资产-{prod.name}"
+            wip_name = prod.name
+            
+            logs = db.query(InventoryLog).filter(InventoryLog.product_name == prod.name).all()
+            for log in logs:
+                dt = pd.to_datetime(log.date)
+                log_period = dt.strftime("%Y-%m") if active_report_type == "month" else str(dt.year)
+                
+                val_change = log.change_amount * unit_cost
+                
+                # 大货实物变动
+                if log_period > period_key:
+                    item_future["stock"][stock_name] = item_future["stock"].get(stock_name, 0.0) + val_change
+                elif log_period == period_key:
+                    item_current["stock"][stock_name] = item_current["stock"].get(stock_name, 0.0) + val_change
+                    
+                # 生产成品入库，扣减在制
+                is_production_in = (log.change_amount > 0 and log.reason in ["成品入库", "生产入库", "打样入库"])
+                if is_production_in:
+                    wip_change = -val_change
+                    if log_period > period_key:
+                        item_future["wip"][wip_name] = item_future["wip"].get(wip_name, 0.0) + wip_change
+                    elif log_period == period_key:
+                        item_current["wip"][wip_name] = item_current["wip"].get(wip_name, 0.0) + wip_change
+
+        # 组装明细列表
+        detail_lists = {cat: [] for cat in items_map.keys()}
+        for cat in items_map.keys():
+            all_keys = set(items_map[cat].keys()) | set(item_future[cat].keys()) | set(item_current[cat].keys())
+            for name in all_keys:
+                curr_val = items_map[cat].get(name, 0.0)
+                fut_chg = item_future[cat].get(name, 0.0)
+                curr_chg = item_current[cat].get(name, 0.0)
+                
+                closing = curr_val - fut_chg
+                opening = closing - curr_chg
+                
+                if abs(opening) < 0.01 and abs(closing) < 0.01 and abs(curr_chg) < 0.01:
+                    continue
+                    
+                detail_lists[cat].append(NonCashDetailRow(
+                    item_name=name,
+                    opening_balance=opening,
+                    change=curr_chg,
+                    closing_balance=closing,
+                    opening_str=f"¥ {opening:,.2f}",
+                    change_str=f"¥ {curr_chg:,.2f}",
+                    closing_str=f"¥ {closing:,.2f}"
+                ))
+            detail_lists[cat] = sorted(detail_lists[cat], key=lambda x: x.closing_balance, reverse=True)
+
+        # 汇总各大类
+        closing_fixed = sum(r.closing_balance for r in detail_lists["fixed"])
+        opening_fixed = sum(r.opening_balance for r in detail_lists["fixed"])
+        change_fixed = sum(r.change for r in detail_lists["fixed"])
+        
+        closing_cons = sum(r.closing_balance for r in detail_lists["consumable"])
+        opening_cons = sum(r.opening_balance for r in detail_lists["consumable"])
+        change_cons = sum(r.change for r in detail_lists["consumable"])
+        
+        closing_wip = sum(r.closing_balance for r in detail_lists["wip"])
+        opening_wip = sum(r.opening_balance for r in detail_lists["wip"])
+        change_wip = sum(r.change for r in detail_lists["wip"])
+        
+        closing_stock = sum(r.closing_balance for r in detail_lists["stock"])
+        opening_stock = sum(r.opening_balance for r in detail_lists["stock"])
+        change_stock = sum(r.change for r in detail_lists["stock"])
+        
+        closing_other = sum(r.closing_balance for r in detail_lists["other"])
+        opening_other = sum(r.opening_balance for r in detail_lists["other"])
+        change_other = sum(r.change for r in detail_lists["other"])
+
+        non_cash_asset_rows = [
+            BalanceChangeRow(
+                item_name="大货商品资产 (Stock Assets)",
+                opening_balance=opening_stock,
+                change=change_stock,
+                closing_balance=closing_stock,
+                opening_str=f"¥ {opening_stock:,.2f}",
+                change_str=f"¥ {change_stock:,.2f}",
+                closing_str=f"¥ {closing_stock:,.2f}",
+                details=detail_lists["stock"]
+            ),
+            BalanceChangeRow(
+                item_name="在制在研资产 (WIP Assets)",
+                opening_balance=opening_wip,
+                change=change_wip,
+                closing_balance=closing_wip,
+                opening_str=f"¥ {opening_wip:,.2f}",
+                change_str=f"¥ {change_wip:,.2f}",
+                closing_str=f"¥ {closing_wip:,.2f}",
+                details=detail_lists["wip"]
+            ),
+            BalanceChangeRow(
+                item_name="固定设备资产 (Fixed Assets)",
+                opening_balance=opening_fixed,
+                change=change_fixed,
+                closing_balance=closing_fixed,
+                opening_str=f"¥ {opening_fixed:,.2f}",
+                change_str=f"¥ {change_fixed:,.2f}",
+                closing_str=f"¥ {closing_fixed:,.2f}",
+                details=detail_lists["fixed"]
+            ),
+            BalanceChangeRow(
+                item_name="消耗品与物料 (Consumable Assets)",
+                opening_balance=opening_cons,
+                change=change_cons,
+                closing_balance=closing_cons,
+                opening_str=f"¥ {opening_cons:,.2f}",
+                change_str=f"¥ {change_cons:,.2f}",
+                closing_str=f"¥ {closing_cons:,.2f}",
+                details=detail_lists["consumable"]
+            ),
+            BalanceChangeRow(
+                item_name="其他手动资产 (Other Manual Assets)",
+                opening_balance=opening_other,
+                change=change_other,
+                closing_balance=closing_other,
+                opening_str=f"¥ {opening_other:,.2f}",
+                change_str=f"¥ {change_other:,.2f}",
+                closing_str=f"¥ {closing_other:,.2f}",
+                details=detail_lists["other"]
+            )
+        ]
+        
+        # 综合计算总资产（包含物理库存在内的所有资产汇总）
+        opening_total_assets = past_cash_total + opening_fixed + opening_cons + opening_wip + opening_stock + opening_other
+        closing_total_assets = closing_cash_total + closing_fixed + closing_cons + closing_wip + closing_stock + closing_other
+        current_assets_change = closing_total_assets - opening_total_assets
+        
+        closing_net_assets = closing_total_assets - closing_liabilities
+        opening_net_assets = opening_total_assets - opening_liabilities
+
+        balance_change_rows = [
+            BalanceChangeRow(
+                item_name="总资产 (Total Assets)",
+                opening_balance=opening_total_assets,
+                change=current_assets_change,
+                closing_balance=closing_total_assets,
+                opening_str=f"¥ {opening_total_assets:,.2f}",
+                change_str=f"¥ {current_assets_change:,.2f}",
+                closing_str=f"¥ {closing_total_assets:,.2f}"
+            ),
+            BalanceChangeRow(
+                item_name="负债 (Liabilities)",
+                opening_balance=opening_liabilities,
+                change=current_liabilities_change,
+                closing_balance=closing_liabilities,
+                opening_str=f"¥ {opening_liabilities:,.2f}",
+                change_str=f"¥ {current_liabilities_change:,.2f}",
+                closing_str=f"¥ {closing_liabilities:,.2f}"
+            ),
+            BalanceChangeRow(
+                item_name="资本 (Capital / Equity)",
+                opening_balance=opening_capital,
+                change=current_capital_change,
+                closing_balance=closing_capital,
+                opening_str=f"¥ {opening_capital:,.2f}",
+                change_str=f"¥ {current_capital_change:,.2f}",
+                closing_str=f"¥ {closing_capital:,.2f}"
+            ),
+            BalanceChangeRow(
+                item_name="净资产 (Net Assets)",
+                opening_balance=opening_net_assets,
+                change=closing_net_assets - opening_net_assets,
+                closing_balance=closing_net_assets,
+                opening_str=f"¥ {opening_net_assets:,.2f}",
+                change_str=f"¥ {(closing_net_assets - opening_net_assets):,.2f}",
+                closing_str=f"¥ {closing_net_assets:,.2f}"
+            )
+        ]
                     
         return {
             "available_months": sorted(list(set(df['month'])), reverse=True) if not df.empty else [],
@@ -382,6 +783,8 @@ def _sync_recalculate_report(
             "liab_equity_rows": liab_rows,
             "flow_summary": flow_summary,
             "trend_rows": trend_rows,
+            "balance_change_summary": balance_change_rows,
+            "non_cash_asset_summary": non_cash_asset_rows,
         }
     finally:
         db.close()
@@ -422,6 +825,8 @@ class ReportState(AppState):
     
     # 年报特有：月份走势
     trend_rows: list[MonthProfitTrendRow] = []
+    balance_change_summary: list[BalanceChangeRow] = []
+    non_cash_asset_summary: list[BalanceChangeRow] = []
 
     # ===================== 计算属性 =====================
 
@@ -602,3 +1007,5 @@ class ReportState(AppState):
         self.liab_equity_rows = res["liab_equity_rows"]
         self.flow_summary = res["flow_summary"]
         self.trend_rows = res["trend_rows"]
+        self.balance_change_summary = res.get("balance_change_summary", [])
+        self.non_cash_asset_summary = res.get("non_cash_asset_summary", [])

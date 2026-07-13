@@ -165,7 +165,7 @@ def _sync_load_finance_data(is_test: bool, rates_map: dict[str, float], page: in
                 label=f"[{a.currency}] {a.name} (余额: {a.amount:,.2f})",
                 currency=a.currency
             )
-            for a in cash_list
+            for a in cash_list if a.name not in ["流动资金(CNY)", "流动资金(JPY)", "流动资金（CNY）", "流动资金（JPY）"]
         ]
         
         # B. 负债
@@ -493,10 +493,33 @@ class FinanceState(AppState):
         
     @rx.event
     def set_ex_amount_in(self, val: float): self.ex_amount_in = val
+    
     @rx.event
-    def set_ex_source_acc_id(self, val: str): self.ex_source_acc_id = val
+    def set_ex_source_acc_id(self, val: str):
+        self.ex_source_acc_id = val
+        if val:
+            for acc in self.cash_accounts:
+                if acc.id == val:
+                    # 复用 set_ex_source_curr 的逻辑
+                    self.ex_source_curr = acc.currency
+                    if acc.currency == "CNY":
+                        non_cny_keys = [k for k in self.rates_map.keys() if k != "CNY"]
+                        self.ex_target_curr = non_cny_keys[0] if non_cny_keys else "JPY"
+                    else:
+                        self.ex_target_curr = "CNY"
+                    self.calc_exchange_estimate()
+                    break
+
     @rx.event
-    def set_ex_target_acc_id(self, val: str): self.ex_target_acc_id = val
+    def set_ex_target_acc_id(self, val: str):
+        self.ex_target_acc_id = val
+        if val:
+            for acc in self.cash_accounts:
+                if acc.id == val:
+                    self.ex_target_curr = acc.currency
+                    self.calc_exchange_estimate()
+                    break
+
     @rx.event
     def set_ex_desc(self, val: str): self.ex_desc = val
 

@@ -278,7 +278,7 @@ class ConsumableState(AppState):
             self.cash_accounts = [DropdownOption(
                 value=str(a.id),
                 label=f"[{a.currency}] {a.name}"
-            ) for a in cash_items]
+            ) for a in cash_items if a.name not in ["流动资金(CNY)", "流动资金(JPY)", "流动资金（CNY）", "流动资金（JPY）"]]
             if self.cash_accounts and not self.sale_account_id:
                 self.sale_account_id = self.cash_accounts[0].value
 

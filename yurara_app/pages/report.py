@@ -56,11 +56,55 @@ def render_flow_row(r) -> rx.Component:
     )
 
 
+def render_balance_change_row(r) -> rx.Component:
+    """渲染资产负债及资本变动行。"""
+    return rx.table.row(
+        rx.table.cell(rx.text(r.item_name, size="1", weight="bold")),
+        rx.table.cell(rx.text(r.opening_str, size="1")),
+        rx.table.cell(
+            rx.text(
+                r.change_str, 
+                size="1", 
+                weight="bold", 
+                color=rx.cond(r.change >= 0, "green", "red")
+            )
+        ),
+        rx.table.cell(rx.text(r.closing_str, size="1", weight="bold")),
+    )
+
+
 def report_dashboard() -> rx.Component:
     """报表汇总大面板"""
     return rx.vstack(
-        # 一、资金流汇总 (现金流汇总卡)
-        rx.heading("💵 一、 期初与期末现金流汇总 (折算 CNY 总计)", size="3", margin_top="1rem", color=rx.color("violet", 10)),
+        # 一、 资产、负债及资本变动汇总表
+        rx.heading("🏢 一、 期初与期末资产、负债及资本变动表 (折算 CNY 总计)", size="3", margin_top="1rem", color=rx.color("violet", 10)),
+        data_card(
+            "期初与期末整体财务家底账目表",
+            rx.table.root(
+                rx.table.header(
+                    rx.table.row(
+                        rx.table.column_header_cell("财务科目项目", size="1"),
+                        rx.table.column_header_cell("期初余额 (变动前)", size="1"),
+                        rx.table.column_header_cell("本期净变动额", size="1"),
+                        rx.table.column_header_cell("期末余额 (变动后)", size="1"),
+                    )
+                ),
+                rx.table.body(
+                    rx.foreach(
+                        ReportState.balance_change_summary,
+                        render_balance_change_row
+                    )
+                ),
+                size="1",
+                width="100%",
+                variant="ghost"
+            )
+        ),
+
+        rx.divider(),
+
+        # 二、资金流汇总 (现金流汇总卡)
+        rx.heading("💵 二、 期初与期末现金流汇总 (折算 CNY 总计)", size="3", color=rx.color("violet", 10)),
         rx.grid(
             stat_card("期初总资金 (变动前)", ReportState.past_cash_total_str, icon="landmark", color_scheme="slate"),
             stat_card("本期净现金流 (变动额)", ReportState.net_cash_total_str, icon="arrow_left_right", color_scheme="violet"),
@@ -70,8 +114,8 @@ def report_dashboard() -> rx.Component:
             width="100%"
         ),
         
-        # 二、资产、经营与存货
-        rx.heading("🏢 二、 实体资产与经营盈亏结算 (经营利润与存货大盘)", size="3", color=rx.color("violet", 10)),
+        # 三、资产、经营与存货
+        rx.heading("🏢 三、 实体资产与经营盈亏结算 (经营利润与存货大盘)", size="3", color=rx.color("violet", 10)),
         rx.grid(
             # 实体资产变动
             rx.card(
@@ -121,10 +165,10 @@ def report_dashboard() -> rx.Component:
         
         rx.divider(),
         
-        # 三、资金账户明细表
-        rx.heading("💵 三、 各流动资金账户变动明细", size="3", color=rx.color("violet", 10)),
+        # 四、资金账户明细表
+        rx.heading("💵 四、 各流动资金账户变动明细", size="3", color=rx.color("violet", 10)),
         data_card(
-            "资金账户对账单 (已过滤空账户)",
+            "资金账户对账单",
             rx.table.root(
                 rx.table.header(
                     rx.table.row(
@@ -148,11 +192,83 @@ def report_dashboard() -> rx.Component:
                 variant="ghost"
             )
         ),
-        
         rx.divider(),
         
-        # 四、物料采购 vs 负债资本
-        rx.heading("🏢 四、 固定及其他资产采购 / 负债与外部资本变动", size="3", color=rx.color("violet", 10)),
+        # 五、各非现金资产变动明细
+        rx.heading("🏢 五、 各非现金资产变动明细 (折算 CNY)", size="3", color=rx.color("violet", 10)),
+        data_card(
+            "非现金资产对账单 (点击项目可展开查看明细)",
+            rx.vstack(
+                rx.grid(
+                    rx.text("资产类别 (点击展开)", size="1", color=rx.color("slate", 9), weight="bold"),
+                    rx.text("期初估值 (变动前)", size="1", color=rx.color("slate", 9), weight="bold"),
+                    rx.text("本期净变动额", size="1", color=rx.color("slate", 9), weight="bold"),
+                    rx.text("期末估值 (变动后)", size="1", color=rx.color("slate", 9), weight="bold"),
+                    grid_template_columns="4fr 3fr 3fr 3fr",
+                    width="100%",
+                    padding="0.5rem 1rem",
+                    border_bottom=f"1px solid {rx.color('slate', 4)}"
+                ),
+                rx.accordion.root(
+                    rx.foreach(
+                        ReportState.non_cash_asset_summary,
+                        lambda cat: rx.accordion.item(
+                            header=rx.grid(
+                                rx.text(cat.item_name, size="1", weight="bold", text_align="left"),
+                                rx.text(cat.opening_str, size="1", text_align="left"),
+                                rx.text(
+                                    cat.change_str,
+                                    size="1",
+                                    weight="bold",
+                                    color=rx.cond(cat.change >= 0, "green", "red"),
+                                    text_align="left"
+                                ),
+                                rx.text(cat.closing_str, size="1", weight="bold", text_align="left"),
+                                grid_template_columns="4fr 3fr 3fr 3fr",
+                                width="100%",
+                                align_items="center"
+                            ),
+                            content=rx.vstack(
+                                rx.foreach(
+                                    cat.details,
+                                    lambda sub_item: rx.grid(
+                                        rx.text(sub_item.item_name, size="1"),
+                                        rx.text(sub_item.opening_str, size="1"),
+                                        rx.text(
+                                            sub_item.change_str,
+                                            size="1",
+                                            weight="medium",
+                                            color=rx.cond(sub_item.change >= 0, "green", "red")
+                                        ),
+                                        rx.text(sub_item.closing_str, size="1", weight="bold"),
+                                        grid_template_columns="4fr 3fr 3fr 3fr",
+                                        width="100%",
+                                        padding="0.4rem 0"
+                                    )
+                                ),
+                                width="100%",
+                                spacing="1",
+                                padding="0.5rem 1rem",
+                                background=rx.color("slate", 2),
+                                border_radius="4px"
+                            ),
+                            value=cat.item_name
+                        )
+                    ),
+                    collapsible=True,
+                    type_="single",
+                    width="100%",
+                    variant="ghost"
+                ),
+                width="100%",
+                spacing="0"
+            )
+        ),
+
+        rx.divider(),
+        
+        # 六、物料采购 vs 负债资本
+        rx.heading("🏢 六、 固定及其他资产采购 / 负债与外部资本变动", size="3", color=rx.color("violet", 10)),
         rx.grid(
             # 物料卡片
             data_card(
@@ -213,8 +329,8 @@ def report_dashboard() -> rx.Component:
         
         rx.divider(),
         
-        # 五、详细收支构成直方图
-        rx.heading("📊 五、 经营性现金流收支流向构成分析", size="3", color=rx.color("violet", 10)),
+        # 七、详细收支构成直方图
+        rx.heading("📊 七、 经营性现金流收支流向构成分析", size="3", color=rx.color("violet", 10)),
         rx.grid(
             # 直方图
             rx.card(
@@ -232,9 +348,9 @@ def report_dashboard() -> rx.Component:
                                 ),
                                 rx.box(
                                     rx.box(
-                                        width=item["width_pct"],
+                                        style={"width": item["width_pct"]},
                                         height="6px",
-                                        background="linear-gradient(90deg, var(--violet-9), var(--fuchsia-9))",
+                                        background="linear-gradient(90deg, #8b5cf6, #d946ef)",
                                         border_radius="3px",
                                     ),
                                     width="100%",
@@ -290,12 +406,12 @@ def report_dashboard() -> rx.Component:
             align_items="start"
         ),
         
-        # 六、年度走势 (仅在年报模式下渲染)
+        # 八、年度走势 (仅在年报模式下渲染)
         rx.cond(
             ReportState.active_report_type == "year",
             rx.vstack(
                 rx.divider(),
-                rx.heading("📈 六、 年度内按月份经营盈亏走势分析", size="3", color=rx.color("violet", 10)),
+                rx.heading("📈 八、 年度内按月份经营盈亏走势分析", size="3", color=rx.color("violet", 10)),
                 rx.card(
                     rx.vstack(
                         rx.text("按月份净利润走势图 (CNY)", size="2", weight="bold"),
@@ -306,12 +422,12 @@ def report_dashboard() -> rx.Component:
                                     rx.center(
                                         rx.tooltip(
                                             rx.box(
-                                                height=item["height_str"],
+                                                style={"height": item["height_str"]},
                                                 width="14px",
                                                 background=rx.cond(
                                                     item["is_positive"],
-                                                    "linear-gradient(180deg, var(--green-9), var(--emerald-10))",
-                                                    "linear-gradient(180deg, var(--red-9), var(--crimson-10))",
+                                                    "linear-gradient(180deg, #10b981, #059669)",
+                                                    "linear-gradient(180deg, #ef4444, #dc2626)",
                                                 ),
                                                 border_radius="4px 4px 0 0",
                                                 transition="all 0.2s ease",
