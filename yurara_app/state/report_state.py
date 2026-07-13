@@ -629,6 +629,13 @@ def _sync_recalculate_report(
                 closing = curr_val - fut_chg
                 opening = closing - curr_chg
                 
+                # 防御性逻辑：物理非现金资产的期初不可能为负数。
+                # 如果为负，说明发生了“有采购流水但未建档”或“忘记登记消耗流水”。
+                # 我们应当强制期初为 0，并将期末推高至其应有的余量，从而在报表中暴露这个未分类资产。
+                if opening < 0:
+                    opening = 0.0
+                    closing = curr_chg
+                
                 if abs(opening) < 0.01 and abs(closing) < 0.01 and abs(curr_chg) < 0.01:
                     continue
                     

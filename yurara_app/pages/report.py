@@ -243,7 +243,7 @@ def report_dashboard() -> rx.Component:
                                         rx.text(sub_item.closing_str, size="1", weight="bold"),
                                         grid_template_columns="4fr 3fr 3fr 3fr",
                                         width="100%",
-                                        padding="0.4rem 0"
+                                        padding="0.4rem 1.5rem 0.4rem 0"
                                     )
                                 ),
                                 width="100%",
