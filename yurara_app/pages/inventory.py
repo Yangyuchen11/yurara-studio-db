@@ -10,19 +10,114 @@ from ..components.editable_table import data_card, custom_form_field, empty_stat
 from constants import StockLogReason
 
 
-def render_progress_row(row) -> rx.Component:
-    """渲染商品款式进度条目。"""
+def render_part_row(part) -> rx.Component:
+    """渲染拆分部件的详情子行。"""
     return rx.table.row(
-        rx.table.cell(rx.text(rx.fragment("🎨 ", row.variant), size="1", weight="medium")),
-        rx.table.cell(rx.text(row.planned.to_string(), size="1", weight="bold")),
-        rx.table.cell(rx.text(row.produced.to_string(), size="1")),
-        rx.table.cell(rx.text(row.inspecting.to_string(), size="1")),
-        rx.table.cell(rx.text(row.actual_qty.to_string(), size="1", weight="bold")),
+        rx.table.cell(
+            rx.hstack(
+                rx.icon("corner-down-right", size=12, color=rx.color("violet", 9)),
+                rx.text(part.part_name, size="1", weight="medium"),
+                spacing="1",
+                align="center",
+            )
+        ),
         rx.table.cell(
             rx.badge(
-                row.status,
-                color_scheme=rx.cond(row.actual_qty > 0, "green", "red"),
-                variant="soft"
+                rx.fragment("1套配 ", part.req_qty.to_string(), " 件"),
+                color_scheme="gray",
+                variant="soft",
+                size="1"
+            )
+        ),
+        rx.table.cell(rx.text(part.produced.to_string(), size="1", color=rx.color("slate", 11))),
+        rx.table.cell(rx.text(part.inspecting.to_string(), size="1", color=rx.color("slate", 11))),
+        rx.table.cell(rx.text(part.actual_qty.to_string(), size="1", weight="bold")),
+    )
+
+
+def render_progress_row(row) -> rx.Component:
+    """渲染商品款式进度条目（支持点击展开/收回部件明细）。"""
+    is_expanded = InventoryState.expanded_variant == row.variant
+    return rx.fragment(
+        rx.table.row(
+            rx.table.cell(
+                rx.hstack(
+                    rx.icon(
+                        rx.cond(is_expanded, "chevron-down", "chevron-right"),
+                        size=14,
+                        color=rx.color("violet", 9)
+                    ),
+                    rx.text(rx.fragment("🎨 ", row.variant), size="1", weight="medium"),
+                    spacing="1",
+                    align="center"
+                )
+            ),
+            rx.table.cell(rx.text(row.planned.to_string(), size="1", weight="bold")),
+            rx.table.cell(rx.text(row.produced.to_string(), size="1")),
+            rx.table.cell(rx.text(row.inspecting.to_string(), size="1")),
+            rx.table.cell(rx.text(row.actual_qty.to_string(), size="1", weight="bold")),
+            rx.table.cell(
+                rx.badge(
+                    row.status,
+                    color_scheme=rx.cond(row.actual_qty > 0, "green", "red"),
+                    variant="soft"
+                )
+            ),
+            on_click=InventoryState.toggle_expanded_variant(row.variant),
+            cursor="pointer",
+            style={
+                "&:hover": {"background_color": "var(--slate-3)"},
+                "background_color": rx.cond(is_expanded, "var(--violet-2)", "transparent"),
+                "transition": "background-color 0.2s ease",
+            }
+        ),
+        rx.cond(
+            is_expanded,
+            rx.table.row(
+                rx.table.cell(
+                    rx.card(
+                        rx.vstack(
+                            rx.hstack(
+                                rx.icon("layers", size=14, color=rx.color("violet", 10)),
+                                rx.text(
+                                    rx.fragment("【", row.variant, "】各部件独立入库与库存拆分明细"),
+                                    size="1",
+                                    weight="bold",
+                                    color=rx.color("violet", 11)
+                                ),
+                                spacing="1",
+                                align="center"
+                            ),
+                            rx.table.root(
+                                rx.table.header(
+                                    rx.table.row(
+                                        rx.table.column_header_cell("部件名称", size="1"),
+                                        rx.table.column_header_cell("单套配比", size="1"),
+                                        rx.table.column_header_cell("部件入库完成(件)", size="1"),
+                                        rx.table.column_header_cell("部件验收中(件)", size="1"),
+                                        rx.table.column_header_cell("部件仓储实物(件)", size="1"),
+                                    )
+                                ),
+                                rx.table.body(
+                                    rx.foreach(
+                                        row.parts,
+                                        render_part_row
+                                    )
+                                ),
+                                size="1",
+                                width="100%",
+                                variant="surface"
+                            ),
+                            spacing="2",
+                            width="100%"
+                        ),
+                        variant="surface",
+                        width="100%",
+                        padding="0.75rem",
+                        margin_y="0.25rem"
+                    ),
+                    col_span=6
+                )
             )
         )
     )

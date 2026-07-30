@@ -242,17 +242,32 @@ class InventoryService:
             produced_sets = calc_sets(part_produced)
 
             excess = {}
+            parts_detail = []
             for p, req in parts_req.items():
                 exc = part_actual[p] - (actual_sets * req)
                 if exc > 0:
                     excess[p] = exc
+                
+                p_produced = part_produced[p]
+                p_inspecting = part_inspecting[p]
+                p_actual = part_actual[p]
+                p_sets = max(0, p_actual // req) if req > 0 else 0
+                parts_detail.append({
+                    "part_name": p,
+                    "req_qty": req,
+                    "produced": p_produced,
+                    "inspecting": p_inspecting,
+                    "actual_qty": p_actual,
+                    "calculable_sets": p_sets
+                })
 
             stats[v_name] = {
                 "planned": c.quantity,
                 "produced": produced_sets,
                 "inspecting": inspecting_sets,
                 "actual": actual_sets,
-                "excess": excess
+                "excess": excess,
+                "parts": parts_detail
             }
         return stats
 

@@ -13,6 +13,15 @@ from constants import PRODUCT_COST_CATEGORIES, StockLogReason
 from models import Product, ProductColor, Warehouse
 
 
+class PartStatRow(BaseModel):
+    part_name: str = ""
+    req_qty: int = 1
+    produced: int = 0
+    inspecting: int = 0
+    actual_qty: int = 0
+    calculable_sets: int = 0
+
+
 class InventoryStatRow(BaseModel):
     variant: str = ""
     planned: int = 0
@@ -20,6 +29,7 @@ class InventoryStatRow(BaseModel):
     inspecting: int = 0
     actual_qty: int = 0
     status: str = "🟢 有货"
+    parts: list[PartStatRow] = []
 
 
 class ExcessPartRow(BaseModel):
@@ -61,6 +71,9 @@ class InventoryState(AppState):
     selected_product_name: str = ""
     wip_balance: float = 0.0
     is_production_completed: bool = False
+    
+    # 展开款式部件明细
+    expanded_variant: str = ""
     
     # 库存数据
     stats: list[InventoryStatRow] = []
@@ -242,9 +255,18 @@ class InventoryState(AppState):
             db.close()
 
     @rx.event
+    def toggle_expanded_variant(self, variant: str):
+        """切换款式部件详情的展开/收回状态。"""
+        if self.expanded_variant == variant:
+            self.expanded_variant = ""
+        else:
+            self.expanded_variant = variant
+
+    @rx.event
     def select_product(self, prod_name: str):
         """切换所选择的分析商品。"""
         self.selected_product_name = prod_name
+        self.expanded_variant = ""
         db = self.get_db()
         try:
             service = InventoryService(db)
@@ -327,13 +349,26 @@ class InventoryState(AppState):
             actual_qty = s.get("actual", 0)
             status = "🔴 缺货" if actual_qty <= 0 else "🟢 有货"
             
+            parts_list = [
+                PartStatRow(
+                    part_name=pt.get("part_name", ""),
+                    req_qty=pt.get("req_qty", 1),
+                    produced=pt.get("produced", 0),
+                    inspecting=pt.get("inspecting", 0),
+                    actual_qty=pt.get("actual_qty", 0),
+                    calculable_sets=pt.get("calculable_sets", 0)
+                )
+                for pt in s.get("parts", [])
+            ]
+            
             stats_list.append(InventoryStatRow(
                 variant=v_name,
                 planned=planned,
                 produced=produced,
                 inspecting=inspecting,
                 actual_qty=actual_qty,
-                status=status
+                status=status,
+                parts=parts_list
             ))
             
             # 多余部件
