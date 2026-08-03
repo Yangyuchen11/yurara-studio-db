@@ -197,7 +197,7 @@ def build_manual_order_form() -> rx.Component:
             custom_form_field(
                 "出货仓库",
                 rx.select.root(
-                    rx.select.trigger(),
+                    rx.select.trigger(placeholder="选择出货仓库"),
                     rx.select.content(
                         rx.foreach(
                             SalesOrderState.warehouse_options,

@@ -97,7 +97,7 @@ class SalesOrderState(AppState):
     sel_p_name: str = ""
     sel_v_name: str = ""
     sel_qty: int = 1
-    sel_wh_name: str = "未分配"
+    sel_wh_name: str = ""
 
     # ===================== Excel 批量导入状态 =====================
     parsed_preview_orders: list[dict] = []  # dict keys: is_out_of_stock, stock_warning, order_no, platform, target_account, currency, total_qty, gross_price, fee, net_price, items_str, items
@@ -305,9 +305,9 @@ class SalesOrderState(AppState):
         db = self.get_db()
         try:
             whs = db.query(Warehouse).all()
-            return [w.name for w in whs] + ["未分配"]
+            return [w.name for w in whs]
         except Exception:
-            return ["未分配"]
+            return []
         finally:
             db.close()
 
@@ -600,6 +600,8 @@ class SalesOrderState(AppState):
     def add_to_cart(self):
         if not self.sel_p_name or not self.sel_v_name:
             return rx.toast("请选择商品及款式", level="error")
+        if not self.sel_wh_name or self.sel_wh_name == "未分配":
+            return rx.toast("请选择具体的出货仓库", level="error")
         
         db = self.get_db()
         try:

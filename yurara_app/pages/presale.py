@@ -215,7 +215,7 @@ def build_presale_create_form() -> rx.Component:
                     custom_form_field(
                         "预售仓",
                         rx.select.root(
-                            rx.select.trigger(),
+                            rx.select.trigger(placeholder="选择出货仓库"),
                             rx.select.content(
                                 rx.foreach(
                                     PresaleState.warehouse_options,
@@ -967,6 +967,64 @@ def refund_dialog_modal() -> rx.Component:
     )
 
 
+def batch_wh_modal() -> rx.Component:
+    """批量修改发货仓库 Dialog"""
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.hstack(
+                rx.heading("🏭 批量修改发货仓库", size="3"),
+                rx.spacer(),
+                rx.dialog.close(
+                    rx.icon_button(rx.icon("x", size=16), variant="ghost", color_scheme="gray")
+                ),
+                width="100%",
+                align="center",
+            ),
+            rx.divider(),
+            rx.vstack(
+                rx.text(
+                    rx.fragment(
+                        "当前共选中了 ", 
+                        rx.text(PresaleState.selected_count.to_string(), weight="bold", color="violet"), 
+                        " 项预售订单。请选择统一修改的目标出货仓库："
+                    ),
+                    size="2"
+                ),
+                custom_form_field(
+                    "目标发货仓库",
+                    rx.select.root(
+                        rx.select.trigger(placeholder="选择目标发货仓库"),
+                        rx.select.content(
+                            rx.foreach(
+                                PresaleState.warehouse_options,
+                                lambda w: rx.select.item(w, value=w)
+                            ),
+                            position="popper", side="bottom"
+                        ),
+                        value=PresaleState.batch_target_wh_name,
+                        on_change=PresaleState.set_batch_target_wh_name,
+                        size="2",
+                        width="100%",
+                    ),
+                ),
+                rx.hstack(
+                    rx.spacer(),
+                    rx.button("取消", on_click=PresaleState.close_batch_wh_modal, variant="soft", color_scheme="gray", size="2"),
+                    rx.button("💾 确认批量修改", on_click=PresaleState.submit_batch_update_warehouse, color_scheme="violet", size="2"),
+                    width="100%",
+                    spacing="2",
+                    margin_top="1rem"
+                ),
+                spacing="3",
+                width="100%",
+            ),
+            max_width="450px"
+        ),
+        open=PresaleState.show_batch_wh_modal,
+        on_open_change=PresaleState.set_show_batch_wh_modal,
+    )
+
+
 def presale_page() -> rx.Component:
     """预售管理主页面"""
     return page_layout(
@@ -1141,6 +1199,14 @@ def presale_page() -> rx.Component:
                             color_scheme="orange"
                         ),
                         rx.button(
+                            rx.icon("store", size=14),
+                            rx.fragment("🏭 批量修改发货仓库 (", PresaleState.selected_count.to_string(), ")"),
+                            on_click=PresaleState.open_batch_wh_modal,
+                            disabled=~PresaleState.can_batch_edit_wh,
+                            size="2",
+                            color_scheme="violet"
+                        ),
+                        rx.button(
                             rx.icon("badge_check", size=14),
                             rx.fragment("✅ 收尾款完成对账 (", PresaleState.selected_count.to_string(), ")"),
                             on_click=PresaleState.complete_selected_orders,
@@ -1176,6 +1242,7 @@ def presale_page() -> rx.Component:
             # 引入 Dialog 模态框
             order_detail_modal(),
             refund_dialog_modal(),
+            batch_wh_modal(),
             
             spacing="4",
             width="100%"

@@ -257,6 +257,21 @@ class SalesOrderService:
         self.db.commit()
         return f"尾款已成功绑定至定金订单 {order.order_no}，订单已转入待发货状态！"
 
+    def batch_update_warehouse(self, order_ids: list[int], warehouse_id: int):
+        """批量修改指定订单的发货仓库"""
+        if not order_ids:
+            raise ValueError("未选择任何订单")
+        wh = self.db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+        if not wh:
+            raise ValueError("选中的仓库不存在")
+
+        orders = self.db.query(SalesOrder).filter(SalesOrder.id.in_(order_ids)).all()
+        for order in orders:
+            for item in order.items:
+                item.warehouse_id = warehouse_id
+        
+        self.db.commit()
+        return len(orders), wh.name
 
     # ================= 3. 订单状态通用流转 =================
 
@@ -869,7 +884,8 @@ class SalesOrderService:
             wh_name_str = safe_str(row.get('出货仓库', '')).replace('；', ';')
             
             if not wh_name_str: 
-                wh_name_str = "未分配"
+                errors.append(f"订单号 {order_no}: 出货仓库不能为空，请填写有效的仓库名称！")
+                continue
 
             variants = [v.strip() for v in var_str.split(';') if v.strip()]
             qtys_str = [q.strip() for q in qty_str.split(';') if q.strip()]
@@ -908,8 +924,8 @@ class SalesOrderService:
                     has_item_error = True; break
                     
                 wh_id = warehouse_map.get(wh_name)
-                if wh_name != "未分配" and wh_id is None:
-                    errors.append(f"订单号 {order_no}: 找不到名为 '{wh_name}' 的仓库！")
+                if wh_id is None:
+                    errors.append(f"订单号 {order_no}: 找不到名为 '{wh_name}' 的仓库（出货仓库必须为系统已存在的真实物理仓库）！")
                     has_item_error = True; break
                     
                 if p_name not in valid_products:

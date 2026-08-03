@@ -82,7 +82,7 @@ class PresaleState(AppState):
     sel_p_name: str = ""
     sel_v_name: str = ""
     sel_qty: int = 1
-    sel_wh_name: str = "未分配"
+    sel_wh_name: str = ""
 
     # ===================== 2️⃣ 绑定尾款面板状态 =====================
     search_dep_no: str = ""
@@ -104,6 +104,10 @@ class PresaleState(AppState):
     parsed_preview_orders: list[dict] = []  # keys: stock_warning, order_no, platform, target_account, currency, total_qty, gross_price, fee, net_price, items_str, matched_deposit_id, discount_note
     excel_import_errors: list[str] = []
     bulk_presale_mode: str = "🚀 批量导入定金"  # 或 "🔗 批量匹配并绑定尾款"
+
+    # ===================== 批量修改发货仓库 =====================
+    show_batch_wh_modal: bool = False
+    batch_target_wh_name: str = ""
 
     # ===================== 单个订单操作与详情 =====================
     active_detail_order_id: int = 0
@@ -256,6 +260,10 @@ class PresaleState(AppState):
         return len(self.selected_order_ids)
 
     @rx.var
+    def can_batch_edit_wh(self) -> bool:
+        return self.selected_count > 0
+
+    @rx.var
     def is_single_selected(self) -> bool:
         return self.selected_count == 1
 
@@ -315,9 +323,9 @@ class PresaleState(AppState):
         db = self.get_db()
         try:
             whs = db.query(Warehouse).all()
-            return [w.name for w in whs] + ["未分配"]
+            return [w.name for w in whs]
         except Exception:
-            return ["未分配"]
+            return []
         finally:
             db.close()
 
@@ -603,6 +611,8 @@ class PresaleState(AppState):
     def add_to_pre_cart(self):
         if not self.sel_p_name or not self.sel_v_name:
             return rx.toast("请选择商品及款式", level="error")
+        if not self.sel_wh_name or self.sel_wh_name == "未分配":
+            return rx.toast("请选择具体的出货仓库", level="error")
         
         db = self.get_db()
         try:
@@ -1016,6 +1026,58 @@ class PresaleState(AppState):
                     yield rx.toast(err, level="error")
             yield rx.toast(f"✅ 批量预售结清完成！已结清 {success} 个单据")
             yield PresaleState.load_presale_page()
+        finally:
+            db.close()
+
+    @rx.event
+    def set_show_batch_wh_modal(self, val: bool):
+        self.show_batch_wh_modal = val
+
+    @rx.event
+    def set_batch_target_wh_name(self, val: str):
+        self.batch_target_wh_name = val
+
+    @rx.event
+    def open_batch_wh_modal(self):
+        if not self.selected_order_ids:
+            return rx.toast("未勾选任何订单！", level="error")
+        opts = self.warehouse_options
+        if opts and not self.batch_target_wh_name:
+            self.batch_target_wh_name = opts[0]
+        self.show_batch_wh_modal = True
+
+    @rx.event
+    def close_batch_wh_modal(self):
+        self.show_batch_wh_modal = False
+
+    @rx.event
+    def submit_batch_update_warehouse(self):
+        if not self.selected_order_ids:
+            yield rx.toast("未勾选任何订单！", level="error")
+            return
+        if not self.batch_target_wh_name:
+            yield rx.toast("请选择目标发货仓库！", level="error")
+            return
+        
+        db = self.get_db()
+        try:
+            wh = db.query(Warehouse).filter(Warehouse.name == self.batch_target_wh_name).first()
+            if not wh:
+                yield rx.toast(f"找不到仓库 '{self.batch_target_wh_name}'", level="error")
+                return
+            
+            service = SalesOrderService(db)
+            count, wh_name = service.batch_update_warehouse(self.selected_order_ids, wh.id)
+            
+            from cache_manager import sync_all_caches
+            sync_all_caches()
+            
+            self.show_batch_wh_modal = False
+            self.selected_order_ids = []
+            yield rx.toast(f"🏭 成功将 {count} 个订单的发货仓库批量修改为【{wh_name}】！")
+            yield PresaleState.load_presale_page()
+        except Exception as e:
+            yield rx.toast(f"批量修改发货仓库失败: {e}", level="error")
         finally:
             db.close()
 

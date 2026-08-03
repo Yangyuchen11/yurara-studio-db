@@ -194,10 +194,8 @@ class InventoryState(AppState):
 
     @rx.var
     def transfer_warehouse_options(self) -> list[str]:
-        """带“未分配仓库 (旧数据)”的仓库源列表，用于移出仓库的下拉选择。"""
-        opts = ["未分配仓库 (旧数据)"]
-        opts.extend(self.warehouse_options)
-        return opts
+        """仓库源列表，用于移出仓库的下拉选择。"""
+        return self.warehouse_options
 
     @rx.var
     def cost_categories(self) -> list[str]:
@@ -321,7 +319,7 @@ class InventoryState(AppState):
                 is_empty=(len(stock_rows) == 0)
             ))
             stocks_dict[str(w.id)] = stock_rows
-            
+
         self.warehouses = wh_list
         self.warehouse_stocks = stocks_dict
         self._apply_wh_filter()
@@ -449,9 +447,6 @@ class InventoryState(AppState):
     @rx.event
     def set_op_to_wh_name(self, name: str):
         self.op_to_wh_name = name
-        if name == "未分配仓库 (旧数据)":
-            self.op_to_wh_id = "None"
-            return
         db = self.get_db()
         try:
             wh = db.query(Warehouse).filter(Warehouse.name == name).first()
