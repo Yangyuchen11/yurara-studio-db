@@ -117,6 +117,14 @@ export const SalesOrdersPage: React.FC = () => {
     },
   });
 
+  const { data: ratesData } = useQuery<Record<string, number>>({
+    queryKey: ['exchangeRates'],
+    queryFn: async () => {
+      const res = await apiClient.get('/rates/');
+      return res.data.rates || { JPY: 0.048 };
+    },
+  });
+
   const { data: cashAccountsData } = useQuery({
     queryKey: ['cashAccounts'],
     queryFn: async () => {
@@ -387,9 +395,10 @@ export const SalesOrdersPage: React.FC = () => {
 
   // Selected Amount Sum
   const selectedOrdersList = onlineOrdersForStats.filter(o => selectedOrderIds.includes(o.id));
+  const jpyRate = ratesData?.JPY || 0.048;
   const selectedAmountSum = selectedOrdersList.reduce((sum, o) => {
     const amt = Number(o.total_amount) || 0;
-    return sum + (o.currency === 'JPY' ? amt * 0.048 : amt);
+    return sum + (o.currency === 'JPY' ? amt * jpyRate : amt);
   }, 0);
 
   // Cart Summary Calculations

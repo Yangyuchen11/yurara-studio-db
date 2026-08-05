@@ -12,6 +12,7 @@ from app_finance.serializers import FinanceRecordSerializer, CompanyBalanceItemS
 from app_finance.services.finance_service import FinanceService
 from app_finance.services.balance_service import BalanceService
 from app_core.constants import BalanceCategory, Currency, to_cny, AssetPrefix, PRODUCT_COST_CATEGORIES
+from app_core.services.rate_service import get_all_rates
 from app_core.models import Product, CostItem
 from app_assets.models import ConsumableItem, FixedAsset
 
@@ -603,7 +604,7 @@ class FinancialSummaryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        rates_map = {"JPY": 0.048}
+        rates_map = get_all_rates()
 
         # 从数据库统计多货币数据
         all_balance_items = list(CompanyBalanceItem.objects.all())
@@ -858,7 +859,7 @@ class FinancialReportView(APIView):
         report_type = params.get('report_type', 'month')
         year = params.get('year', str(datetime.now().year))
         month = params.get('month', datetime.now().strftime('%Y-%m'))
-        rates_map = {"JPY": 0.048}
+        rates_map = get_all_rates()
 
         records = list(FinanceRecord.objects.all())
         if not records:

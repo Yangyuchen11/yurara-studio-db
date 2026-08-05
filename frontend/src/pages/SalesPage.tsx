@@ -66,6 +66,14 @@ export const SalesPage: React.FC = () => {
     },
   });
 
+  const { data: ratesData } = useQuery<Record<string, number>>({
+    queryKey: ['exchangeRates'],
+    queryFn: async () => {
+      const res = await apiClient.get('/rates/');
+      return res.data.rates || { JPY: 0.048 };
+    },
+  });
+
   const leaderboard = analyticsData?.leaderboard || [];
   const records = analyticsData?.records || [];
   const products = analyticsData?.products || [];
@@ -90,13 +98,14 @@ export const SalesPage: React.FC = () => {
     return productRecords.reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
   }, [productRecords]);
 
+  const jpyRate = ratesData?.JPY || 0.048;
   const pCnyEquiv = useMemo(() => {
     return productRecords.reduce((sum, r) => {
       const amt = Number(r.amount) || 0;
-      const cny = r.currency === 'JPY' ? amt * 0.048 : amt;
+      const cny = r.currency === 'JPY' ? amt * jpyRate : amt;
       return sum + cny;
     }, 0);
-  }, [productRecords]);
+  }, [productRecords, jpyRate]);
 
   const pActivePlatforms = useMemo(() => {
     const plats = new Set(productRecords.map(r => r.platform).filter(Boolean));

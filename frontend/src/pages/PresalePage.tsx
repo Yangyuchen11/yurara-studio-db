@@ -143,6 +143,14 @@ export const PresalePage: React.FC = () => {
     },
   });
 
+  const { data: ratesData } = useQuery<Record<string, number>>({
+    queryKey: ['exchangeRates'],
+    queryFn: async () => {
+      const res = await apiClient.get('/rates/');
+      return res.data.rates || { JPY: 0.048 };
+    },
+  });
+
   const safeArray = (d: any): any[] => {
     if (Array.isArray(d)) return d;
     if (d && Array.isArray(d.results)) return d.results;
@@ -579,13 +587,33 @@ export const PresalePage: React.FC = () => {
     return true;
   });
 
+  // Pagination State & Reset
+  const [pageIndex, setPageIndex] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+
+  useEffect(() => {
+    setPageIndex(1);
+  }, [activeTab, searchQuery, productFilter]);
+
+  const totalOrdersCount = filteredOrders.length;
+  const totalPages = Math.max(1, Math.ceil(totalOrdersCount / pageSize));
+
+  const paginatedOrders = React.useMemo(() => {
+    const start = (pageIndex - 1) * pageSize;
+    return filteredOrders.slice(start, start + pageSize);
+  }, [filteredOrders, pageIndex, pageSize]);
+
+  const startRow = totalOrdersCount === 0 ? 0 : (pageIndex - 1) * pageSize + 1;
+  const endRow = Math.min(pageIndex * pageSize, totalOrdersCount);
+
   // Selected Amount Sum
   const selectedOrdersList = presaleOrdersForStats.filter(o => selectedOrderIds.includes(o.id));
+  const jpyRate = ratesData?.JPY || 0.048;
   const selectedAmountSum = selectedOrdersList.reduce((sum, o) => {
     const dep = Number(o.deposit_amount) || 0;
     const fin = Number(o.final_amount) || 0;
     const total = dep + fin || Number(o.total_amount) || 0;
-    return sum + (o.currency === 'JPY' ? total * 0.048 : total);
+    return sum + (o.currency === 'JPY' ? total * jpyRate : total);
   }, 0);
 
   return (
@@ -1332,7 +1360,7 @@ export const PresalePage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#2A3447]/40">
-                  {filteredOrders.map(o => {
+                  {paginatedOrders.map(o => {
                     const isSelected = selectedOrderIds.includes(o.id);
                     const itemsSummary = o.items && o.items.length > 0
                       ? o.items.map(i => `${i.product_name}-${i.variant}×${i.quantity}`).join(', ')
@@ -1389,6 +1417,52 @@ export const PresalePage: React.FC = () => {
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Pagination Controls Bar */}
+          {totalOrdersCount > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-[#0B0F17] p-3 rounded-xl border border-[#2A3447] text-xs">
+              <div className="flex items-center gap-3 text-slate-400">
+                <span>显示 <strong className="text-slate-200">{startRow}</strong> - <strong className="text-slate-200">{endRow}</strong> 条，共 <strong className="text-violet-400">{totalOrdersCount}</strong> 条订单</span>
+                <div className="flex items-center gap-1.5">
+                  <span>每页显示:</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setPageIndex(1);
+                    }}
+                    className="bg-[#131924] border border-[#2A3447] rounded-lg px-2 py-1 text-slate-200 focus:outline-none focus:border-violet-500 font-mono"
+                  >
+                    <option value={20}>20 条/页</option>
+                    <option value={50}>50 条/页</option>
+                    <option value={100}>100 条/页</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPageIndex(prev => Math.max(1, prev - 1))}
+                  disabled={pageIndex <= 1}
+                  className="px-3 py-1.5 bg-[#18202F] hover:bg-[#222C3E] disabled:opacity-30 disabled:hover:bg-[#18202F] text-slate-200 rounded-lg border border-[#2A3447] font-medium transition"
+                >
+                  ‹ 上一页
+                </button>
+                <span className="text-slate-400 font-mono px-2">
+                  第 <strong className="text-violet-400">{pageIndex}</strong> / {totalPages} 页
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPageIndex(prev => Math.min(totalPages, prev + 1))}
+                  disabled={pageIndex >= totalPages}
+                  className="px-3 py-1.5 bg-[#18202F] hover:bg-[#222C3E] disabled:opacity-30 disabled:hover:bg-[#18202F] text-slate-200 rounded-lg border border-[#2A3447] font-medium transition"
+                >
+                  下一页 ›
+                </button>
+              </div>
             </div>
           )}
 

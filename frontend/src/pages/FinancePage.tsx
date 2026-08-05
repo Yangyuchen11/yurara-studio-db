@@ -199,6 +199,15 @@ export const FinancePage: React.FC = () => {
     },
   });
 
+  // 4. 全局汇率数据
+  const { data: ratesData } = useQuery<Record<string, number>>({
+    queryKey: ['exchangeRates'],
+    queryFn: async () => {
+      const res = await apiClient.get('/rates/');
+      return res.data.rates || { JPY: 0.048 };
+    },
+  });
+
   // 4. 商品列表
   const { data: products } = useQuery<Product[]>({
     queryKey: ['products'],
@@ -321,8 +330,10 @@ export const FinancePage: React.FC = () => {
       setExAmountIn('');
       return;
     }
-    const rateSrc = src === 'JPY' ? 0.048 : 1.0;
-    const rateTgt = tgt === 'JPY' ? 0.048 : 1.0;
+    const rMap = ratesData || { JPY: 0.048 };
+    const getRate = (c: string) => (c === 'CNY' ? 1.0 : rMap[c] || 0.048);
+    const rateSrc = getRate(src);
+    const rateTgt = getRate(tgt);
     const est = (outAmt * rateSrc) / rateTgt;
     setExAmountIn(Math.round(est * 100) / 100);
   };

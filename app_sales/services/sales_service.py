@@ -119,7 +119,8 @@ class SalesService:
         if df.empty:
             return pd.DataFrame()
         if rates_map is None:
-            rates_map = {"JPY": 0.048}
+            from app_core.services.rate_service import get_all_rates
+            rates_map = get_all_rates()
 
         df = df.copy()
         df['equiv_cny'] = df.apply(lambda r: to_cny(float(r['amount']), str(r['currency']), rates_map), axis=1)

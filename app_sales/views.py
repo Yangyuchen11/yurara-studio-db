@@ -274,7 +274,8 @@ class SalesAnalyticsView(APIView):
                 "products": []
             })
 
-        rates_map = {"JPY": 0.048}
+        from app_core.services.rate_service import get_all_rates
+        rates_map = get_all_rates()
         df_calc = df_sales.copy()
         df_calc['equiv_cny'] = df_calc.apply(lambda r: to_cny(float(r['amount']), str(r['currency']), rates_map), axis=1)
 
