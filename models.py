@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -185,7 +185,7 @@ class SalesOrder(Base):
     
     # ✨ 为预售新增的四个核心字段
     order_type = Column(String, default="线上") # 类型: 线上, 预售, 线下
-    final_order_no = Column(String, nullable=True, unique=True) # 尾款订单号
+    final_order_no = Column(String, nullable=True) # 尾款订单号
     deposit_amount = Column(Float, default=0.0) # 定金金额
     final_amount = Column(Float, default=0.0) # 尾款金额
     
@@ -240,6 +240,17 @@ class OrderRefund(Base):
 
     # 关联
     order = relationship("SalesOrder", back_populates="refunds")
+
+class PresaleOrderBinding(Base):
+    __tablename__ = "presale_order_bindings"
+    id = Column(Integer, primary_key=True, index=True)
+    deposit_order_id = Column(Integer, ForeignKey("sales_orders.id", ondelete="CASCADE"), index=True)
+    deposit_order_no = Column(String, index=True)
+    final_order_id = Column(Integer, ForeignKey("sales_orders.id", ondelete="CASCADE"), nullable=True, index=True)
+    final_order_no = Column(String, index=True)
+    created_at = Column(DateTime, default=datetime.now)
+    status = Column(String, default="ACTIVE")
+
 
 # --- 仓库管理 ---
 class Warehouse(Base):

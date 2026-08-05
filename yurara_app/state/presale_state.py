@@ -92,6 +92,7 @@ class PresaleState(AppState):
     found_deposit_order_platform: str = ""
     found_deposit_order_currency: str = ""
     found_deposit_order_items: list[dict] = []  # keys: product_name, variant, quantity
+    selected_deposit_orders: list[dict] = []  # multi deposit orders list
     show_search_lock: bool = False
 
     # --- 尾款绑定表单 ---
@@ -746,7 +747,6 @@ class PresaleState(AppState):
         if not self.search_dep_no.strip():
             return rx.toast("请输入原始定金单号！", level="error")
             
-        self.show_search_lock = False
         db = self.get_db()
         try:
             service = SalesOrderService(db)
@@ -754,15 +754,12 @@ class PresaleState(AppState):
             
             if not o:
                 return rx.toast(f"❌ 未在预售单据中搜到定金单号: {self.search_dep_no}", level="error")
-            elif o.status != OrderStatus.PRESALE_PENDING_FINAL:
-                return rx.toast(f"⚠️ 定金单已锁定，但其当前状态为【{o.status}】，不是【待付尾款】。仅此阶段定金单可进行尾款绑定！", level="warning")
+            elif o.status not in [OrderStatus.PRESALE_PENDING_FINAL, OrderStatus.PENDING, OrderStatus.COMPLETED]:
+                return rx.toast(f"⚠️ 定金单已锁定，但其当前状态为【{o.status}】，无法进行尾款绑定！", level="warning")
             else:
-                self.found_deposit_order_id = o.id
-                self.found_deposit_order_no = o.order_no
-                self.found_deposit_order_date = o.created_date.strftime("%Y-%m-%d") if o.created_date else ""
-                self.found_deposit_order_platform = o.platform
-                self.found_deposit_order_currency = o.currency
-                
+                if any(existing.get("id") == o.id for existing in self.selected_deposit_orders):
+                    return rx.toast(f"⚠️ 定金单 #{o.order_no} 已在绑定列表中，无需重复添加", level="info")
+
                 items = []
                 for item in o.items:
                     items.append({
@@ -770,22 +767,35 @@ class PresaleState(AppState):
                         "variant": item.variant,
                         "quantity": item.quantity
                     })
-                self.found_deposit_order_items = items
+
+                new_entry = {
+                    "id": o.id,
+                    "order_no": o.order_no,
+                    "date": o.created_date.strftime("%Y-%m-%d") if o.created_date else "",
+                    "platform": o.platform,
+                    "currency": o.currency,
+                    "deposit_amount": o.deposit_amount,
+                    "items": items
+                }
+                
+                self.selected_deposit_orders = [*self.selected_deposit_orders, new_entry]
                 self.show_search_lock = True
+                self.search_dep_no = ""
                 
-                # Reset binding fields
-                self.final_no_input = ""
-                self.final_amount_input = 0.0
-                self.f_notes = ""
-                
-                return rx.toast("✅ 定金单锁定成功！请在下方输入对应尾款信息绑定")
+                return rx.toast(f"✅ 已成功添加定金单 #{o.order_no}！可继续搜索添加更多单据。")
         finally:
             db.close()
 
     @rx.event
+    def remove_deposit_from_bind(self, dep_id: int):
+        self.selected_deposit_orders = [o for o in self.selected_deposit_orders if o.get("id") != dep_id]
+        if not self.selected_deposit_orders:
+            self.show_search_lock = False
+
+    @rx.event
     def submit_bind_final(self):
-        if not self.show_search_lock:
-            yield rx.toast("请先锁定有效的定金订单！", level="error")
+        if not self.selected_deposit_orders:
+            yield rx.toast("请先搜索并锁定至少一个定金订单！", level="error")
             return
         if not self.final_no_input.strip():
             yield rx.toast("请输入尾款订单号！", level="error")
@@ -797,20 +807,29 @@ class PresaleState(AppState):
         db = self.get_db()
         try:
             service = SalesOrderService(db)
-            
             net_amt = self.final_net_price
             
-            msg = service.bind_presale_final_order(
-                deposit_order_id=self.found_deposit_order_id,
+            dep_ids = [o["id"] for o in self.selected_deposit_orders]
+            msg = service.bind_presale_final_order_multi(
+                deposit_order_ids=dep_ids,
                 final_order_no=self.final_no_input.strip(),
                 final_net_amount=net_amt,
                 new_notes=self.f_notes
             )
             
             self.show_search_lock = False
+            self.selected_deposit_orders = []
             self.search_dep_no = ""
             self.final_no_input = ""
             self.final_amount_input = 0.0
+            self.f_notes = ""
+            
+            yield rx.toast(msg, level="success")
+            yield PresaleState.load_presale_page()
+        except Exception as e:
+            yield rx.toast(f"绑定失败: {str(e)}", level="error")
+        finally:
+            db.close()
             
             from cache_manager import sync_all_caches
             sync_all_caches()

@@ -68,3 +68,21 @@ def migrate_db(engine):
                     print("[Migration] Added column related_cost_id to finance_records")
                 except Exception as e:
                     print(f"[Migration] Failed to add related_cost_id: {e}")
+
+    if "presale_order_bindings" not in inspector.get_table_names():
+        with engine.begin() as conn:
+            try:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS presale_order_bindings (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        deposit_order_id INTEGER NOT NULL,
+                        deposit_order_no VARCHAR(255) NOT NULL,
+                        final_order_id INTEGER,
+                        final_order_no VARCHAR(255) NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        status VARCHAR(50) DEFAULT 'ACTIVE'
+                    );
+                """))
+                print("[Migration] Created table presale_order_bindings")
+            except Exception as e:
+                print(f"[Migration] Failed to create presale_order_bindings: {e}")

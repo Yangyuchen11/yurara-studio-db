@@ -5,7 +5,8 @@ from datetime import date
 from models import (
     SalesOrder, SalesOrderItem, OrderRefund,
     Product, InventoryLog, CompanyBalanceItem,
-    CostItem, FinanceRecord, Warehouse, SalesPlatform
+    CostItem, FinanceRecord, Warehouse, SalesPlatform,
+    PresaleOrderBinding
 )
 import math
 import pandas as pd
@@ -228,34 +229,103 @@ class SalesOrderService:
         self.db.commit()
         return f"定金订单 {order.order_no} 已完成，状态更新为待付尾款"
 
-    def bind_presale_final_order(self, deposit_order_id, final_order_no, final_net_amount, new_notes=""):
-        """3. 绑定尾款并激活发货状态"""
-        order = self.db.query(SalesOrder).filter(SalesOrder.id == deposit_order_id).first()
-        if not order: raise ValueError("定金订单不存在")
-        if order.status != OrderStatus.PRESALE_PENDING_FINAL: raise ValueError("该订单目前不处于【待付尾款】状态，无法绑定")
+    def evaluate_deposit_order_completion(self, deposit_order_id: int):
+        """重新评估定金单的状态：若其关联的所有尾款订单均已发货/完成，则定金单标记为已完成"""
+        d_order = self.db.query(SalesOrder).filter(SalesOrder.id == deposit_order_id).first()
+        if not d_order: return
+        
+        bindings = self.db.query(PresaleOrderBinding).filter(
+            PresaleOrderBinding.deposit_order_id == deposit_order_id,
+            PresaleOrderBinding.status == "ACTIVE"
+        ).all()
+        
+        if not bindings:
+            return
 
+        final_nos = [b.final_order_no for b in bindings]
+        final_orders = self.db.query(SalesOrder).filter(SalesOrder.order_no.in_(final_nos)).all()
+        
+        all_completed = True
+        if len(final_orders) < len(final_nos):
+            all_completed = False
+        else:
+            for fo in final_orders:
+                if fo.status not in [OrderStatus.SHIPPED, OrderStatus.COMPLETED]:
+                    all_completed = False
+                    break
+        
+        if all_completed and bindings:
+            d_order.status = OrderStatus.COMPLETED
+            for b in bindings:
+                b.status = "COMPLETED"
+        else:
+            if d_order.status == OrderStatus.COMPLETED:
+                d_order.status = OrderStatus.PRESALE_PENDING_FINAL
+                for b in bindings:
+                    b.status = "ACTIVE"
+        self.db.commit()
+
+    def bind_presale_final_order(self, deposit_order_id, final_order_no, final_net_amount, new_notes=""):
+        """绑定尾款并激活发货状态 (单关联与多关联通用)"""
+        return self.bind_presale_final_order_multi([deposit_order_id], final_order_no, final_net_amount, new_notes)
+
+    def bind_presale_final_order_multi(self, deposit_order_ids: list[int], final_order_no: str, final_net_amount: float, new_notes: str = ""):
+        """多对多绑定：将一个尾款订单与一个或多个定金订单进行绑定"""
+        if not deposit_order_ids:
+            raise ValueError("未指定任何关联的定金订单")
+        
         final_order_no = final_order_no.strip()
+        if not final_order_no:
+            raise ValueError("尾款订单号不能为空")
+
         existing = self.db.query(SalesOrder).filter(
             or_(SalesOrder.order_no == final_order_no, SalesOrder.final_order_no == final_order_no)
         ).first()
-        if existing: raise ValueError("该尾款订单号已被使用")
+        if existing:
+            raise ValueError(f"尾款订单号 {final_order_no} 已被使用")
 
-        order.final_order_no = final_order_no
-        order.final_amount = final_net_amount
-        order.total_amount = order.deposit_amount + final_net_amount # 合并总额
-        order.status = OrderStatus.PENDING # 激活为待发货
-        if new_notes:
-            order.notes = f"{order.notes} | 尾款备注: {new_notes}" if order.notes else new_notes
+        deposit_orders = self.db.query(SalesOrder).filter(SalesOrder.id.in_(deposit_order_ids)).all()
+        if len(deposit_orders) != len(deposit_order_ids):
+            raise ValueError("部分定金订单不存在")
 
-        total_qty = sum(item.quantity for item in order.items)
-        if total_qty > 0:
-            new_unit_price = order.total_amount / total_qty
-            for item in order.items:
-                item.unit_price = new_unit_price
-                item.subtotal = item.quantity * new_unit_price
+        for d_order in deposit_orders:
+            if d_order.status not in [OrderStatus.PRESALE_PENDING_FINAL, OrderStatus.PENDING, OrderStatus.COMPLETED]:
+                raise ValueError(f"定金订单 #{d_order.order_no} 状态为【{d_order.status}】，不支持绑定尾款")
+
+        deposit_nos_str = ", ".join(o.order_no for o in deposit_orders)
+        portion_net = final_net_amount / len(deposit_orders)
+
+        for d_order in deposit_orders:
+            if not d_order.final_order_no:
+                d_order.final_order_no = final_order_no
+            elif final_order_no not in d_order.final_order_no:
+                d_order.final_order_no = f"{d_order.final_order_no}, {final_order_no}"
+            
+            d_order.final_amount = (d_order.final_amount or 0.0) + portion_net
+            d_order.total_amount = d_order.deposit_amount + d_order.final_amount
+            d_order.status = OrderStatus.PENDING
+            if new_notes:
+                d_order.notes = f"{d_order.notes} | 尾款: {new_notes}" if d_order.notes else f"尾款: {new_notes}"
+
+            existing_binding = self.db.query(PresaleOrderBinding).filter(
+                PresaleOrderBinding.deposit_order_id == d_order.id,
+                PresaleOrderBinding.final_order_no == final_order_no
+            ).first()
+            if not existing_binding:
+                binding = PresaleOrderBinding(
+                    deposit_order_id=d_order.id,
+                    deposit_order_no=d_order.order_no,
+                    final_order_no=final_order_no,
+                    status="ACTIVE"
+                )
+                self.db.add(binding)
 
         self.db.commit()
-        return f"尾款已成功绑定至定金订单 {order.order_no}，订单已转入待发货状态！"
+
+        for d_order in deposit_orders:
+            self.evaluate_deposit_order_completion(d_order.id)
+
+        return f"尾款订单 {final_order_no} 已成功绑定至 {len(deposit_orders)} 个定金订单（{deposit_nos_str}）！"
 
     def batch_update_warehouse(self, order_ids: list[int], warehouse_id: int):
         """批量修改指定订单的发货仓库"""
@@ -771,26 +841,39 @@ class SalesOrderService:
             
             discount_val = safe_str(row.get('优惠', '')) if presale_mode == "定金" else ""
             
-            matched_deposit_id = None
+            matched_deposit_ids = []
             if presale_mode == "尾款":
-                ref_deposit_no = safe_str(row['关联定金单号'])
-                if not ref_deposit_no:
+                ref_deposit_raw = safe_str(row['关联定金单号'])
+                if not ref_deposit_raw:
                     errors.append(f"第 {index+2} 行: 关联定金单号不能为空")
                     continue
-                    
-                deposit_order = self.db.query(SalesOrder).filter(
-                    SalesOrder.order_no == ref_deposit_no,
-                    SalesOrder.order_type == "预售"
-                ).first()
                 
-                if not deposit_order:
-                    errors.append(f"第 {index+2} 行: 未找到单号为 {ref_deposit_no} 的预售定金订单")
-                    continue
-                if deposit_order.status != OrderStatus.PRESALE_PENDING_FINAL:
-                    errors.append(f"第 {index+2} 行: 定金单 {ref_deposit_no} 状态为【{deposit_order.status}】，不是【待付尾款】，无法绑定")
+                import re
+                ref_deposit_nos = [no.strip() for no in re.split(r'[;,；\s]+', ref_deposit_raw) if no.strip()]
+                if not ref_deposit_nos:
+                    errors.append(f"第 {index+2} 行: 无法解析有效的关联定金单号")
                     continue
                 
-                matched_deposit_id = deposit_order.id
+                invalid_reasons = []
+                deposit_orders = []
+                for ref_no in ref_deposit_nos:
+                    dep = self.db.query(SalesOrder).filter(
+                        SalesOrder.order_no == ref_no,
+                        SalesOrder.order_type == "预售"
+                    ).first()
+                    if not dep:
+                        invalid_reasons.append(f"未找到定金单号 {ref_no}")
+                    elif dep.status not in [OrderStatus.PRESALE_PENDING_FINAL, OrderStatus.PENDING, OrderStatus.COMPLETED]:
+                        invalid_reasons.append(f"定金单 {ref_no} 状态为【{dep.status}】无法绑定")
+                    else:
+                        deposit_orders.append(dep)
+                
+                if invalid_reasons:
+                    errors.append(f"第 {index+2} 行: " + "; ".join(invalid_reasons))
+                    continue
+                
+                matched_deposit_ids = [d.id for d in deposit_orders]
+                primary_deposit = deposit_orders[0]
                 
                 try: 
                     gross_price = float(row['订单总额'])
@@ -810,13 +893,14 @@ class SalesOrderService:
                 if db_plat:
                     if db_plat.code == "booth":
                         preset_item_total = 0.0
-                        for item in deposit_order.items:
-                            target_p = self.db.query(Product).filter(Product.name == item.product_name).first()
-                            if target_p:
-                                target_c = next((c for c in target_p.colors if c.color_name == item.variant), None)
-                                if target_c:
-                                    target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
-                                    preset_item_total += target_price * item.quantity
+                        for d_ord in deposit_orders:
+                            for item in d_ord.items:
+                                target_p = self.db.query(Product).filter(Product.name == item.product_name).first()
+                                if target_p:
+                                    target_c = next((c for c in target_p.colors if c.color_name == item.variant), None)
+                                    if target_c:
+                                        target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
+                                        preset_item_total += target_price * item.quantity
                         if preset_item_total > 0:
                             shipping_and_other = max(0.0, gross_price - preset_item_total)
                             
@@ -825,13 +909,14 @@ class SalesOrderService:
                     platform_lower = platform.lower()
                     if "booth" in platform_lower:
                         preset_item_total = 0.0
-                        for item in deposit_order.items:
-                            target_p = self.db.query(Product).filter(Product.name == item.product_name).first()
-                            if target_p:
-                                target_c = next((c for c in target_p.colors if c.color_name == item.variant), None)
-                                if target_c:
-                                    target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
-                                    preset_item_total += target_price * item.quantity
+                        for d_ord in deposit_orders:
+                            for item in d_ord.items:
+                                target_p = self.db.query(Product).filter(Product.name == item.product_name).first()
+                                if target_p:
+                                    target_c = next((c for c in target_p.colors if c.color_name == item.variant), None)
+                                    if target_c:
+                                        target_price = next((pr.price for pr in target_c.prices if pr.platform and pr.platform.lower() == "booth"), 0.0)
+                                        preset_item_total += target_price * item.quantity
                         if preset_item_total > 0:
                             shipping_and_other = max(0.0, gross_price - preset_item_total)
                         base_fixed_fee = 45 if currency == "JPY" else 2.16
@@ -857,14 +942,15 @@ class SalesOrderService:
                     elif currency == "JPY": target_acc = "流动资金-日元临时账户"
                     else: target_acc = "流动资金-支付宝账户"
                 
-                fake_items = [{"product_name": i.product_name, "variant": i.variant, "quantity": i.quantity, "warehouse_id": i.warehouse_id} for i in deposit_order.items]
+                fake_items = [{"product_name": i.product_name, "variant": i.variant, "quantity": i.quantity, "warehouse_id": i.warehouse_id} for d_ord in deposit_orders for i in d_ord.items]
 
                 parsed_orders.append({
                     "order_no": order_no, "platform": platform, "currency": currency,
                     "gross_price": gross_price, "fee": fee, "net_price": net_price,
-                    "total_qty": sum(i.quantity for i in deposit_order.items), "items": fake_items,
+                    "total_qty": sum(i.quantity for d_ord in deposit_orders for i in d_ord.items), "items": fake_items,
                     "target_account": target_acc,
-                    "matched_deposit_id": matched_deposit_id,
+                    "matched_deposit_id": matched_deposit_ids[0],
+                    "matched_deposit_ids": matched_deposit_ids,
                     "discount_note": discount_val 
                 })
                 continue 
@@ -1052,8 +1138,11 @@ class SalesOrderService:
                 if not err: created_count += 1
             elif presale_mode == "尾款":
                 try:
-                    self.bind_presale_final_order(data["matched_deposit_id"], data["order_no"], data["net_price"], new_notes="批量绑定尾款")
-                    created_count += 1
+                    dep_ids = data.get("matched_deposit_ids") or [data.get("matched_deposit_id")]
+                    dep_ids = [d for d in dep_ids if d]
+                    if dep_ids:
+                        self.bind_presale_final_order_multi(dep_ids, data["order_no"], data["net_price"], new_notes="批量绑定尾款")
+                        created_count += 1
                 except: pass
             else:
                 order, err = self.create_order(
