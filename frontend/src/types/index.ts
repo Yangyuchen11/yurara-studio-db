@@ -85,6 +85,15 @@ export interface FinanceRecord {
   url?: string;
   order_id?: number;
   related_cost_id?: number;
+  child_items?: Array<{
+    id?: number;
+    name: string;
+    amount: number;
+    qty: number;
+    desc?: string;
+    url?: string;
+    category?: string;
+  }>;
 }
 
 export interface CompanyBalanceItem {
@@ -155,6 +164,7 @@ export interface SalesOrder {
   shipped_date?: string;
   completed_date?: string;
   notes?: string;
+  discount_note?: string;
   items?: SalesOrderItem[];
   refunds?: OrderRefund[];
 }

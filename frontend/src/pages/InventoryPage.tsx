@@ -454,30 +454,37 @@ export const InventoryPage: React.FC = () => {
                                               <th className="pb-1.5 px-2 text-right">部件入库完成(件)</th>
                                               <th className="pb-1.5 px-2 text-right">部件验收中(件)</th>
                                               <th className="pb-1.5 px-2 text-right">部件仓储实物(件)</th>
+                                              <th className="pb-1.5 px-2 text-right">可组装套数</th>
                                             </tr>
                                           </thead>
                                           <tbody className="divide-y divide-[#2A3447]/40 text-slate-300">
-                                            {(row.parts || []).map((pt: any, ptIdx: number) => (
-                                              <tr key={ptIdx}>
-                                                <td className="py-1.5 px-2 font-medium text-slate-200">
-                                                  ↳ {pt.part_name}
-                                                </td>
-                                                <td className="py-1.5 px-2 text-center font-mono">
-                                                  <span className="px-1.5 py-0.5 bg-slate-800 rounded text-slate-400">
-                                                    1套配 {pt.req_qty} 件
-                                                  </span>
-                                                </td>
-                                                <td className="py-1.5 px-2 text-right font-mono text-slate-400">
-                                                  {pt.produced}
-                                                </td>
-                                                <td className="py-1.5 px-2 text-right font-mono text-slate-400">
-                                                  {pt.inspecting}
-                                                </td>
-                                                <td className="py-1.5 px-2 text-right font-mono font-bold text-slate-100">
-                                                  {pt.actual_qty}
-                                                </td>
-                                              </tr>
-                                            ))}
+                                            {(row.parts || []).map((pt: any, ptIdx: number) => {
+                                              const maxSetsForPart = Math.floor((pt.actual_qty || 0) / (pt.req_qty || 1));
+                                              return (
+                                                <tr key={ptIdx}>
+                                                  <td className="py-1.5 px-2 font-medium text-slate-200">
+                                                    ↳ {pt.part_name}
+                                                  </td>
+                                                  <td className="py-1.5 px-2 text-center font-mono">
+                                                    <span className="px-1.5 py-0.5 bg-slate-800 rounded text-slate-400">
+                                                      1套配 {pt.req_qty} 件
+                                                    </span>
+                                                  </td>
+                                                  <td className="py-1.5 px-2 text-right font-mono text-slate-400">
+                                                    {pt.produced}
+                                                  </td>
+                                                  <td className="py-1.5 px-2 text-right font-mono text-slate-400">
+                                                    {pt.inspecting}
+                                                  </td>
+                                                  <td className="py-1.5 px-2 text-right font-mono font-bold text-slate-100">
+                                                    {pt.actual_qty}
+                                                  </td>
+                                                  <td className="py-1.5 px-2 text-right font-mono font-bold text-violet-300">
+                                                    {maxSetsForPart} 套
+                                                  </td>
+                                                </tr>
+                                              );
+                                            })}
                                           </tbody>
                                         </table>
                                       </div>
@@ -538,7 +545,7 @@ export const InventoryPage: React.FC = () => {
                     value={wipBalanceStr}
                     unit=""
                     icon={Wrench}
-                    colorScheme="orange"
+                    colorScheme="amber"
                   />
 
                   {/* Production Completion / Clear WIP Action Card */}
@@ -1002,6 +1009,7 @@ export const InventoryPage: React.FC = () => {
                   if (whFilterProduct && pName !== whFilterProduct) return;
 
                   Object.entries(vMap).forEach(([vName, ptMap]: [string, any]) => {
+                    const assemblableSets = wh.assemblable_sets?.[pName]?.[vName] ?? 0;
                     Object.entries(ptMap).forEach(([ptName, qty]: [string, any]) => {
                       if (qty !== 0) {
                         filteredStockEntries.push({
@@ -1009,6 +1017,7 @@ export const InventoryPage: React.FC = () => {
                           variant: vName,
                           part_name: ptName,
                           physical_qty: qty,
+                          assemblable_sets: assemblableSets,
                         });
                       }
                     });
@@ -1054,6 +1063,7 @@ export const InventoryPage: React.FC = () => {
                               <th className="pb-2 px-2">款式</th>
                               <th className="pb-2 px-2">部件</th>
                               <th className="pb-2 px-2 text-right">物理余量</th>
+                              <th className="pb-2 px-2 text-center">组装整套上限 (木桶原理)</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-[#2A3447]/50 text-slate-300">
@@ -1068,6 +1078,15 @@ export const InventoryPage: React.FC = () => {
                                 <td className="py-2 px-2 font-medium text-slate-300">{row.part_name}</td>
                                 <td className="py-2 px-2 text-right font-mono font-bold text-emerald-400">
                                   {row.physical_qty} 件
+                                </td>
+                                <td className="py-2 px-2 text-center font-mono font-bold">
+                                  {row.part_name === '整套' ? (
+                                    <span className="text-slate-500">-</span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 bg-violet-500/10 text-violet-300 border border-violet-500/20 rounded text-[11px]">
+                                      {row.assemblable_sets} 套
+                                    </span>
+                                  )}
                                 </td>
                               </tr>
                             ))}

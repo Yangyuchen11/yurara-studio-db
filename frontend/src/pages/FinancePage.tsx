@@ -22,6 +22,8 @@ import {
   ExternalLink,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  Package,
   AlertTriangle,
   CheckCircle2,
   Save,
@@ -68,6 +70,15 @@ interface ProcessedRecord {
   jpy_bal: number;
   account_id?: number;
   related_item_id?: number;
+  child_items?: Array<{
+    id?: number;
+    name: string;
+    amount: number;
+    qty: number;
+    desc?: string;
+    url?: string;
+    category?: string;
+  }>;
 }
 
 export const FinancePage: React.FC = () => {
@@ -78,6 +89,7 @@ export const FinancePage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
+  const [expandedRowIds, setExpandedRowIds] = useState<number[]>([]);
 
   // 核心业务大类 Tab Header: 支出 / 收入 / 货币兑换 / 债务 / 资金移动
   const [recType, setRecType] = useState<'支出' | '收入' | '货币兑换' | '债务' | '资金移动'>('支出');
@@ -149,8 +161,10 @@ export const FinancePage: React.FC = () => {
 
   // 模态框与折叠状态
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 
-  // 编辑 / 删除独立 Accordion State (页面下半部分)
+  // 编辑 / 删除 State
   const [editSelectedId, setEditSelectedId] = useState<string>('');
   const [editDate, setEditDate] = useState('');
   const [editType, setEditType] = useState('支出');
@@ -162,6 +176,24 @@ export const FinancePage: React.FC = () => {
 
   const [deleteSelectedId, setDeleteSelectedId] = useState<string>('');
   const [deleteIncludeBudget, setDeleteIncludeBudget] = useState(false);
+
+  const handleOpenEditModal = (rec: ProcessedRecord) => {
+    setEditSelectedId(String(rec.id));
+    setEditDate(rec.date);
+    setEditType(rec.type);
+    setEditAmount(rec.amount);
+    setEditCategory(rec.category);
+    setEditAccId(rec.account_id || '');
+    setEditUrl(rec.url || '');
+    setEditDesc(rec.description || '');
+    setIsEditModalOpen(true);
+  };
+
+  const handleOpenDeleteModal = (rec: ProcessedRecord) => {
+    setDeleteSelectedId(String(rec.id));
+    setDeleteIncludeBudget(false);
+    setIsDeleteModalOpen(true);
+  };
 
   // ================= Queries =================
 
@@ -348,26 +380,10 @@ export const FinancePage: React.FC = () => {
     }
   };
 
-  // 选择编辑记录填入编辑表单
-  const handleEditSelectChange = (recIdStr: string) => {
-    setEditSelectedId(recIdStr);
-    if (!recIdStr) return;
-    const recId = Number(recIdStr);
-    const records = recordsData?.results || [];
-    const r = records.find((item: ProcessedRecord) => item.id === recId);
-    if (r) {
-      setEditDate(r.date);
-      setEditType(r.type);
-      setEditAmount(r.amount);
-      setEditCategory(r.category);
-      setEditAccId(r.account_id || '');
-      setEditUrl(r.url || '');
-      setEditDesc(r.description || '');
-    }
-  };
 
-  // 批量物品明细小计 & 总计
-  const batchItemsSubtotal = batchItems.reduce((acc, item) => acc + item.amount * item.qty, 0);
+
+  // 批量物品明细小计 & 总计 (item.amount 即为项目总额)
+  const batchItemsSubtotal = batchItems.reduce((acc, item) => acc + item.amount, 0);
   const batchTotalWithShipping = batchItemsSubtotal + (Number(batchShippingFee) || 0);
 
   // 选中的预算详情
@@ -486,6 +502,7 @@ export const FinancePage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['finance-records'] });
       queryClient.invalidateQueries({ queryKey: ['financial-summary'] });
       setEditSelectedId('');
+      setIsEditModalOpen(false);
       alert('💾 流水修改保存成功！');
     },
     onError: (err: any) => alert(err.response?.data?.error || '修改失败'),
@@ -500,6 +517,7 @@ export const FinancePage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['finance-records'] });
       queryClient.invalidateQueries({ queryKey: ['financial-summary'] });
       setDeleteSelectedId('');
+      setIsDeleteModalOpen(false);
       alert(data.message || '🗑️ 删除流水成功！');
     },
     onError: (err: any) => alert(err.response?.data?.error || '删除失败'),
@@ -520,7 +538,7 @@ export const FinancePage: React.FC = () => {
       return;
     }
     if (!tempAmount || Number(tempAmount) <= 0) {
-      setFormError('明细单价必须大于 0！');
+      setFormError('明细金额必须大于 0！');
       return;
     }
     setFormError('');
@@ -954,52 +972,190 @@ export const FinancePage: React.FC = () => {
                     <th className="pb-3 px-2 text-center">链接</th>
                     <th className="pb-3 px-2 text-right">CNY账户余额</th>
                     <th className="pb-3 px-2 text-right">JPY账户余额</th>
+                    <th className="pb-3 px-2 text-center">操作</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#2A3447]/50 text-slate-300">
                   {recordsList.map((rec) => {
                     const isIncome = rec.type === '收入';
                     const isEx = (rec.category || '').includes('兑换') || (rec.category || '').includes('转账');
+                    const hasChildren = !!(rec.child_items && rec.child_items.length > 0);
+                    const isExpanded = expandedRowIds.includes(rec.id);
+
+                    const toggleExpand = (e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      setExpandedRowIds(prev => prev.includes(rec.id) ? prev.filter(x => x !== rec.id) : [...prev, rec.id]);
+                    };
+
                     return (
-                      <tr key={rec.id} className="hover:bg-[#18202F] transition">
-                        <td className="py-2.5 px-2 font-mono text-slate-300">{rec.date}</td>
-                        <td className="py-2.5 px-2">
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
-                            isEx
-                              ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
-                              : isIncome
-                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                              : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                      <React.Fragment key={rec.id}>
+                        <tr
+                          onClick={() => hasChildren && toggleExpand({ stopPropagation: () => {} } as any)}
+                          className={`transition ${hasChildren ? 'cursor-pointer' : ''} ${
+                            isExpanded ? 'bg-violet-950/20' : 'hover:bg-[#18202F]'
+                          }`}
+                        >
+                          <td className="py-2.5 px-2 font-mono text-slate-300">
+                            <div className="flex items-center gap-1">
+                              {hasChildren && (
+                                <button
+                                  type="button"
+                                  onClick={toggleExpand}
+                                  className="p-0.5 hover:bg-[#2A3447] text-violet-400 rounded transition"
+                                  title={isExpanded ? '折叠明细项' : '展开明细项'}
+                                >
+                                  {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                                </button>
+                              )}
+                              <span>{rec.date}</span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-2">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
+                              isEx
+                                ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+                                : isIncome
+                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                            }`}>
+                              {isEx ? <Repeat className="w-3 h-3" /> : isIncome ? <ArrowDownRight className="w-3 h-3" /> : <ArrowUpRight className="w-3 h-3" />}
+                              {rec.type}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-2 font-medium text-slate-200">{rec.category}</td>
+                          <td className={`py-2.5 px-2 text-right font-mono font-bold ${
+                            isEx ? 'text-purple-400' : isIncome ? 'text-emerald-400' : 'text-rose-400'
                           }`}>
-                            {isEx ? <Repeat className="w-3 h-3" /> : isIncome ? <ArrowDownRight className="w-3 h-3" /> : <ArrowUpRight className="w-3 h-3" />}
-                            {rec.type}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-2 font-medium text-slate-200">{rec.category}</td>
-                        <td className={`py-2.5 px-2 text-right font-mono font-bold ${
-                          isEx ? 'text-purple-400' : isIncome ? 'text-emerald-400' : 'text-rose-400'
-                        }`}>
-                          {isIncome ? '+' : isEx ? '' : '-'}{(rec.amount || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2 })} {rec.currency}
-                        </td>
-                        <td className="py-2.5 px-2 text-slate-300 max-w-xs truncate">{rec.description || '-'}</td>
-                        <td className="py-2.5 px-2 text-center">
-                          {rec.url ? (
-                            <a
-                              href={rec.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex p-1 text-violet-400 hover:text-violet-300 transition"
-                              title="打开参考链接"
-                            >
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </a>
-                          ) : (
-                            <span className="text-slate-600">-</span>
-                          )}
-                        </td>
-                        <td className="py-2.5 px-2 text-right font-mono text-slate-400">¥{(rec.cny_bal || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}</td>
-                        <td className="py-2.5 px-2 text-right font-mono text-slate-400">￥{(rec.jpy_bal || 0).toLocaleString('zh-CN', { minimumFractionDigits: 0 })}</td>
-                      </tr>
+                            {isIncome ? '+' : isEx ? '' : '-'}{(rec.amount || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2 })} {rec.currency}
+                          </td>
+                          <td className="py-2.5 px-2 text-slate-300 max-w-xs">
+                            <div className="flex items-center gap-1.5 truncate">
+                              <span>{rec.description || '-'}</span>
+                              {hasChildren && (
+                                <span
+                                  onClick={toggleExpand}
+                                  className="px-1.5 py-0.5 text-[10px] bg-violet-500/10 hover:bg-violet-500/20 text-violet-300 border border-violet-500/30 rounded cursor-pointer font-bold inline-flex items-center gap-1 flex-shrink-0"
+                                >
+                                  📦 {rec.child_items!.length} 项明细
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                            {rec.url ? (
+                              <a
+                                href={rec.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex p-1 text-violet-400 hover:text-violet-300 transition"
+                                title="打开参考链接"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            ) : (
+                              <span className="text-slate-600">-</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-2 text-right font-mono text-slate-400">¥{(rec.cny_bal || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}</td>
+                          <td className="py-2.5 px-2 text-right font-mono text-slate-400">￥{(rec.jpy_bal || 0).toLocaleString('zh-CN', { minimumFractionDigits: 0 })}</td>
+                          <td className="py-2.5 px-2 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center justify-center gap-1.5">
+                              {hasChildren && (
+                                <button
+                                  type="button"
+                                  onClick={toggleExpand}
+                                  className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-bold rounded-md transition ${
+                                    isExpanded
+                                      ? 'text-amber-300 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 shadow-sm'
+                                      : 'text-indigo-300 bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 shadow-sm'
+                                  }`}
+                                  title={isExpanded ? '收起明细表' : '展开查看该流水包含的物品明细'}
+                                >
+                                  {isExpanded ? <ChevronDown className="w-3 h-3 text-amber-400" /> : <ChevronRight className="w-3 h-3 text-indigo-400" />}
+                                  {isExpanded ? '收起' : `明细 (${rec.child_items!.length})`}
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditModal(rec)}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-violet-400 bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/30 rounded-md transition"
+                                title="修改流水记录"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                                修改
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenDeleteModal(rec)}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-md transition"
+                                title="删除流水记录"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                删除
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+
+                        {/* 展开的物品明细行 (Sub Breakdown Table) */}
+                        {hasChildren && isExpanded && (
+                          <tr className="bg-[#0B0F17]/95 border-b border-[#2A3447]">
+                            <td colSpan={9} className="py-3 px-4">
+                              <div className="p-3 bg-[#131924]/90 rounded-xl border border-violet-500/30 space-y-2 text-xs">
+                                <div className="flex items-center justify-between text-violet-300 font-bold border-b border-[#2A3447] pb-1.5">
+                                  <span className="flex items-center gap-1.5">
+                                    <Package className="w-4 h-4 text-violet-400" />
+                                    该笔合并流水包含的物品明细 ({rec.child_items!.length} 项):
+                                  </span>
+                                  <span className="font-mono text-slate-300 text-[11px]">
+                                    包含项目小计: ¥{rec.child_items!.reduce((s, i) => s + (i.amount || 0), 0).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
+                                  </span>
+                                </div>
+                                <table className="w-full text-left text-xs">
+                                  <thead>
+                                    <tr className="text-slate-400 border-b border-[#2A3447]/60 text-[11px]">
+                                      <th className="py-1.5 px-2">物品/项目名称</th>
+                                      <th className="py-1.5 px-2 text-right">金额 (项目总额)</th>
+                                      <th className="py-1.5 px-2 text-center">数量</th>
+                                      <th className="py-1.5 px-2">细分类别</th>
+                                      <th className="py-1.5 px-2">具体备注</th>
+                                      <th className="py-1.5 px-2 text-center">链接</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-[#2A3447]/30 text-slate-200">
+                                    {rec.child_items!.map((child, cIdx) => (
+                                      <tr key={child.id || cIdx} className="hover:bg-[#1C2537]/50">
+                                        <td className="py-1.5 px-2 font-medium text-slate-100">{child.name}</td>
+                                        <td className="py-1.5 px-2 text-right font-mono font-bold text-violet-400">
+                                          ¥{(child.amount || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
+                                        </td>
+                                        <td className="py-1.5 px-2 text-center font-mono text-slate-300">{child.qty || 1}</td>
+                                        <td className="py-1.5 px-2 text-slate-400">{child.category || '-'}</td>
+                                        <td className="py-1.5 px-2 text-slate-400">{child.desc || '-'}</td>
+                                        <td className="py-1.5 px-2 text-center">
+                                          {child.url ? (
+                                            <a
+                                              href={child.url}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="inline-flex p-1 text-violet-400 hover:text-violet-300 transition"
+                                              title="打开明细链接"
+                                            >
+                                              <ExternalLink className="w-3.5 h-3.5" />
+                                            </a>
+                                          ) : (
+                                            <span className="text-slate-600">-</span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -1035,182 +1191,174 @@ export const FinancePage: React.FC = () => {
         )}
       </DataCard>
 
-      {/* 3. 修改与删除级联回退区 (页面下半部分 Grid) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* 修改流水记录 */}
-        <DataCard title="✏️ 修改流水记录 (仅限当页明细)">
-          <form onSubmit={handleEditSubmit} className="space-y-3 text-xs">
-            <FormField label="选择要修改的当页记录" required>
-              <select
-                value={editSelectedId}
-                onChange={(e) => handleEditSelectChange(e.target.value)}
-                className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-2 text-slate-100"
-              >
-                <option value="">-- 请选择一条记录 --</option>
-                {recordsList.map(r => (
-                  <option key={r.id} value={r.id}>
-                    {r.date} | {r.type} {r.amount} {r.currency} | {r.description || r.category}
-                  </option>
-                ))}
-              </select>
+      {/* 3. 修改流水 Modal 弹窗 */}
+      <Modal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        title={`✏️ 修改流水记录 #${editSelectedId}`}
+        maxWidth="lg"
+      >
+        <form onSubmit={handleEditSubmit} className="space-y-4 text-xs">
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="日期" required>
+              <input
+                type="date"
+                value={editDate}
+                onChange={(e) => setEditDate(e.target.value)}
+                className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-2 text-slate-100 font-mono"
+              />
             </FormField>
 
-            {editSelectedId && (
-              <div className="space-y-3 pt-2 border-t border-[#2A3447]">
-                <div className="grid grid-cols-2 gap-3">
-                  <FormField label="日期" required>
-                    <input
-                      type="date"
-                      value={editDate}
-                      onChange={(e) => setEditDate(e.target.value)}
-                      className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-1.5 text-slate-100 font-mono"
-                    />
-                  </FormField>
-
-                  <FormField label="收支大类" required>
-                    <select
-                      value={editType}
-                      onChange={(e) => setEditType(e.target.value)}
-                      className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-1.5 text-slate-100"
-                    >
-                      <option value="收入">收入</option>
-                      <option value="支出">支出</option>
-                    </select>
-                  </FormField>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <FormField label="金额" required>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={editAmount}
-                      onChange={(e) => setEditAmount(e.target.value ? parseFloat(e.target.value) : '')}
-                      className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-1.5 text-slate-100 font-mono"
-                    />
-                  </FormField>
-
-                  <FormField label="具体分类" required>
-                    <select
-                      value={editCategory}
-                      onChange={(e) => setEditCategory(e.target.value)}
-                      className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-1.5 text-slate-100"
-                    >
-                      {(editType === '收入' ? CATS_INCOME : CATS_EXPENSE).map(c => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                    </select>
-                  </FormField>
-                </div>
-
-                <FormField label="操作关联现金账户">
-                  <select
-                    value={editAccId}
-                    onChange={(e) => setEditAccId(e.target.value ? Number(e.target.value) : '')}
-                    className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-1.5 text-slate-100"
-                  >
-                    <option value="">-- 未选账户 / 非现金 --</option>
-                    {(cashAccounts || []).map(a => (
-                      <option key={a.id} value={a.id}>[{a.currency}] {a.name}</option>
-                    ))}
-                  </select>
-                </FormField>
-
-                <FormField label="相关页面网址">
-                  <input
-                    type="url"
-                    value={editUrl}
-                    onChange={(e) => setEditUrl(e.target.value)}
-                    placeholder="https://..."
-                    className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-1.5 text-slate-100"
-                  />
-                </FormField>
-
-                <FormField label="具体备注/明细说明">
-                  <input
-                    type="text"
-                    value={editDesc}
-                    onChange={(e) => setEditDesc(e.target.value)}
-                    className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-1.5 text-slate-100"
-                  />
-                </FormField>
-
-                <button
-                  type="submit"
-                  disabled={editMutation.isPending}
-                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition flex items-center justify-center gap-1.5"
-                >
-                  <Save className="w-4 h-4" />
-                  {editMutation.isPending ? '保存中...' : '保存修改内容'}
-                </button>
-              </div>
-            )}
-          </form>
-        </DataCard>
-
-        {/* 删除流水记录 (安全级联) */}
-        <DataCard title="🗑️ 删除流水记录 (仅限当页明细)">
-          <div className="space-y-3 text-xs">
-            <FormField label="选择要删除的流水记录" required>
+            <FormField label="收支大类" required>
               <select
-                value={deleteSelectedId}
-                onChange={(e) => {
-                  setDeleteSelectedId(e.target.value);
-                  setDeleteIncludeBudget(false);
-                }}
+                value={editType}
+                onChange={(e) => setEditType(e.target.value)}
                 className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-2 text-slate-100"
               >
-                <option value="">-- 请选择要删除的记录 --</option>
-                {recordsList.map(r => (
-                  <option key={r.id} value={r.id}>
-                    {r.date} | {r.amount} {r.currency} | {r.description || r.category}
-                  </option>
-                ))}
+                <option value="收入">收入</option>
+                <option value="支出">支出</option>
               </select>
             </FormField>
-
-            {deleteSelectedId && (
-              <div className="space-y-3 pt-2 border-t border-[#2A3447]">
-                {/* 预算关联 Cascade Delete Checkbox */}
-                {isBudgetRelatedDelete && (
-                  <div className="flex items-center gap-2 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg">
-                    <input
-                      type="checkbox"
-                      id="delete_budget"
-                      checked={deleteIncludeBudget}
-                      onChange={(e) => setDeleteIncludeBudget(e.target.checked)}
-                      className="rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-amber-500"
-                    />
-                    <label htmlFor="delete_budget" className="text-amber-400 font-medium cursor-pointer">
-                      一并物理删除绑定的预算项目记录 (Cascade Delete)
-                    </label>
-                  </div>
-                )}
-
-                <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl space-y-1 text-rose-300">
-                  <div className="flex items-center gap-1.5 font-bold text-rose-400">
-                    <AlertTriangle className="w-4 h-4" />
-                    安全级联警告
-                  </div>
-                  <p>
-                    删除流水会将关联的资产、负债、或库存成本明细一并安全级联撤回！如果是【销售收入】流水请必须去线上订单列表删除，严禁在此直接删除核心流水。
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleDeleteSubmit}
-                  disabled={deleteCascadeMutation.isPending}
-                  className="w-full py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg transition flex items-center justify-center gap-1.5 shadow-lg shadow-rose-600/20"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  {deleteCascadeMutation.isPending ? '执行中...' : '确认安全回滚删除'}
-                </button>
-              </div>
-            )}
           </div>
-        </DataCard>
-      </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="金额" required>
+              <input
+                type="number"
+                step="0.01"
+                value={editAmount}
+                onChange={(e) => setEditAmount(e.target.value ? parseFloat(e.target.value) : '')}
+                className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-2 text-slate-100 font-mono"
+              />
+            </FormField>
+
+            <FormField label="具体分类" required>
+              <select
+                value={editCategory}
+                onChange={(e) => setEditCategory(e.target.value)}
+                className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-2 text-slate-100"
+              >
+                {(editType === '收入' ? CATS_INCOME : CATS_EXPENSE).map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </FormField>
+          </div>
+
+          <FormField label="操作关联现金账户">
+            <select
+              value={editAccId}
+              onChange={(e) => setEditAccId(e.target.value ? Number(e.target.value) : '')}
+              className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-2 text-slate-100"
+            >
+              <option value="">-- 未选账户 / 非现金 --</option>
+              {(cashAccounts || []).map(a => (
+                <option key={a.id} value={a.id}>[{a.currency}] {a.name}</option>
+              ))}
+            </select>
+          </FormField>
+
+          <FormField label="相关页面网址">
+            <input
+              type="url"
+              value={editUrl}
+              onChange={(e) => setEditUrl(e.target.value)}
+              placeholder="https://..."
+              className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-2 text-slate-100"
+            />
+          </FormField>
+
+          <FormField label="具体备注/明细说明">
+            <input
+              type="text"
+              value={editDesc}
+              onChange={(e) => setEditDesc(e.target.value)}
+              className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-3 py-2 text-slate-100"
+            />
+          </FormField>
+
+          <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#2A3447]">
+            <button
+              type="button"
+              onClick={() => setIsEditModalOpen(false)}
+              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition text-xs font-bold"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              disabled={editMutation.isPending}
+              className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition flex items-center gap-1.5 text-xs shadow-lg shadow-emerald-600/20"
+            >
+              <Save className="w-4 h-4" />
+              {editMutation.isPending ? '保存中...' : '保存修改内容'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* 4. 删除流水 Modal 弹窗 */}
+      <Modal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        title={`🗑️ 安全删除流水记录 #${deleteSelectedId}`}
+        maxWidth="md"
+      >
+        <div className="space-y-4 text-xs">
+          {selectedDeleteRecord && (
+            <div className="p-3 bg-[#0B0F17] border border-[#2A3447] rounded-lg space-y-1 font-mono text-slate-300">
+              <div><span className="text-slate-500">日期:</span> {selectedDeleteRecord.date}</div>
+              <div><span className="text-slate-500">金额:</span> <span className="font-bold text-slate-100">{selectedDeleteRecord.type} {selectedDeleteRecord.amount} {selectedDeleteRecord.currency}</span></div>
+              <div><span className="text-slate-500">分类:</span> {selectedDeleteRecord.category}</div>
+              <div><span className="text-slate-500">说明:</span> {selectedDeleteRecord.description || '-'}</div>
+            </div>
+          )}
+
+          {isBudgetRelatedDelete && (
+            <div className="flex items-center gap-2 p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+              <input
+                type="checkbox"
+                id="delete_budget_modal"
+                checked={deleteIncludeBudget}
+                onChange={(e) => setDeleteIncludeBudget(e.target.checked)}
+                className="rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-amber-500"
+              />
+              <label htmlFor="delete_budget_modal" className="text-amber-400 font-medium cursor-pointer">
+                一并物理删除绑定的预算项目记录 (Cascade Delete)
+              </label>
+            </div>
+          )}
+
+          <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl space-y-1.5 text-rose-300">
+            <div className="flex items-center gap-1.5 font-bold text-rose-400">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              安全级联警告
+            </div>
+            <p className="text-xs leading-relaxed">
+              删除流水会将关联的资产、负债、或库存成本明细一并安全级联撤回！如果是【销售收入】流水请必须去线上订单列表删除，严禁在此直接删除核心流水。
+            </p>
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-[#2A3447]">
+            <button
+              type="button"
+              onClick={() => setIsDeleteModalOpen(false)}
+              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition text-xs font-bold"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteSubmit}
+              disabled={deleteCascadeMutation.isPending}
+              className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg transition flex items-center gap-1.5 text-xs shadow-lg shadow-rose-600/20"
+            >
+              <Trash2 className="w-4 h-4" />
+              {deleteCascadeMutation.isPending ? '执行中...' : '确认安全回滚删除'}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* 4. 新增记账 Modal 弹窗 */}
       <Modal
@@ -2008,11 +2156,11 @@ export const FinancePage: React.FC = () => {
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-slate-400">单价 (必填)</label>
+                        <label className="text-[10px] text-slate-400">金额 (项目总额)</label>
                         <input
                           type="number"
                           step="0.01"
-                          placeholder="单价"
+                          placeholder="金额 (必填)"
                           value={tempAmount}
                           onChange={(e) => setTempAmount(e.target.value ? parseFloat(e.target.value) : '')}
                           className="w-full bg-[#131924] border border-[#2A3447] rounded px-2.5 py-1 text-slate-100 font-mono"
@@ -2067,9 +2215,8 @@ export const FinancePage: React.FC = () => {
                           <thead>
                             <tr className="border-b border-[#2A3447] text-slate-400 bg-[#131924]/40">
                               <th className="py-2 px-3">内容/名称</th>
-                              <th className="py-2 px-3 text-right">金额(单价)</th>
+                              <th className="py-2 px-3 text-right">金额 (项目总额)</th>
                               <th className="py-2 px-3 text-center">数量</th>
-                              <th className="py-2 px-3 text-right">小计</th>
                               <th className="py-2 px-3">具体备注</th>
                               <th className="py-2 px-3 text-center">操作</th>
                             </tr>
@@ -2078,9 +2225,8 @@ export const FinancePage: React.FC = () => {
                             {batchItems.map(item => (
                               <tr key={item.key} className={editingBatchKey === item.key ? 'bg-amber-500/10' : 'hover:bg-[#131924]/50'}>
                                 <td className="py-2 px-3 font-medium text-slate-200">{item.name}</td>
-                                <td className="py-2 px-3 text-right font-mono text-slate-300">¥{item.amount.toFixed(2)}</td>
+                                <td className="py-2 px-3 text-right font-mono font-bold text-violet-400">¥{item.amount.toFixed(2)}</td>
                                 <td className="py-2 px-3 text-center font-mono text-slate-300">{item.qty}</td>
-                                <td className="py-2 px-3 text-right font-mono font-bold text-violet-400">¥{(item.amount * item.qty).toFixed(2)}</td>
                                 <td className="py-2 px-3 text-slate-400">{item.desc || '-'}</td>
                                 <td className="py-2 px-3 text-center">
                                   <div className="flex items-center justify-center gap-2">

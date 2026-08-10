@@ -26,6 +26,7 @@ import {
   Link as LinkIcon,
   Upload,
   Edit2,
+  Pencil,
   AlertTriangle,
   ChevronDown,
   ChevronUp,
@@ -100,6 +101,16 @@ export const PresalePage: React.FC = () => {
   const [refundReason, setRefundReason] = useState('');
   const [isBatchWhOpen, setIsBatchWhOpen] = useState(false);
   const [batchWarehouseId, setBatchWarehouseId] = useState<number | ''>('');
+  const [editDiscountNote, setEditDiscountNote] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [isSavingNotes, setIsSavingNotes] = useState(false);
+
+  React.useEffect(() => {
+    if (detailOrder) {
+      setEditDiscountNote(detailOrder.discount_note || '');
+      setEditNotes(detailOrder.notes || '');
+    }
+  }, [detailOrder]);
 
   // Queries
   const { data: ordersData, isLoading, refetch } = useQuery({
@@ -1612,6 +1623,8 @@ export const PresalePage: React.FC = () => {
               <div>当前状态: <span className="text-emerald-400 font-bold">{detailOrder.status}</span></div>
               <div>定金金额: <span className="font-mono text-emerald-400 font-bold">¥{detailOrder.deposit_amount || 0}</span></div>
               <div>尾款金额: <span className="font-mono text-violet-300 font-bold">¥{detailOrder.final_amount || 0}</span></div>
+              <div className="col-span-2">优惠政策/说明: <span className="text-amber-400 font-medium">{detailOrder.discount_note || '无'}</span></div>
+              <div className="col-span-2">流转备注: <span className="text-slate-300">{detailOrder.notes || '无'}</span></div>
             </div>
 
             <div>
@@ -1636,6 +1649,57 @@ export const PresalePage: React.FC = () => {
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            {/* Edit Discount Note & Flow Notes Card */}
+            <div className="p-3 bg-[#131924] rounded-xl border border-[#2A3447] space-y-3">
+              <h4 className="font-bold text-slate-200 text-xs flex items-center gap-1.5">
+                <Pencil className="w-3.5 h-3.5 text-violet-400" />
+                ✏️ 修改基础备注与优惠政策
+              </h4>
+              <FormField label="优惠说明 (选填)">
+                <input
+                  type="text"
+                  placeholder="如: 满减优惠 / 限时立减"
+                  value={editDiscountNote}
+                  onChange={(e) => setEditDiscountNote(e.target.value)}
+                  className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-2.5 py-1.5 text-slate-100"
+                />
+              </FormField>
+              <FormField label="流转备注说明 (选填)">
+                <textarea
+                  rows={2}
+                  placeholder="如: 客户要求加急发货"
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  className="w-full bg-[#0B0F17] border border-[#2A3447] rounded-lg px-2.5 py-1.5 text-slate-100"
+                />
+              </FormField>
+              <button
+                type="button"
+                disabled={isSavingNotes}
+                onClick={async () => {
+                  setIsSavingNotes(true);
+                  try {
+                    await apiClient.patch(`/sales/orders/${detailOrder.id}/`, {
+                      discount_note: editDiscountNote,
+                      notes: editNotes,
+                    });
+                    setDetailOrder((prev) =>
+                      prev ? { ...prev, discount_note: editDiscountNote, notes: editNotes } : null
+                    );
+                    queryClient.invalidateQueries({ queryKey: ['presale-orders'] });
+                    alert('✨ 预售订单优惠说明与备注修改成功！');
+                  } catch (err: any) {
+                    alert(err.response?.data?.error || '保存修改失败');
+                  } finally {
+                    setIsSavingNotes(false);
+                  }
+                }}
+                className="w-full py-2 bg-violet-600 hover:bg-violet-500 text-white font-bold rounded-lg transition shadow"
+              >
+                {isSavingNotes ? '保存中...' : '💾 保存优惠政策与备注修改'}
+              </button>
             </div>
 
             <div className="flex justify-between items-center pt-2 border-t border-[#2A3447]">

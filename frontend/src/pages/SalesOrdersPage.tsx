@@ -1,5 +1,5 @@
 // frontend/src/pages/SalesOrdersPage.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as XLSX from 'xlsx';
 import { apiClient } from '../api/client';
@@ -392,6 +392,24 @@ export const SalesOrdersPage: React.FC = () => {
 
     return true;
   });
+
+  // Pagination State (Matching Reflex Page Controls)
+  const [pageIndex, setPageIndex] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+
+  // Reset pageIndex when search or filters change
+  React.useEffect(() => {
+    setPageIndex(1);
+  }, [search, statusFilter, productFilter]);
+
+  // Paginated Orders for Table Display
+  const totalOrders = filteredOrders.length;
+  const totalPages = Math.max(1, Math.ceil(totalOrders / pageSize));
+
+  const paginatedOrders = useMemo(() => {
+    const start = (pageIndex - 1) * pageSize;
+    return filteredOrders.slice(start, start + pageSize);
+  }, [filteredOrders, pageIndex, pageSize]);
 
   // Selected Amount Sum
   const selectedOrdersList = onlineOrdersForStats.filter(o => selectedOrderIds.includes(o.id));
@@ -993,12 +1011,12 @@ export const SalesOrdersPage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#2A3447]/40">
-                  {filteredOrders.map(o => {
+                  {paginatedOrders.map((o: SalesOrder) => {
                     const isSelected = selectedOrderIds.includes(o.id);
                     const itemsSummary = o.items && o.items.length > 0
-                      ? o.items.map(i => `${i.product_name}-${i.variant}×${i.quantity}`).join(', ')
+                      ? o.items.map((i: any) => `${i.product_name}-${i.variant}×${i.quantity}`).join(', ')
                       : '无明细';
-                    const refundedTotal = o.refunds?.reduce((sum, r) => sum + r.refund_amount, 0) || 0;
+                    const refundedTotal = o.refunds?.reduce((sum: number, r: any) => sum + r.refund_amount, 0) || 0;
 
                     return (
                       <tr
@@ -1051,6 +1069,51 @@ export const SalesOrdersPage: React.FC = () => {
               </table>
             </div>
           )}
+
+          {/* Pagination Control Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#2A3447]/60 text-xs">
+            <div className="flex items-center gap-2 text-slate-400">
+              <span>每页显示:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPageIndex(1);
+                }}
+                className="bg-[#0B0F17] border border-[#2A3447] rounded-lg px-2 py-1 text-slate-200 font-bold focus:outline-none"
+              >
+                <option value={15}>15 条/页</option>
+                <option value={20}>20 条/页</option>
+                <option value={50}>50 条/页</option>
+                <option value={100}>100 条/页</option>
+              </select>
+              <span className="ml-2 font-mono text-slate-300">
+                {totalOrders > 0
+                  ? `显示第 ${(pageIndex - 1) * pageSize + 1} - ${Math.min(pageIndex * pageSize, totalOrders)} 条 (共 ${totalOrders} 条)`
+                  : '共 0 条'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPageIndex((p) => Math.max(1, p - 1))}
+                disabled={pageIndex <= 1}
+                className="px-3 py-1.5 bg-[#0B0F17] hover:bg-[#1C2537] disabled:opacity-40 disabled:hover:bg-[#0B0F17] border border-[#2A3447] rounded-xl text-slate-200 font-medium transition cursor-pointer"
+              >
+                上一页
+              </button>
+              <span className="font-mono text-slate-300 px-2 font-bold">
+                第 {pageIndex} / {totalPages} 页
+              </span>
+              <button
+                onClick={() => setPageIndex((p) => Math.min(totalPages, p + 1))}
+                disabled={pageIndex >= totalPages}
+                className="px-3 py-1.5 bg-[#0B0F17] hover:bg-[#1C2537] disabled:opacity-40 disabled:hover:bg-[#0B0F17] border border-[#2A3447] rounded-xl text-slate-200 font-medium transition cursor-pointer"
+              >
+                下一页
+              </button>
+            </div>
+          </div>
 
           {/* Action Bar */}
           <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-[#2A3447]">

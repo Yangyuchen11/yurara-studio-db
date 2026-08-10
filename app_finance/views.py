@@ -39,36 +39,29 @@ class FinanceRecordViewSet(viewsets.ModelViewSet):
 
         total_pages = max(1, math.ceil(total_count / page_size))
 
-        # 计算流水中的 CNY/JPY 余额快照
-        # 获取当前全局现金余额
-        cash_accs = CompanyBalanceItem.objects.filter(
-            category=BalanceCategory.ASSET,
-            asset_type="现金"
-        )
-        cny_bal = sum(a.amount for a in cash_accs if (a.currency or "CNY") == "CNY")
-        jpy_bal = sum(a.amount for a in cash_accs if (a.currency or "") == "JPY")
-
         serialized = []
         for r in records:
-            desc_clean = re.sub(r'\s*\[cost_item:\d+\]', '', r.description or "")
+            desc_clean = re.sub(r'\s*\[cost_item:\d+\]', '', r["description"] or "")
+            amt = r["amount"]
+            cat = r["category"]
             # 判断收支方向
-            rec_type = "收入" if r.amount > 0 and r.category not in ("货币兑换", "转账-流出", "转账-流入") else "支出"
-            if r.category in ("货币兑换", "转账-流出", "转账-流入"):
-                rec_type = r.category
+            rec_type = "收入" if amt > 0 and cat not in ("货币兑换", "转账-流出", "转账-流入") else "支出"
+            if cat in ("货币兑换", "转账-流出", "转账-流入"):
+                rec_type = cat
 
             serialized.append({
-                "id": r.id,
-                "date": r.date.strftime("%Y-%m-%d") if r.date else "",
-                "currency": r.currency or "CNY",
+                "id": r["id"],
+                "date": r["date"],
+                "currency": r["currency"] or "CNY",
                 "type": rec_type,
-                "amount": round(abs(float(r.amount)), 2),
-                "category": r.category or "",
+                "amount": round(abs(float(amt)), 2),
+                "category": cat,
                 "description": desc_clean,
-                "url": r.url or "",
-                "cny_bal": round(cny_bal, 2),
-                "jpy_bal": round(jpy_bal, 2),
-                "account_id": r.account_id,
-                "related_item_id": r.related_item_id,
+                "url": r["url"] or "",
+                "cny_bal": round(r["cny_bal"], 2),
+                "jpy_bal": round(r["jpy_bal"], 2),
+                "account_id": r["account_id"],
+                "related_item_id": r["related_item_id"],
             })
 
         return Response({
@@ -117,8 +110,11 @@ class FinanceRecordViewSet(viewsets.ModelViewSet):
                     currency=to_acc.currency,
                     category="转账-流入",
                     description=f"【从 {from_acc.name} 划入】{desc}",
-                    account_id=to_acc.id
+                    account_id=to_acc.id,
+                    related_item_id=rec_out.id
                 )
+                rec_out.related_item_id = rec_in.id
+                rec_out.save()
 
                 return Response({
                     'message': f'资金划转成功: {amount} 元',
@@ -147,33 +143,106 @@ class FinanceRecordViewSet(viewsets.ModelViewSet):
         created_records = []
         with transaction.atomic():
             account = CompanyBalanceItem.objects.filter(id=account_id).first() if account_id else None
-            total_amount = 0
+            items_total = sum(float(i.get('amount', 0)) for i in items)
+            total_amount = items_total + shipping_fee
 
+            first_url = ''
+            for i in items:
+                if i.get('url'):
+                    first_url = i['url']
+                    break
+
+            # 1. 创建单条合并的主体流水记录 (Parent FinanceRecord)
+            main_desc = f"购入 {len(items)} 项"
+            if shop:
+                main_desc += f" [{shop}]"
+
+            main_rec = FinanceRecord.objects.create(
+                date=date_str,
+                amount=-items_total if items_total > 0 else 0,
+                currency=currency,
+                category=category,
+                description=main_desc,
+                url=first_url,
+                account_id=account.id if account else None
+            )
+            created_records.append(main_rec)
+
+            # 2. 为各个明细项创建子资产/成本记录并挂载 finance_record_id
             for item in items:
-                amt = float(item.get('amount', 0)) * float(item.get('qty', 1))
-                total_amount += amt
-                desc_parts = [item.get('name', '')]
-                if item.get('qty', 1) != 1:
-                    desc_parts[0] += f" (x{item.get('qty', 1)})"
-                if item.get('desc'):
-                    desc_parts.append(item['desc'])
-                if shop:
-                    desc_parts.append(f"店铺:{shop}")
+                amt = float(item.get('amount', 0))
+                qty = float(item.get('qty', 1)) or 1.0
+                unit_price = amt / qty if qty > 0 else 0.0
 
-                rec = FinanceRecord.objects.create(
-                    date=date_str,
-                    amount=-amt,
-                    currency=currency,
-                    category=category,
-                    description=" | ".join(desc_parts),
-                    url=item.get('url', ''),
-                    account_id=account.id if account else None
-                )
-                created_records.append(rec)
+                if category == "商品成本":
+                    from app_core.models import CostItem, Product
+                    prod = Product.objects.filter(id=product_id).first() if product_id else None
+                    if prod:
+                        CostItem.objects.create(
+                            product=prod,
+                            item_name=item.get('name', ''),
+                            actual_cost=amt,
+                            original_amount=amt,
+                            quantity=qty,
+                            actual_qty=qty,
+                            unit_price=unit_price,
+                            actual_unit_price=unit_price,
+                            supplier=shop,
+                            category=cost_cat,
+                            remarks=item.get('desc', ''),
+                            finance_record_id=main_rec.id,
+                            url=item.get('url', ''),
+                            currency=currency
+                        )
+                elif category == "固定资产购入":
+                    from app_assets.models import FixedAsset
+                    FixedAsset.objects.create(
+                        name=item.get('name', ''),
+                        unit_price=unit_price,
+                        quantity=int(qty),
+                        remaining_qty=int(qty),
+                        shop_name=shop,
+                        remarks=item.get('desc', ''),
+                        currency=currency,
+                        finance_record_id=main_rec.id,
+                        url=item.get('url', '')
+                    )
+                elif category == "其他资产购入":
+                    from app_assets.models import ConsumableItem, ConsumableLog
+                    target_item = ConsumableItem.objects.filter(name=item.get('name', '')).first()
+                    if target_item:
+                        old_total = target_item.unit_price * target_item.remaining_qty
+                        target_item.remaining_qty += int(qty)
+                        if target_item.remaining_qty > 0:
+                            target_item.unit_price = (old_total + amt) / target_item.remaining_qty
+                        if shop:
+                            target_item.shop_name = shop
+                        if asset_cat:
+                            target_item.category = asset_cat
+                        target_item.save()
+                    else:
+                        ConsumableItem.objects.create(
+                            name=item.get('name', ''),
+                            category=asset_cat or '其他',
+                            unit_price=unit_price,
+                            initial_quantity=int(qty),
+                            remaining_qty=int(qty),
+                            shop_name=shop,
+                            remarks=item.get('desc', ''),
+                            currency=currency,
+                            finance_record_id=main_rec.id,
+                            url=item.get('url', '')
+                        )
+                    ConsumableLog.objects.create(
+                        item_name=item.get('name', ''),
+                        change_qty=int(qty),
+                        value_cny=amt,
+                        note=f"批量购入入库: {item.get('desc', '')}",
+                        date=date_str
+                    )
 
-            # 共同邮费作为单独一条记录
+            # 3. 共同邮费作为单独一条流水记录
             if shipping_fee > 0:
-                total_amount += shipping_fee
                 rec_ship = FinanceRecord.objects.create(
                     date=date_str,
                     amount=-shipping_fee,
@@ -184,13 +253,13 @@ class FinanceRecordViewSet(viewsets.ModelViewSet):
                 )
                 created_records.append(rec_ship)
 
-            # 扣减账户余额
+            # 4. 扣减账户余额
             if account and total_amount > 0:
                 account.amount -= total_amount
                 account.save()
 
         return Response({
-            'message': f'批量录入成功: {len(created_records)} 条记录，总计 {total_amount:.2f}',
+            'message': f'批量录入成功: 关联创建 1 条合并主体流水账，总计 {total_amount:.2f}',
             'records': FinanceRecordSerializer(created_records, many=True).data
         }, status=status.HTTP_201_CREATED)
 
@@ -233,8 +302,11 @@ class FinanceRecordViewSet(viewsets.ModelViewSet):
                     currency=tgt_curr,
                     category="货币兑换",
                     description=f"【从 {src_acc.name} 兑入 ({amt_out} {src_curr})】{desc}",
-                    account_id=tgt_acc.id
+                    account_id=tgt_acc.id,
+                    related_item_id=rec_out.id
                 )
+                rec_out.related_item_id = rec_in.id
+                rec_out.save()
 
                 return Response({
                     'message': '💱 货币兑换成功',
@@ -489,7 +561,7 @@ class FinanceRecordViewSet(viewsets.ModelViewSet):
             with transaction.atomic():
                 # 计算实际总金额
                 if items:
-                    items_total = sum(float(i.get('amount', 0)) * float(i.get('qty', 1)) for i in items)
+                    items_total = sum(float(i.get('amount', 0)) for i in items)
                     total_amount = items_total + shipping_fee
 
                 # 创建负债记录
@@ -544,7 +616,26 @@ class FinanceRecordViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-                # 如果有关联账户，回滚余额
+                msg = f'🗑️ 流水记录已删除 (ID: {record_id})'
+
+                # 检查是否为成对的兑换/转账流水 (通过 related_item_id 关联)
+                paired_rec = None
+                if rec.related_item_id and rec.category in ("货币兑换", "转账-流出", "转账-流入", "资金移动"):
+                    paired_rec = FinanceRecord.objects.filter(id=rec.related_item_id).first()
+
+                # 回滚配对记录并物理删除
+                if paired_rec:
+                    if paired_rec.account_id:
+                        try:
+                            p_acc = CompanyBalanceItem.objects.get(id=paired_rec.account_id)
+                            p_acc.amount -= paired_rec.amount  # 回滚配对账户余额
+                            p_acc.save()
+                        except CompanyBalanceItem.DoesNotExist:
+                            pass
+                    paired_rec.delete()
+                    msg = f'🗑️ 兑换/转账配对流水已双向同步安全回滚与删除 (ID: {record_id} & {paired_rec.id})'
+
+                # 如果主记录有关联账户，回滚余额
                 if rec.account_id:
                     try:
                         acc = CompanyBalanceItem.objects.get(id=rec.account_id)
@@ -554,14 +645,14 @@ class FinanceRecordViewSet(viewsets.ModelViewSet):
                         pass
 
                 # 如果关联预算且选择级联删除
-                if include_budget and rec.related_item_id:
+                if include_budget and rec.related_item_id and not paired_rec:
                     try:
                         CostItem.objects.filter(id=rec.related_item_id).delete()
                     except Exception:
                         pass
 
                 rec.delete()
-                return Response({'message': f'🗑️ 流水记录已删除 (ID: {record_id})'})
+                return Response({'message': msg})
         except FinanceRecord.DoesNotExist:
             return Response({'error': '记录不存在'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:

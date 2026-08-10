@@ -130,6 +130,14 @@ class InventorySummaryView(APIView):
         wh_details = InventoryService.get_warehouse_inventory_details()
         warehouses_db = Warehouse.objects.all()
 
+        all_prods = Product.objects.prefetch_related('colors__parts').all()
+        req_map = {}
+        for prod in all_prods:
+            req_map[prod.name] = {}
+            for c in prod.colors.all():
+                parts = c.parts.all()
+                req_map[prod.name][c.color_name] = {p.part_name: p.quantity for p in parts} if parts else {"整套": 1}
+
         warehouses_list = []
         total_quantity = 0
 
@@ -137,10 +145,18 @@ class InventorySummaryView(APIView):
             w_info = wh_details.get(w.id, {})
             stock_map = w_info.get("stock", {})
             
-            # Count total physical items in this warehouse
+            # Count total physical items and compute assemblable_sets in this warehouse
             w_total = 0
+            assemblable_map = {}
             for p_name, v_map in stock_map.items():
+                assemblable_map[p_name] = {}
                 for v_name, pt_map in v_map.items():
+                    reqs = req_map.get(p_name, {}).get(v_name, {"整套": 1})
+                    sets = 0
+                    if reqs:
+                        sets = min((pt_map.get(pt, 0) // req) for pt, req in reqs.items())
+                    assemblable_map[p_name][v_name] = max(0, sets)
+
                     for pt_name, qty in pt_map.items():
                         if qty > 0:
                             w_total += qty
@@ -152,7 +168,8 @@ class InventorySummaryView(APIView):
                 "remarks": w.remarks or "",
                 "is_empty": is_empty,
                 "total_qty": w_total,
-                "stock": stock_map
+                "stock": stock_map,
+                "assemblable_sets": assemblable_map
             })
             total_quantity += w_total
 
