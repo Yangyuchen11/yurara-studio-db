@@ -400,6 +400,16 @@ def build_presale_create_form() -> rx.Component:
                         ),
                         rx.divider(),
                         rx.heading("录入尾款绑定信息", size="2", weight="bold"),
+                        rx.cond(
+                            PresaleState.is_existing_final_no,
+                            rx.callout(
+                                PresaleState.existing_final_hint,
+                                icon="info",
+                                color_scheme="blue",
+                                size="1",
+                                width="100%"
+                            )
+                        ),
                         rx.grid(
                             custom_form_field(
                                 "尾款订单号 (必填)",
@@ -411,28 +421,51 @@ def build_presale_create_form() -> rx.Component:
                                     width="100%",
                                 ),
                             ),
-                            custom_form_field(
-                                rx.fragment("实收尾款金额 (", PresaleState.found_deposit_order_currency, ")"),
-                                rx.input(
-                                    type="number",
-                                    placeholder="0.00",
-                                    value=PresaleState.final_amount_input.to_string(),
-                                    on_change=PresaleState.set_final_amount_input,
-                                    size="2",
-                                    width="100%",
+                            rx.cond(
+                                ~PresaleState.is_existing_final_no,
+                                custom_form_field(
+                                    rx.fragment("实收尾款金额 (", PresaleState.found_deposit_order_currency, ")"),
+                                    rx.input(
+                                        type="number",
+                                        placeholder="0.00",
+                                        value=PresaleState.final_amount_input.to_string(),
+                                        on_change=PresaleState.set_final_amount_input,
+                                        size="2",
+                                        width="100%",
+                                    ),
                                 ),
+                                custom_form_field(
+                                    "尾款金额状态",
+                                    rx.badge("🔗 共享合并尾款金额", color_scheme="blue", size="2")
+                                )
                             ),
                             columns="2",
                             spacing="4",
                             width="100%"
                         ),
-                        rx.hstack(
-                            rx.checkbox(
-                                checked=PresaleState.pre_fee_final,
-                                on_change=PresaleState.toggle_pre_fee_final,
-                                size="2"
+                        rx.cond(
+                            ~PresaleState.is_existing_final_no,
+                            rx.hstack(
+                                rx.checkbox(
+                                    checked=PresaleState.pre_fee_final,
+                                    on_change=PresaleState.toggle_pre_fee_final,
+                                    size="2"
+                                ),
+                                rx.text("扣除尾款平台手续费(推荐)", size="2"),
+                                custom_form_field(
+                                    "尾款备注说明",
+                                    rx.input(
+                                        placeholder="优惠抵扣或发货备注...",
+                                        value=PresaleState.f_notes,
+                                        on_change=PresaleState.set_f_notes,
+                                        size="2",
+                                        width="100%"
+                                    )
+                                ),
+                                spacing="3",
+                                align="center",
+                                width="100%"
                             ),
-                            rx.text("扣除尾款平台手续费(推荐)", size="2"),
                             custom_form_field(
                                 "尾款备注说明",
                                 rx.input(
@@ -442,30 +475,30 @@ def build_presale_create_form() -> rx.Component:
                                     size="2",
                                     width="100%"
                                 )
-                            ),
-                            spacing="3",
-                            align="center",
-                            width="100%"
+                            )
                         ),
-                        rx.card(
-                            rx.hstack(
-                                rx.text("尾款收支演算估算：", size="2", weight="medium"),
-                                rx.spacer(),
-                                rx.text(
-                                    rx.fragment(
-                                        "预估实际尾款净收益: ", 
-                                        PresaleState.final_net_price.to_string(), 
-                                        " ", 
-                                        PresaleState.found_deposit_order_currency
-                                    ), 
-                                    size="2", 
-                                    weight="bold", 
-                                    color="green"
-                                )
-                            ),
-                            padding="0.5rem 1rem",
-                            background=rx.color("green", 2),
-                            width="100%"
+                        rx.cond(
+                            ~PresaleState.is_existing_final_no,
+                            rx.card(
+                                rx.hstack(
+                                    rx.text("尾款收支演算估算：", size="2", weight="medium"),
+                                    rx.spacer(),
+                                    rx.text(
+                                        rx.fragment(
+                                            "预估实际尾款净收益: ", 
+                                            PresaleState.final_net_price.to_string(), 
+                                            " ", 
+                                            PresaleState.found_deposit_order_currency
+                                        ), 
+                                        size="2", 
+                                        weight="bold", 
+                                        color="green"
+                                    )
+                                ),
+                                padding="0.5rem 1rem",
+                                background=rx.color("green", 2),
+                                width="100%"
+                            )
                         ),
                         rx.button(
                             "🚀 立即绑定并激活待发货状态",
@@ -1114,8 +1147,21 @@ def presale_page() -> rx.Component:
                     rx.hstack(
                         rx.button("☑️ 全选", on_click=PresaleState.toggle_select_all, size="1", variant="soft", color_scheme="gray"),
                         rx.spacer(),
-                        rx.text(rx.fragment("已选中 ", PresaleState.selected_count.to_string(), " 项订单"), size="1", color=rx.color("slate", 10)),
-                        rx.text(rx.fragment("已选定金+尾款合计: ¥ ", PresaleState.selected_amount_sum.to_string()), size="2", weight="bold", color="red"),
+                        rx.text(rx.fragment("已选中 ", PresaleState.selected_count.to_string(), " 项订单"), size="2", color=rx.color("slate", 10)),
+                        rx.badge(
+                            rx.fragment("已选尾款合计: ¥ ", PresaleState.selected_final_amount_sum.to_string()),
+                            size="2",
+                            color_scheme="green",
+                            variant="surface",
+                            weight="bold"
+                        ),
+                        rx.badge(
+                            rx.fragment("已选定金+尾款合计: ¥ ", PresaleState.selected_amount_sum.to_string()),
+                            size="2",
+                            color_scheme="ruby",
+                            variant="surface",
+                            weight="bold"
+                        ),
                         spacing="3",
                         align="center",
                         width="100%"

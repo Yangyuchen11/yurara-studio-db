@@ -350,7 +350,10 @@ class SalesOrderState(AppState):
             from models import SalesPlatform
             platform = db.query(SalesPlatform).filter(SalesPlatform.name == self.platform_input).first()
             if platform:
-                return math.ceil(self.total_price_input * platform.fee_rate) + platform.fee_fixed
+                raw_fee = self.total_price_input * platform.fee_rate + platform.fee_fixed
+                if platform.currency == "JPY" or self.currency_input == "JPY":
+                    return float(math.ceil(raw_fee))
+                return round(float(raw_fee), 2)
             return 0.0
         except Exception:
             return 0.0

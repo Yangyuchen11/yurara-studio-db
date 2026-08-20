@@ -272,8 +272,12 @@ class PresaleState(AppState):
         return self.selected_order_ids[0] if self.is_single_selected else 0
 
     @rx.var
+    def selected_final_amount_sum(self) -> float:
+        return round(sum(o.final_amount for o in self.orders if o.勾选), 2)
+
+    @rx.var
     def selected_amount_sum(self) -> float:
-        return sum(o.deposit_amount + o.final_amount for o in self.orders if o.勾选)
+        return round(sum(o.deposit_amount + o.final_amount for o in self.orders if o.勾选), 2)
 
     @rx.var
     def active_variants(self) -> list[str]:
@@ -368,7 +372,10 @@ class PresaleState(AppState):
             from models import SalesPlatform
             platform = db.query(SalesPlatform).filter(SalesPlatform.name == self.pre_plat).first()
             if platform:
-                return math.ceil(self.pre_tp * platform.fee_rate) + platform.fee_fixed
+                raw_fee = self.pre_tp * platform.fee_rate + platform.fee_fixed
+                if platform.currency == "JPY" or self.pre_currency == "JPY":
+                    return float(math.ceil(raw_fee))
+                return round(float(raw_fee), 2)
             return 0.0
         except Exception:
             return 0.0
@@ -390,7 +397,10 @@ class PresaleState(AppState):
             from models import SalesPlatform
             platform = db.query(SalesPlatform).filter(SalesPlatform.name == self.found_deposit_order_platform).first()
             if platform:
-                return math.ceil(self.final_amount_input * platform.fee_rate) + platform.fee_fixed
+                raw_fee = self.final_amount_input * platform.fee_rate + platform.fee_fixed
+                if platform.currency == "JPY" or self.found_deposit_order_currency == "JPY":
+                    return float(math.ceil(raw_fee))
+                return round(float(raw_fee), 2)
             return 0.0
         except Exception:
             return 0.0
@@ -401,6 +411,41 @@ class PresaleState(AppState):
     def final_net_price(self) -> float:
         net = self.final_amount_input - self.final_estimated_fee
         return max(0.0, net)
+
+    @rx.var
+    def existing_final_info(self) -> dict:
+        """检查当前输入的 final_no_input 是否已绑定到其他定金单"""
+        final_no = self.final_no_input.strip()
+        if not final_no:
+            return {"exists": False, "msg": "", "total_final": 0.0}
+        db = self.get_db()
+        try:
+            from models import SalesOrder
+            bound = db.query(SalesOrder).filter(
+                SalesOrder.final_order_no == final_no,
+                SalesOrder.order_type == "预售"
+            ).all()
+            if bound:
+                dep_nos = ", ".join(o.order_no for o in bound)
+                total_final = sum(o.final_amount for o in bound)
+                return {
+                    "exists": True,
+                    "msg": f"💡 检测到尾款单【{final_no}】已绑定定金单: [{dep_nos}]。将作为合并尾款共同绑定，共享其尾款数据 (实收: ¥ {total_final:.2f})，无需重复填写尾款金额。",
+                    "total_final": total_final
+                }
+            return {"exists": False, "msg": "", "total_final": 0.0}
+        except Exception:
+            return {"exists": False, "msg": "", "total_final": 0.0}
+        finally:
+            db.close()
+
+    @rx.var
+    def is_existing_final_no(self) -> bool:
+        return bool(self.existing_final_info.get("exists", False))
+
+    @rx.var
+    def existing_final_hint(self) -> str:
+        return str(self.existing_final_info.get("msg", ""))
 
     # ===================== 核心事件处理器 =====================
 
@@ -790,7 +835,7 @@ class PresaleState(AppState):
         if not self.final_no_input.strip():
             yield rx.toast("请输入尾款订单号！", level="error")
             return
-        if self.final_amount_input < 0:
+        if not self.is_existing_final_no and self.final_amount_input < 0:
             yield rx.toast("尾款实收金额不能小于 0！", level="error")
             return
             
@@ -798,10 +843,10 @@ class PresaleState(AppState):
         try:
             service = SalesOrderService(db)
             
-            net_amt = self.final_net_price
+            net_amt = 0.0 if self.is_existing_final_no else self.final_net_price
             
             msg = service.bind_presale_final_order(
-                deposit_order_id=self.found_deposit_order_id,
+                deposit_order_ids=self.found_deposit_order_id,
                 final_order_no=self.final_no_input.strip(),
                 final_net_amount=net_amt,
                 new_notes=self.f_notes
@@ -811,6 +856,7 @@ class PresaleState(AppState):
             self.search_dep_no = ""
             self.final_no_input = ""
             self.final_amount_input = 0.0
+            self.f_notes = ""
             
             from cache_manager import sync_all_caches
             sync_all_caches()
@@ -874,7 +920,9 @@ class PresaleState(AppState):
                         "net_price": float(p["net_price"]),
                         "items_str": items_str,
                         "matched_deposit_id": p.get("matched_deposit_id") or 0,
-                        "discount_note": p.get("discount_note") or "-"
+                        "matched_deposit_ids": p.get("matched_deposit_ids") or ([p.get("matched_deposit_id")] if p.get("matched_deposit_id") else []),
+                        "discount_note": p.get("discount_note") or "-",
+                        "items": p.get("items", [])
                     })
                 self.parsed_preview_orders = preview_list
                 return rx.toast(f"✅ Excel 校验成功！识别到 {len(preview_list)} 个预售{pm_mode}记录，请核对后开始批量写入")
