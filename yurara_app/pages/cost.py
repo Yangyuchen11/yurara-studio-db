@@ -252,13 +252,27 @@ def edit_dialog() -> rx.Component:
             rx.dialog.title("⚙️ 编辑项目支出信息"),
             rx.dialog.description("修改选定项目的预算规格、备注或供应商资质。", size="1"),
             rx.vstack(
-                custom_form_field(
-                    "项目名称 (不可改)",
-                    rx.input(
-                        value=CostState.edit_name,
-                        disabled=True,
-                        size="2"
-                    )
+                rx.grid(
+                    custom_form_field(
+                        "项目名称 (不可改)",
+                        rx.input(
+                            value=CostState.edit_name,
+                            disabled=True,
+                            size="2"
+                        )
+                    ),
+                    custom_form_field(
+                        "成本分类",
+                        rx.select(
+                            CostState.all_categories,
+                            value=CostState.edit_category,
+                            on_change=CostState.set_edit_category,
+                            size="2"
+                        )
+                    ),
+                    columns="2",
+                    spacing="3",
+                    width="100%"
                 ),
                 rx.cond(
                     CostState.edit_is_budget,

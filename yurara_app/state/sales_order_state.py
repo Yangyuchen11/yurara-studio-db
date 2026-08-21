@@ -177,7 +177,7 @@ class SalesOrderState(AppState):
         statuses = self.selected_orders_statuses
         if not statuses:
             return False
-        return all(s == "🚚 已发货" for s in statuses)
+        return all(s in ["🚚 已发货", "🔧 售后"] for s in statuses)
 
     @rx.var
     def can_refund(self) -> bool:

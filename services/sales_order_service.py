@@ -780,9 +780,16 @@ class SalesOrderService:
         else:
             order.total_amount -= refund_amount
             if order.total_amount < 0: order.total_amount = 0
+            if order.order_type == "预售":
+                order.final_amount -= refund_amount
+                if order.final_amount < 0: order.final_amount = 0
             self._distribute_pending_asset(order, -refund_amount)
 
-        order.status = OrderStatus.AFTER_SALES
+        # 状态流转策略：
+        # 1. 若原本已经是「已完成」(COMPLETED)，保持「已完成」，不降级为「售后中」
+        # 2. 若原本是未完成订单（如已发货/待收尾款），则标记为「售后中」，且允许后续继续完成收款对账
+        if not is_completed:
+            order.status = OrderStatus.AFTER_SALES
 
         self.db.flush()
         inv_service = InventoryService(self.db)
@@ -910,6 +917,18 @@ class SalesOrderService:
         
         self.db.delete(refund)
         self.db.flush()
+
+        # 如果该订单已无任何售后记录且处于售后中，自动恢复订单原状态
+        remaining_refunds = self.db.query(OrderRefund).filter(OrderRefund.order_id == order.id).count()
+        if remaining_refunds == 0 and order.status == OrderStatus.AFTER_SALES:
+            if order.completed_date:
+                order.status = OrderStatus.COMPLETED
+            elif order.shipped_date:
+                order.status = OrderStatus.SHIPPED
+            elif order.order_type == "预售":
+                order.status = OrderStatus.PRESALE_PENDING_FINAL
+            else:
+                order.status = OrderStatus.PENDING
 
         inv_service = InventoryService(self.db)
         for pid in product_ids_to_sync:

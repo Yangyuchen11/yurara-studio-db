@@ -62,6 +62,9 @@ class CostService:
             return False
         
         has_change = False
+        if "category" in updates and updates["category"] and updates["category"] != (target_item.category or ""):
+            target_item.category = updates["category"]
+            has_change = True
         if "unit" in updates and updates["unit"] != (target_item.unit or ""):
             target_item.unit = updates["unit"]
             has_change = True

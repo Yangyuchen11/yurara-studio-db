@@ -468,6 +468,8 @@ class CostState(AppState):
         self.is_edit_open = False
 
     @rx.event
+    def set_edit_category(self, val: str): self.edit_category = val
+    @rx.event
     def set_edit_unit(self, val: str): self.edit_unit = val
     @rx.event
     def set_edit_supplier(self, val: str): self.edit_supplier = val
@@ -491,6 +493,7 @@ class CostState(AppState):
         try:
             service = CostService(db)
             updates = {
+                "category": self.edit_category.strip(),
                 "unit": self.edit_unit.strip(),
                 "supplier": self.edit_supplier.strip(),
                 "url": self.edit_url.strip(),

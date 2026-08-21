@@ -122,6 +122,7 @@ def memo_dialog() -> rx.Component:
             rx.hstack(
                 rx.icon("calendar", size=12, color=rx.color("violet", 9)),
                 rx.input(
+                    key=memo["id"].to_string() + "_date",
                     default_value=memo["date"],
                     placeholder="日期 (YYYY-MM-DD)",
                     size="1",
@@ -142,6 +143,7 @@ def memo_dialog() -> rx.Component:
                 width="100%",
             ),
             rx.text_area(
+                key=memo["id"].to_string() + "_content",
                 default_value=memo["content"],
                 placeholder="在此输入备忘内容…",
                 size="1",
@@ -154,6 +156,7 @@ def memo_dialog() -> rx.Component:
             spacing="2",
             width="100%",
             padding_bottom="0.5rem",
+            key=memo["id"].to_string(),
         )
 
     return rx.dialog.root(
