@@ -17,6 +17,35 @@ class SalesOrderService:
         self.db = db
         self.inventory_service = InventoryService(db)
         
+    def _get_default_target_account(self, platform: str = "", currency: str = "CNY") -> str:
+        plat_str = (platform or "").lower()
+        curr_str = (currency or "CNY").upper()
+        if "微店" in plat_str or "weidian" in plat_str:
+            return "流动资金-微店账户"
+        if "booth" in plat_str:
+            return "流动资金-booth账户"
+        if curr_str == "JPY":
+            acc = self.db.query(CompanyBalanceItem).filter(
+                CompanyBalanceItem.category == "asset",
+                CompanyBalanceItem.asset_type == "现金",
+                CompanyBalanceItem.currency == "JPY",
+                CompanyBalanceItem.name.like("流动资金-%")
+            ).first()
+            if acc:
+                return acc.name
+            return "流动资金-日元银行账户"
+        
+        # CNY 默认支付宝账户
+        acc = self.db.query(CompanyBalanceItem).filter(
+            CompanyBalanceItem.category == "asset",
+            CompanyBalanceItem.asset_type == "现金",
+            CompanyBalanceItem.currency == "CNY",
+            CompanyBalanceItem.name == "流动资金-支付宝账户"
+        ).first()
+        if acc:
+            return acc.name
+        return "流动资金-支付宝账户"
+
     def _update_asset_by_name(self, name, delta, category="asset", currency="CNY"):
         item = self.db.query(CompanyBalanceItem).filter(
             CompanyBalanceItem.name == name
@@ -148,6 +177,9 @@ class SalesOrderService:
         existing = self.db.query(SalesOrder).filter(SalesOrder.order_no == order_no).first()
         if existing: return None, f"订单号 {order_no} 已存在，请使用其他订单号"
 
+        if not target_account_name:
+            target_account_name = self._get_default_target_account(platform, currency)
+
         total_amount = sum(item["quantity"] * item["unit_price"] for item in items_data)
 
         order = SalesOrder(
@@ -182,6 +214,9 @@ class SalesOrderService:
         existing = self.db.query(SalesOrder).filter(SalesOrder.order_no == order_no).first()
         if existing: return None, f"订单号 {order_no} 已存在"
 
+        if not target_account_name:
+            target_account_name = self._get_default_target_account(platform, currency)
+
         deposit_amount = sum(item["quantity"] * item["unit_price"] for item in items_data)
 
         order = SalesOrder(
@@ -214,7 +249,7 @@ class SalesOrderService:
         complete_date = complete_date or date.today()
         actual_income = order.deposit_amount
 
-        asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"
+        asset_name = order.target_account_name or self._get_default_target_account(order.platform, order.currency)
         self._update_asset_by_name(asset_name, actual_income, category="asset", currency=order.currency)
         target_acc = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
 
@@ -330,6 +365,216 @@ class SalesOrderService:
         self.db.commit()
         return len(orders), wh.name
 
+    def batch_complete_deposit_orders(self, order_ids: list[int], complete_date=None):
+        """🚀 批量完成定金订单：单事务统一处理与提交"""
+        if not order_ids:
+            return 0, []
+        complete_date = complete_date or date.today()
+        orders = self.db.query(SalesOrder).filter(SalesOrder.id.in_(order_ids)).all()
+        
+        success_count = 0
+        errors = []
+        
+        for order in orders:
+            if order.status != OrderStatus.PRESALE_PENDING_DEPOSIT:
+                errors.append(f"定金单 {order.order_no} 当前状态为【{order.status}】，非待完成定金状态")
+                continue
+            
+            actual_income = order.deposit_amount
+            asset_name = order.target_account_name or self._get_default_target_account(order.platform, order.currency)
+            target_acc = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
+            
+            self._update_asset_by_name(asset_name, actual_income, category="asset", currency=order.currency)
+            
+            self.db.add(FinanceRecord(
+                date=complete_date, amount=actual_income, currency=order.currency,
+                category=FinanceCategory.SALES_INCOME,
+                description=f"定金收款: {order.order_no} (预售) [账户: {asset_name}]",
+                order_id=order.id, account_id=target_acc.id if target_acc else None
+            ))
+            
+            order.status = OrderStatus.PRESALE_PENDING_FINAL
+            success_count += 1
+            
+        self.db.commit()
+        return success_count, errors
+
+    def batch_ship_orders(self, order_ids: list[int], ship_date=None):
+        """🚀 高性能批量发货：批量检查库存、去重预售关联单、延迟单次重算大货资产并单事务提交"""
+        if not order_ids:
+            return 0, []
+        ship_date = ship_date or date.today()
+        
+        orders = self.db.query(SalesOrder).filter(SalesOrder.id.in_(order_ids)).all()
+        order_map = {o.id: o for o in orders}
+        
+        processed_order_ids = set()
+        product_ids_to_sync = set()
+        success_count = 0
+        errors = []
+        valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动"]
+        
+        for o_id in order_ids:
+            if o_id in processed_order_ids:
+                continue
+            order = order_map.get(o_id)
+            if not order:
+                order = self.db.query(SalesOrder).filter(SalesOrder.id == o_id).first()
+            if not order:
+                errors.append(f"订单 ID {o_id} 不存在")
+                continue
+                
+            if order.status != OrderStatus.PENDING:
+                if order.status == OrderStatus.SHIPPED and o_id in processed_order_ids:
+                    continue
+                errors.append(f"订单 {order.order_no} 当前状态为【{order.status}】，无法发货")
+                continue
+                
+            orders_to_ship = [order]
+            if order.order_type == "预售" and order.final_order_no:
+                orders_to_ship = self.db.query(SalesOrder).filter(
+                    SalesOrder.final_order_no == order.final_order_no,
+                    SalesOrder.order_type == "预售"
+                ).all()
+                
+            # 1. 检查库存
+            stock_err = None
+            for o in orders_to_ship:
+                if o.status != OrderStatus.PENDING:
+                    continue
+                for item in o.items:
+                    stock_query = self.db.query(func.sum(InventoryLog.change_amount)).filter(
+                        InventoryLog.product_name == item.product_name,
+                        InventoryLog.variant == item.variant,
+                        InventoryLog.reason.in_(valid_reasons)
+                    )
+                    if item.warehouse_id is not None:
+                        stock_query = stock_query.filter(InventoryLog.warehouse_id == item.warehouse_id)
+                    else:
+                        stock_query = stock_query.filter(InventoryLog.warehouse_id == None)
+                        
+                    current_stock = stock_query.scalar() or 0
+                    if current_stock < item.quantity:
+                        wh_name_display = item.warehouse.name if item.warehouse_id else '未分配仓库'
+                        stock_err = f"库存不足：单据 {o.order_no} 的 {item.product_name}-{item.variant} 在【{wh_name_display}】(需要:{item.quantity}, 可用:{current_stock})"
+                        break
+                if stock_err:
+                    break
+                    
+            if stock_err:
+                errors.append(stock_err)
+                continue
+                
+            # 2. 执行出库
+            for o in orders_to_ship:
+                if o.status != OrderStatus.PENDING:
+                    continue
+                for item in o.items:
+                    self.db.add(InventoryLog(
+                        product_name=item.product_name, variant=item.variant, change_amount=-item.quantity,
+                        reason="出库", date=ship_date, note=f"销售订单发货: {o.final_order_no if o.order_type=='预售' else o.order_no}",
+                        is_sold=True, sale_amount=item.subtotal, currency=o.currency, platform=o.platform,
+                        order_id=o.id, warehouse_id=item.warehouse_id
+                    ))
+                    product = self.db.query(Product).filter(Product.name == item.product_name).first()
+                    if product:
+                        product_ids_to_sync.add(product.id)
+                        
+                pending_amount = o.final_amount if o.order_type == "预售" else o.total_amount
+                self._distribute_pending_asset(o, pending_amount)
+                o.status = OrderStatus.SHIPPED
+                o.shipped_date = ship_date
+                processed_order_ids.add(o.id)
+                success_count += 1
+                
+        self.db.flush()
+        
+        # 3. 仅对整批涉及的各商品唯一 ID 执行 1 次全量资产重算！
+        inv_service = InventoryService(self.db)
+        for pid in product_ids_to_sync:
+            inv_service.sync_product_metrics(pid)
+            
+        self.db.commit()
+        return success_count, errors
+
+    def batch_complete_orders(self, order_ids: list[int], complete_date=None):
+        """🚀 高性能批量收款结清：自动识别预售关联单、单事务批量记账并提交"""
+        if not order_ids:
+            return 0, []
+        complete_date = complete_date or date.today()
+        
+        orders = self.db.query(SalesOrder).filter(SalesOrder.id.in_(order_ids)).all()
+        order_map = {o.id: o for o in orders}
+        
+        processed_order_ids = set()
+        processed_final_order_nos = set()
+        success_count = 0
+        errors = []
+        
+        for o_id in order_ids:
+            if o_id in processed_order_ids:
+                continue
+            order = order_map.get(o_id)
+            if not order:
+                order = self.db.query(SalesOrder).filter(SalesOrder.id == o_id).first()
+            if not order:
+                errors.append(f"订单 ID {o_id} 不存在")
+                continue
+                
+            if order.status not in [OrderStatus.SHIPPED, OrderStatus.AFTER_SALES]:
+                errors.append(f"订单 {order.order_no} 当前状态为【{order.status}】，不能结清")
+                continue
+                
+            asset_name = order.target_account_name or self._get_default_target_account(order.platform, order.currency)
+            target_acc = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
+            
+            if order.order_type == "预售":
+                if order.final_order_no and order.final_order_no in processed_final_order_nos:
+                    continue
+                orders_to_complete = [order]
+                if order.final_order_no:
+                    orders_to_complete = self.db.query(SalesOrder).filter(
+                        SalesOrder.final_order_no == order.final_order_no,
+                        SalesOrder.order_type == "预售"
+                    ).all()
+                    processed_final_order_nos.add(order.final_order_no)
+                    
+                total_final_income = sum(o.final_amount for o in orders_to_complete)
+                
+                for o in orders_to_complete:
+                    if o.status in [OrderStatus.SHIPPED, OrderStatus.AFTER_SALES]:
+                        self._distribute_pending_asset(o, -o.final_amount)
+                        o.status = OrderStatus.COMPLETED
+                        o.completed_date = complete_date
+                        processed_order_ids.add(o.id)
+                        success_count += 1
+                        
+                self._update_asset_by_name(asset_name, total_final_income, category="asset", currency=order.currency)
+                dep_nos = ", ".join(o.order_no for o in orders_to_complete)
+                self.db.add(FinanceRecord(
+                    date=complete_date, amount=total_final_income, currency=order.currency,
+                    category=FinanceCategory.SALES_INCOME,
+                    description=f"尾款收款: {order.final_order_no} (关联定金:{dep_nos}) [账户: {asset_name}]",
+                    order_id=order.id, account_id=target_acc.id if target_acc else None
+                ))
+            else:
+                actual_income = order.total_amount
+                self._distribute_pending_asset(order, -actual_income)
+                self._update_asset_by_name(asset_name, actual_income, category="asset", currency=order.currency)
+                self.db.add(FinanceRecord(
+                    date=complete_date, amount=actual_income, currency=order.currency,
+                    category=FinanceCategory.SALES_INCOME,
+                    description=f"订单收款: {order.order_no} (平台:{order.platform}) [账户: {asset_name}]",
+                    order_id=order.id, account_id=target_acc.id if target_acc else None
+                ))
+                order.status = OrderStatus.COMPLETED
+                order.completed_date = complete_date
+                processed_order_ids.add(order.id)
+                success_count += 1
+                
+        self.db.commit()
+        return success_count, errors
+
     # ================= 3. 订单状态通用流转 =================
 
     def ship_order(self, order_id, ship_date=None):
@@ -408,7 +653,7 @@ class SalesOrderService:
         if order.status not in [OrderStatus.SHIPPED, OrderStatus.AFTER_SALES]: raise ValueError(f"当前状态 {order.status} 不能完成")
 
         complete_date = complete_date or date.today()
-        asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"
+        asset_name = order.target_account_name or self._get_default_target_account(order.platform, order.currency)
         target_acc = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
         
         if order.order_type == "预售":
@@ -704,7 +949,7 @@ class SalesOrderService:
         
         income_to_rollback = sum(f.amount for f in finances if f.amount > 0 and f.category == FinanceCategory.SALES_INCOME)
         if income_to_rollback > 0:
-            asset_name = order.target_account_name if order.target_account_name else f"{AssetPrefix.CASH}({order.currency})"
+            asset_name = order.target_account_name or self._get_default_target_account(order.platform, order.currency)
             self._update_asset_by_name(asset_name, -income_to_rollback, category="asset", currency=order.currency)
 
         for finance in finances: self.db.delete(finance)

@@ -859,23 +859,16 @@ class SalesOrderState(AppState):
         db = self.get_db()
         try:
             service = SalesOrderService(db)
-            success = 0
-            errors = []
-            for o_id in self.selected_order_ids:
-                try:
-                    service.ship_order(o_id)
-                    success += 1
-                except Exception as e:
-                    errors.append(f"订单 {o_id} 发货失败: {e}")
-                    
-            from cache_manager import sync_all_caches
-            sync_all_caches()
+            success, errors = service.batch_ship_orders(self.selected_order_ids)
             
             self.selected_order_ids = []
             if errors:
-                for err in errors:
+                for err in errors[:5]:
                     yield rx.toast(err, level="error", duration=4000)
-            yield rx.toast(f"📦 批量发货完成！成功发货 {success} 个单据")
+                if len(errors) > 5:
+                    yield rx.toast(f"另有 {len(errors) - 5} 个订单处理失败", level="warning")
+            if success > 0:
+                yield rx.toast(f"📦 批量发货完成！成功发货 {success} 个单据")
             yield SalesOrderState.load_orders_page()
         finally:
             db.close()
@@ -889,23 +882,16 @@ class SalesOrderState(AppState):
         db = self.get_db()
         try:
             service = SalesOrderService(db)
-            success = 0
-            errors = []
-            for o_id in self.selected_order_ids:
-                try:
-                    service.complete_order(o_id)
-                    success += 1
-                except Exception as e:
-                    errors.append(f"订单 {o_id} 收款结算失败: {e}")
-                    
-            from cache_manager import sync_all_caches
-            sync_all_caches()
+            success, errors = service.batch_complete_orders(self.selected_order_ids)
             
             self.selected_order_ids = []
             if errors:
-                for err in errors:
+                for err in errors[:5]:
                     yield rx.toast(err, level="error", duration=4000)
-            yield rx.toast(f"✅ 批量收款对账完成！已结清 {success} 个订单")
+                if len(errors) > 5:
+                    yield rx.toast(f"另有 {len(errors) - 5} 个订单处理失败", level="warning")
+            if success > 0:
+                yield rx.toast(f"✅ 批量收款对账完成！已结清 {success} 个订单")
             yield SalesOrderState.load_orders_page()
         finally:
             db.close()

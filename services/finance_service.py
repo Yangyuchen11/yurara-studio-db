@@ -663,6 +663,7 @@ class FinanceService:
                 name=link_config['name'], unit_price=link_config['unit_price'], 
                 quantity=link_config['qty'], remaining_qty=link_config['qty'],
                 shop_name=base_data['shop'], remarks=base_data['desc'], 
+                purchase_date=base_data['date'],
                 currency=base_data['currency'], finance_record_id=new_record.id,
                 url=base_data.get('url', '')
             ))
@@ -672,17 +673,50 @@ class FinanceService:
             rate = to_cny(1.0, base_data['currency'], rates_map)
             val_cny = base_data['amount'] * rate
             
-            target_item = db.query(ConsumableItem).filter(ConsumableItem.name == link_config['name']).first()
+            target_item = None
+            if link_config.get('target_id'):
+                target_item = db.query(ConsumableItem).filter(ConsumableItem.id == link_config['target_id']).first()
+            if not target_item and link_config.get('name'):
+                # 优先匹配同名且同币种的项目
+                target_item = db.query(ConsumableItem).filter(
+                    ConsumableItem.name == link_config['name'],
+                    ConsumableItem.currency == base_data['currency']
+                ).first()
+                if not target_item:
+                    # 查找库存已清零的同名历史项目以便复用重置
+                    target_item = db.query(ConsumableItem).filter(
+                        ConsumableItem.name == link_config['name'],
+                        ConsumableItem.remaining_qty <= 0.001
+                    ).first()
             
             if target_item:
-                old_total = target_item.unit_price * target_item.remaining_qty
-                new_total = base_data['amount']
-                target_item.remaining_qty += link_config['qty']
-                if target_item.remaining_qty > 0:
-                    target_item.unit_price = (old_total + new_total) / target_item.remaining_qty
+                old_qty = target_item.remaining_qty or 0.0
+                add_qty = link_config.get('qty', 1.0)
+                new_qty = old_qty + add_qty
+                
+                if old_qty <= 0.001:
+                    # 历史库存已清零，重新购入时彻底重置为新币种、单价、采购日期与流水关联
+                    target_item.currency = base_data['currency']
+                    target_item.unit_price = base_data['amount'] / add_qty if add_qty > 0 else link_config.get('unit_price', 0.0)
+                    target_item.purchase_date = base_data['date']
+                    target_item.finance_record_id = new_record.id
+                else:
+                    old_curr = getattr(target_item, 'currency', 'CNY') or 'CNY'
+                    new_curr = base_data['currency']
+                    if old_curr == new_curr:
+                        old_total = target_item.unit_price * old_qty
+                        target_item.unit_price = (old_total + base_data['amount']) / new_qty if new_qty > 0 else target_item.unit_price
+                    else:
+                        old_rate = to_cny(1.0, old_curr, rates_map)
+                        new_amount_in_old_curr = val_cny / old_rate if old_rate > 0 else base_data['amount']
+                        old_total = target_item.unit_price * old_qty
+                        target_item.unit_price = (old_total + new_amount_in_old_curr) / new_qty if new_qty > 0 else target_item.unit_price
+                        
+                target_item.remaining_qty = new_qty
                 if base_data['shop']: target_item.shop_name = base_data['shop']
                 if link_config.get('cat'): target_item.category = link_config['cat']
                 if base_data.get('url'): target_item.url = base_data['url']
+                if base_data.get('desc'): target_item.remarks = base_data['desc']
                 log_note = f"资产增加(收入): {base_data['desc']}" if is_income else f"购入入库: {base_data['desc']}"
                 link_msg += f" + 其他资产库存 (已合并: {target_item.name})"
                 new_record.related_item_id = target_item.id
@@ -692,6 +726,7 @@ class FinanceService:
                     unit_price=link_config['unit_price'], initial_quantity=link_config['qty'],
                     remaining_qty=link_config['qty'], shop_name=base_data['shop'],
                     remarks=base_data['desc'], currency=base_data['currency'],
+                    purchase_date=base_data['date'],
                     finance_record_id=new_record.id,
                     url=base_data.get('url', '')
                 )
@@ -772,25 +807,58 @@ class FinanceService:
                         name=item['name'], unit_price=item['amount']/item['qty'] if item['qty'] else 0,
                         quantity=item['qty'], remaining_qty=item['qty'],
                         shop_name=base_data['shop'], remarks=item['desc'],
+                        purchase_date=base_data['date'],
                         currency=base_data['currency'], finance_record_id=main_rec.id, url=item.get('url', '')
                     ))
                 
                 elif base_data['category'] == "其他资产购入":
-                    # 其他资产有合并同名项的逻辑
-                    target_item = db.query(ConsumableItem).filter(ConsumableItem.name == item['name']).first()
+                    # 优先匹配同名且同币种的项目
+                    target_item = db.query(ConsumableItem).filter(
+                        ConsumableItem.name == item['name'],
+                        ConsumableItem.currency == base_data['currency']
+                    ).first()
+                    if not target_item:
+                        # 查找库存已清零的同名历史项目以便复用重置
+                        target_item = db.query(ConsumableItem).filter(
+                            ConsumableItem.name == item['name'],
+                            ConsumableItem.remaining_qty <= 0.001
+                        ).first()
+                    
+                    old_qty = target_item.remaining_qty if target_item else 0.0
+                    add_qty = item['qty']
+                    new_qty = old_qty + add_qty
+
                     if target_item:
-                        old_total = target_item.unit_price * target_item.remaining_qty
-                        target_item.remaining_qty += item['qty']
-                        if target_item.remaining_qty > 0:
-                            target_item.unit_price = (old_total + item['amount']) / target_item.remaining_qty
+                        if old_qty <= 0.001:
+                            # 历史库存已用尽/清零，彻底重置为新币种、单价、日期与流水关联
+                            target_item.currency = base_data['currency']
+                            target_item.unit_price = item['amount'] / add_qty if add_qty > 0 else 0.0
+                            target_item.purchase_date = base_data['date']
+                            target_item.finance_record_id = main_rec.id
+                        else:
+                            old_curr = getattr(target_item, 'currency', 'CNY') or 'CNY'
+                            new_curr = base_data['currency']
+                            if old_curr == new_curr:
+                                old_total = target_item.unit_price * old_qty
+                                target_item.unit_price = (old_total + item['amount']) / new_qty if new_qty > 0 else target_item.unit_price
+                            else:
+                                old_rate = to_cny(1.0, old_curr, rates_map)
+                                new_amount_in_old_curr = val_cny / old_rate if old_rate > 0 else item['amount']
+                                old_total = target_item.unit_price * old_qty
+                                target_item.unit_price = (old_total + new_amount_in_old_curr) / new_qty if new_qty > 0 else target_item.unit_price
+
+                        target_item.remaining_qty = new_qty
                         if base_data['shop']: target_item.shop_name = base_data['shop']
                         if batch_config.get('asset_cat'): target_item.category = batch_config['asset_cat']
+                        if item.get('url'): target_item.url = item['url']
+                        if item.get('desc'): target_item.remarks = item['desc']
                     else:
                         new_con = ConsumableItem(
                             name=item['name'], category=batch_config.get('asset_cat', '其他'),
                             unit_price=item['amount']/item['qty'] if item['qty'] else 0,
                             initial_quantity=item['qty'], remaining_qty=item['qty'],
                             shop_name=base_data['shop'], remarks=item['desc'],
+                            purchase_date=base_data['date'],
                             currency=base_data['currency'], finance_record_id=main_rec.id, url=item.get('url', '')
                         )
                         db.add(new_con)

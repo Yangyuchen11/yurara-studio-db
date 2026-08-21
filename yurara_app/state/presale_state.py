@@ -1048,23 +1048,16 @@ class PresaleState(AppState):
         db = self.get_db()
         try:
             service = SalesOrderService(db)
-            success = 0
-            errors = []
-            for o_id in self.selected_order_ids:
-                try:
-                    service.complete_deposit_order(o_id)
-                    success += 1
-                except Exception as e:
-                    errors.append(f"单号 {o_id} 确认定金失败: {e}")
-                    
-            from cache_manager import sync_all_caches
-            sync_all_caches()
+            success, errors = service.batch_complete_deposit_orders(self.selected_order_ids)
             
             self.selected_order_ids = []
             if errors:
-                for err in errors:
+                for err in errors[:5]:
                     yield rx.toast(err, level="error")
-            yield rx.toast(f"🕒 批量定金确认完成！已处理 {success} 个定金单")
+                if len(errors) > 5:
+                    yield rx.toast(f"另有 {len(errors) - 5} 个定金单处理失败", level="warning")
+            if success > 0:
+                yield rx.toast(f"🕒 批量定金确认完成！已处理 {success} 个定金单")
             yield PresaleState.load_presale_page()
         finally:
             db.close()
@@ -1078,23 +1071,16 @@ class PresaleState(AppState):
         db = self.get_db()
         try:
             service = SalesOrderService(db)
-            success = 0
-            errors = []
-            for o_id in self.selected_order_ids:
-                try:
-                    service.ship_order(o_id)
-                    success += 1
-                except Exception as e:
-                    errors.append(f"单号 {o_id} 发货失败: {e}")
-                    
-            from cache_manager import sync_all_caches
-            sync_all_caches()
+            success, errors = service.batch_ship_orders(self.selected_order_ids)
             
             self.selected_order_ids = []
             if errors:
-                for err in errors:
+                for err in errors[:5]:
                     yield rx.toast(err, level="error")
-            yield rx.toast(f"📦 批量定金订单发货完成！成功发货 {success} 个单据")
+                if len(errors) > 5:
+                    yield rx.toast(f"另有 {len(errors) - 5} 个单据处理失败", level="warning")
+            if success > 0:
+                yield rx.toast(f"📦 批量定金订单发货完成！成功发货 {success} 个单据")
             yield PresaleState.load_presale_page()
         finally:
             db.close()
@@ -1108,23 +1094,16 @@ class PresaleState(AppState):
         db = self.get_db()
         try:
             service = SalesOrderService(db)
-            success = 0
-            errors = []
-            for o_id in self.selected_order_ids:
-                try:
-                    service.complete_order(o_id)
-                    success += 1
-                except Exception as e:
-                    errors.append(f"单号 {o_id} 确认尾款收款失败: {e}")
-                    
-            from cache_manager import sync_all_caches
-            sync_all_caches()
+            success, errors = service.batch_complete_orders(self.selected_order_ids)
             
             self.selected_order_ids = []
             if errors:
-                for err in errors:
+                for err in errors[:5]:
                     yield rx.toast(err, level="error")
-            yield rx.toast(f"✅ 批量预售结清完成！已结清 {success} 个单据")
+                if len(errors) > 5:
+                    yield rx.toast(f"另有 {len(errors) - 5} 个单据处理失败", level="warning")
+            if success > 0:
+                yield rx.toast(f"✅ 批量预售结清完成！已结清 {success} 个单据")
             yield PresaleState.load_presale_page()
         finally:
             db.close()
