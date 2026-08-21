@@ -768,6 +768,12 @@ def order_detail_modal() -> rx.Component:
                         rx.button("🟠 物理撤销/解绑尾款", on_click=PresaleState.unbind_presale_final, size="2", color_scheme="orange"),
                         rx.fragment()
                     ),
+                    # 仅在待付尾款且未绑尾款时显示拆分定金订单
+                    rx.cond(
+                        PresaleState.can_split_order,
+                        rx.button("✂️ 拆分定金订单 (部分补款)", on_click=PresaleState.open_split_modal, size="2", color_scheme="blue"),
+                        rx.fragment()
+                    ),
                     rx.button("💾 保存修改", on_click=PresaleState.submit_update_notes, size="2", color_scheme="violet"),
                     width="100%",
                     align="center",
@@ -779,6 +785,121 @@ def order_detail_modal() -> rx.Component:
         ),
         open=PresaleState.show_detail_flag,
         on_open_change=PresaleState.set_show_detail_flag,
+    )
+
+
+def split_presale_order_modal() -> rx.Component:
+    """拆分定金订单 Dialog"""
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.hstack(
+                rx.heading(rx.fragment("✂️ 拆分预售定金订单 | 原单: ", PresaleState.split_base_order_no), size="3"),
+                rx.spacer(),
+                rx.dialog.close(
+                    rx.icon_button(rx.icon("x", size=16), variant="ghost", color_scheme="gray", on_click=PresaleState.close_split_modal)
+                ),
+                width="100%",
+                align="center",
+            ),
+            rx.divider(),
+            rx.callout(
+                rx.fragment(
+                    "💡 可选择拆出特定款式与数量。拆分后将自动生成独立子单【",
+                    rx.text(PresaleState.split_next_order_no, weight="bold"),
+                    "】，两笔定金订单可独立绑定各自的尾款单并分批发货对账。定金金额将按商品比例智能切分。"
+                ),
+                icon="info",
+                color_scheme="blue",
+                size="1",
+                width="100%"
+            ),
+            rx.text("📦 请勾选或调整各款式拆出数量：", size="2", weight="bold"),
+            rx.table.root(
+                rx.table.header(
+                    rx.table.row(
+                        rx.table.column_header_cell("商品名称", size="1"),
+                        rx.table.column_header_cell("款式", size="1"),
+                        rx.table.column_header_cell("发货仓", size="1"),
+                        rx.table.column_header_cell("原数量", size="1"),
+                        rx.table.column_header_cell("单件定金", size="1"),
+                        rx.table.column_header_cell("拆出件数", size="1"),
+                        rx.table.column_header_cell("快捷全选", size="1"),
+                    )
+                ),
+                rx.table.body(
+                    rx.foreach(
+                        PresaleState.split_items_data,
+                        lambda item: rx.table.row(
+                            rx.table.cell(rx.text(item.product_name, size="1")),
+                            rx.table.cell(rx.badge(item.variant, size="1", color_scheme="gray")),
+                            rx.table.cell(rx.text(item.warehouse_name, size="1")),
+                            rx.table.cell(rx.text(item.max_qty.to_string(), size="1", weight="bold")),
+                            rx.table.cell(rx.text(rx.fragment("¥", item.unit_deposit.to_string()), size="1")),
+                            rx.table.cell(
+                                rx.input(
+                                    type="number",
+                                    value=item.split_qty.to_string(),
+                                    on_change=lambda val: PresaleState.set_split_item_qty(item.item_id, val),
+                                    size="1",
+                                    width="70px",
+                                    min=0,
+                                    max=item.max_qty
+                                )
+                            ),
+                            rx.table.cell(
+                                rx.button(
+                                    rx.cond(item.split_qty > 0, "取消", "全部拆出"),
+                                    on_click=lambda: PresaleState.toggle_split_all_of_item(item.item_id),
+                                    size="1",
+                                    variant="soft",
+                                    color_scheme=rx.cond(item.split_qty > 0, "red", "blue")
+                                )
+                            ),
+                        )
+                    )
+                ),
+                size="1",
+                width="100%"
+            ),
+            rx.card(
+                rx.vstack(
+                    rx.hstack(
+                        rx.text(rx.fragment("🆕 即将生成新子单【", PresaleState.split_next_order_no, "】："), size="2", weight="bold", color=rx.color("blue", 11)),
+                        rx.spacer(),
+                        rx.text(rx.fragment("拆出数量: ", PresaleState.split_selected_total_qty.to_string(), " 件 | 分摊定金: ¥ ", PresaleState.split_preview_new_deposit.to_string()), size="2", weight="bold", color=rx.color("blue", 11)),
+                        width="100%"
+                    ),
+                    rx.hstack(
+                        rx.text(rx.fragment("📝 原定金订单【", PresaleState.split_base_order_no, "】："), size="2", weight="bold", color=rx.color("slate", 11)),
+                        rx.spacer(),
+                        rx.text(rx.fragment("剩余数量: ", PresaleState.split_preview_remain_qty.to_string(), " 件 | 剩余定金: ¥ ", PresaleState.split_preview_remain_deposit.to_string()), size="2", weight="bold", color=rx.color("slate", 11)),
+                        width="100%"
+                    ),
+                    spacing="1",
+                    width="100%"
+                ),
+                padding="0.75rem",
+                background=rx.color("blue", 2),
+                width="100%"
+            ),
+            rx.hstack(
+                rx.button("取消", on_click=PresaleState.close_split_modal, size="2", variant="soft", color_scheme="gray"),
+                rx.spacer(),
+                rx.button(
+                    "✂️ 确认拆分并生成子订单",
+                    on_click=PresaleState.submit_split_presale_order,
+                    size="2",
+                    color_scheme="blue",
+                    disabled=~PresaleState.can_submit_split
+                ),
+                width="100%",
+                align="center",
+            ),
+            spacing="3",
+            max_width="650px"
+        ),
+        open=PresaleState.show_split_modal,
+        on_open_change=PresaleState.close_split_modal,
     )
 
 
@@ -1287,6 +1408,7 @@ def presale_page() -> rx.Component:
             
             # 引入 Dialog 模态框
             order_detail_modal(),
+            split_presale_order_modal(),
             refund_dialog_modal(),
             batch_wh_modal(),
             

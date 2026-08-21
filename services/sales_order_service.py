@@ -834,6 +834,133 @@ class SalesOrderService:
         self.db.commit()
         return f"尾款已成功剥离解绑！订单 {order.order_no} 已恢复至【待付尾款】状态，库存与资金已安全回滚。"
 
+    # ================= 预售专用：拆分定金订单 (支持部分补款) =================
+    def split_presale_deposit_order(self, order_id: int, split_items: list[dict]):
+        """
+        拆分预售定金订单：
+        split_items: [{"item_id": int, "split_quantity": int}, ...]
+        """
+        order = self.db.query(SalesOrder).filter(SalesOrder.id == order_id).first()
+        if not order or order.order_type != "预售":
+            raise ValueError("该订单不是有效的预售订单")
+        if order.status != OrderStatus.PRESALE_PENDING_FINAL:
+            raise ValueError(f"仅【待付尾款】状态的定金订单支持拆分，当前状态为【{order.status}】")
+        if order.final_order_no:
+            raise ValueError(f"该定金订单已绑定尾款单【{order.final_order_no}】，请先解绑尾款后再进行拆分")
+
+        item_map = {item.id: item for item in order.items}
+        if not item_map:
+            raise ValueError("原订单无商品明细，无法拆分")
+
+        total_original_qty = sum(item.quantity for item in order.items)
+        total_split_qty = 0
+        items_to_split = []
+
+        for req in split_items:
+            item_id = req.get("item_id")
+            s_qty = req.get("split_quantity", 0)
+            if item_id not in item_map:
+                continue
+            if not isinstance(s_qty, int) or s_qty < 0:
+                raise ValueError("拆出数量必须为大于等于 0 的整数")
+            orig_item = item_map[item_id]
+            if s_qty > orig_item.quantity:
+                raise ValueError(f"商品【{orig_item.product_name}-{orig_item.variant}】拆出数量({s_qty})超出原数量({orig_item.quantity})")
+            if s_qty > 0:
+                total_split_qty += s_qty
+                items_to_split.append((orig_item, s_qty))
+
+        if total_split_qty <= 0:
+            raise ValueError("请至少选择并输入 1 件商品的拆出数量")
+        if total_split_qty >= total_original_qty:
+            raise ValueError("拆出商品总数不能等于或超过订单全部商品数，原订单必须保留至少 1 件商品")
+
+        # 1. 精确计算拆出的定金金额
+        # 按各商品项原有的定金小计比例切分
+        split_deposit_amount = 0.0
+        for orig_item, s_qty in items_to_split:
+            item_unit_dep = orig_item.subtotal / orig_item.quantity if orig_item.quantity > 0 else 0.0
+            split_deposit_amount += item_unit_dep * s_qty
+        split_deposit_amount = round(split_deposit_amount, 2)
+
+        if split_deposit_amount <= 0:
+            split_deposit_amount = round(order.deposit_amount * (total_split_qty / total_original_qty), 2)
+
+        remain_deposit_amount = round(order.deposit_amount - split_deposit_amount, 2)
+        if remain_deposit_amount < 0:
+            remain_deposit_amount = 0.0
+
+        # 2. 生成自动递增的全局唯一定金子单号: {order_no}-{N}
+        existing_splits = self.db.query(SalesOrder.order_no).filter(
+            SalesOrder.order_no.like(f"{order.order_no}-%")
+        ).all()
+        max_idx = 0
+        import re
+        pattern = re.compile(rf"^{re.escape(order.order_no)}-(\d+)$")
+        for (ex_no,) in existing_splits:
+            m = pattern.match(ex_no)
+            if m:
+                max_idx = max(max_idx, int(m.group(1)))
+        new_order_no = f"{order.order_no}-{max_idx + 1}"
+
+        # 3. 创建新的子定金订单 (绝不创建新的财务流水, 资金零变动)
+        new_order = SalesOrder(
+            order_no=new_order_no,
+            order_type="预售",
+            platform=order.platform,
+            currency=order.currency,
+            status=OrderStatus.PRESALE_PENDING_FINAL,
+            created_date=order.created_date,
+            deposit_amount=split_deposit_amount,
+            final_amount=0.0,
+            total_amount=split_deposit_amount,
+            target_account_name=order.target_account_name,
+            discount_note=order.discount_note,
+            notes=f"由订单 {order.order_no} 拆分生成" + (f" ({order.notes})" if order.notes else "")
+        )
+        self.db.add(new_order)
+        self.db.flush()
+
+        # 4. 为新子单填充 items
+        new_unit_price = split_deposit_amount / total_split_qty if total_split_qty > 0 else 0.0
+        for orig_item, s_qty in items_to_split:
+            subtot = round(s_qty * new_unit_price, 2)
+            new_item = SalesOrderItem(
+                order_id=new_order.id,
+                product_name=orig_item.product_name,
+                variant=orig_item.variant,
+                quantity=s_qty,
+                unit_price=new_unit_price,
+                subtotal=subtot,
+                warehouse_id=orig_item.warehouse_id
+            )
+            self.db.add(new_item)
+
+        # 5. 更新原定金订单
+        order.deposit_amount = remain_deposit_amount
+        order.total_amount = remain_deposit_amount
+        remain_total_qty = total_original_qty - total_split_qty
+        remain_unit_price = remain_deposit_amount / remain_total_qty if remain_total_qty > 0 else 0.0
+
+        for orig_item, s_qty in items_to_split:
+            orig_item.quantity -= s_qty
+            if orig_item.quantity <= 0:
+                self.db.delete(orig_item)
+            else:
+                orig_item.unit_price = remain_unit_price
+                orig_item.subtotal = round(orig_item.quantity * remain_unit_price, 2)
+
+        # 对未被拆分的剩余 items 也同步重算单价小计
+        for item in order.items:
+            if item not in [x[0] for x in items_to_split]:
+                item.unit_price = remain_unit_price
+                item.subtotal = round(item.quantity * remain_unit_price, 2)
+
+        self.db.flush()
+        self.db.commit()
+
+        return new_order, f"✅ 预售定金订单拆分成功！已生成新子单【{new_order.order_no}】（定金: ¥{new_order.deposit_amount:.2f}，共 {total_split_qty} 件），原单【{order.order_no}】剩余定金: ¥{order.deposit_amount:.2f}（共 {remain_total_qty} 件）。"
+
     # ================= 6. 批量导入预售扩展 =================
     def validate_and_parse_import_data(self, df, exchange_rate, presale_mode=None):
         required_cols = ['订单号', '商品名', '商品型号', '数量', '销售平台', '订单总额', '币种', '出货仓库']

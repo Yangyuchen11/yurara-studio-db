@@ -35,6 +35,16 @@ class PresaleOrderRow(BaseModel):
     notes: str = ""
 
 
+class SplitItemModel(BaseModel):
+    item_id: int = 0
+    product_name: str = ""
+    variant: str = ""
+    warehouse_name: str = ""
+    max_qty: int = 0
+    split_qty: int = 0
+    unit_deposit: float = 0.0
+
+
 class ResendItemModel(BaseModel):
     order_item_id: int = 0
     product_name: str = ""
@@ -135,6 +145,15 @@ class PresaleState(AppState):
 
     # --- 删除订单二次确认 ---
     show_delete_confirm: bool = False
+
+    # ===================== 拆分定金订单 Dialog 状态 =====================
+    show_split_modal: bool = False
+    split_target_order_id: int = 0
+    split_base_order_no: str = ""
+    split_next_order_no: str = ""
+    split_orig_deposit: float = 0.0
+    split_orig_total_qty: int = 0
+    split_items_data: list[SplitItemModel] = []
 
     # ===================== 售后 Dialog 状态 =====================
     active_refund_order_id: int = 0
@@ -446,6 +465,35 @@ class PresaleState(AppState):
     @rx.var
     def existing_final_hint(self) -> str:
         return str(self.existing_final_info.get("msg", ""))
+
+    # --- 拆分订单计算属性 ---
+    @rx.var
+    def can_split_order(self) -> bool:
+        """检查当前详情订单是否可以拆分：待付尾款且未绑尾款"""
+        return (
+            self.detail_status == OrderStatus.PRESALE_PENDING_FINAL
+            and (self.detail_final_order_no == "-" or not self.detail_final_order_no)
+        )
+
+    @rx.var
+    def split_selected_total_qty(self) -> int:
+        return sum(it.split_qty for it in self.split_items_data)
+
+    @rx.var
+    def split_preview_new_deposit(self) -> float:
+        return round(sum(it.split_qty * it.unit_deposit for it in self.split_items_data), 2)
+
+    @rx.var
+    def split_preview_remain_deposit(self) -> float:
+        return max(0.0, round(self.split_orig_deposit - self.split_preview_new_deposit, 2))
+
+    @rx.var
+    def split_preview_remain_qty(self) -> int:
+        return max(0, self.split_orig_total_qty - self.split_selected_total_qty)
+
+    @rx.var
+    def can_submit_split(self) -> bool:
+        return 0 < self.split_selected_total_qty < self.split_orig_total_qty
 
     # ===================== 核心事件处理器 =====================
 
@@ -1543,6 +1591,120 @@ class PresaleState(AppState):
             yield PresaleState.load_presale_page()
         except Exception as e:
             yield rx.toast(f"撤销失败: {e}", level="error")
+            return
+        finally:
+            db.close()
+
+    # ===================== 拆分定金订单事件 =====================
+    @rx.event
+    def open_split_modal(self):
+        if not self.active_detail_order_id:
+            return
+        db = self.get_db()
+        try:
+            from models import SalesOrder, Warehouse
+            order = db.query(SalesOrder).filter(SalesOrder.id == self.active_detail_order_id).first()
+            if not order:
+                return rx.toast("订单不存在", level="error")
+            if order.status != OrderStatus.PRESALE_PENDING_FINAL or order.final_order_no:
+                return rx.toast("仅待付尾款且尚未绑定尾款的定金单支持拆分！", level="warning")
+
+            self.split_target_order_id = order.id
+            self.split_base_order_no = order.order_no
+            self.split_orig_deposit = float(order.deposit_amount)
+            self.split_orig_total_qty = sum(it.quantity for it in order.items)
+
+            # 探测下一个子单号
+            import re
+            existing_splits = db.query(SalesOrder.order_no).filter(
+                SalesOrder.order_no.like(f"{order.order_no}-%")
+            ).all()
+            max_idx = 0
+            pattern = re.compile(rf"^{re.escape(order.order_no)}-(\d+)$")
+            for (ex_no,) in existing_splits:
+                m = pattern.match(ex_no)
+                if m:
+                    max_idx = max(max_idx, int(m.group(1)))
+            self.split_next_order_no = f"{order.order_no}-{max_idx + 1}"
+
+            # 组装 items
+            wh_dict = {w.id: w.name for w in db.query(Warehouse).all()}
+            items_list = []
+            for it in order.items:
+                u_dep = it.subtotal / it.quantity if it.quantity > 0 else 0.0
+                items_list.append(SplitItemModel(
+                    item_id=it.id,
+                    product_name=it.product_name,
+                    variant=it.variant,
+                    warehouse_name=wh_dict.get(it.warehouse_id, "未分配仓"),
+                    max_qty=it.quantity,
+                    split_qty=0,
+                    unit_deposit=round(u_dep, 2)
+                ))
+            self.split_items_data = items_list
+            self.show_split_modal = True
+        finally:
+            db.close()
+
+    @rx.event
+    def close_split_modal(self):
+        self.show_split_modal = False
+
+    @rx.event
+    def set_split_item_qty(self, item_id: int, val: str):
+        try:
+            qty = int(val) if val else 0
+        except ValueError:
+            qty = 0
+        
+        new_list = []
+        for it in self.split_items_data:
+            if it.item_id == item_id:
+                clamped_qty = max(0, min(qty, it.max_qty))
+                it_copy = it.model_copy(update={"split_qty": clamped_qty})
+                new_list.append(it_copy)
+            else:
+                new_list.append(it)
+        self.split_items_data = new_list
+
+    @rx.event
+    def toggle_split_all_of_item(self, item_id: int):
+        new_list = []
+        for it in self.split_items_data:
+            if it.item_id == item_id:
+                new_qty = 0 if it.split_qty > 0 else it.max_qty
+                it_copy = it.model_copy(update={"split_qty": new_qty})
+                new_list.append(it_copy)
+            else:
+                new_list.append(it)
+        self.split_items_data = new_list
+
+    @rx.event
+    def submit_split_presale_order(self):
+        if not self.can_submit_split:
+            yield rx.toast("请选择要拆出的商品项，且必须为原单保留至少 1 件商品", level="error")
+            return
+
+        db = self.get_db()
+        try:
+            service = SalesOrderService(db)
+            split_payload = [
+                {"item_id": it.item_id, "split_quantity": it.split_qty}
+                for it in self.split_items_data
+                if it.split_qty > 0
+            ]
+            new_ord, msg = service.split_presale_deposit_order(self.split_target_order_id, split_payload)
+            
+            self.show_split_modal = False
+            self.show_detail_flag = False
+            
+            from cache_manager import sync_all_caches
+            sync_all_caches()
+            
+            yield rx.toast(msg, level="success")
+            yield PresaleState.load_presale_page()
+        except Exception as e:
+            yield rx.toast(f"拆分失败: {e}", level="error")
             return
         finally:
             db.close()
