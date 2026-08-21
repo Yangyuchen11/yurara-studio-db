@@ -563,6 +563,14 @@ def inventory_page() -> rx.Component:
                                     width="200px"
 ),
                                 rx.spacer(),
+                                rx.button(
+                                    rx.icon("refresh-cw", size=14),
+                                    "刷新库存",
+                                    on_click=InventoryState.load_inventory_page,
+                                    variant="soft",
+                                    color_scheme="gray",
+                                    size="2",
+                                ),
                                 rx.cond(
                                     InventoryState.is_production_completed,
                                     rx.badge("🔒 生产结单", color_scheme="green", variant="soft"),

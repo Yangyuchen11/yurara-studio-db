@@ -33,6 +33,7 @@ class PresaleOrderRow(BaseModel):
     platform: str = ""
     created_date: str = ""
     notes: str = ""
+    search_keywords: str = ""
 
 
 class SplitItemModel(BaseModel):
@@ -232,6 +233,7 @@ class PresaleState(AppState):
                 query in o.platform.lower() or 
                 query in o.notes.lower() or 
                 query in o.items_summary.lower() or 
+                query in o.search_keywords.lower() or
                 query in o.created_date.lower() or 
                 query in o.status.lower() or
                 query in o.discount_note.lower()):
@@ -545,6 +547,7 @@ class PresaleState(AppState):
                 elif o.status == OrderStatus.COMPLETED: status_display = "✅ 完成"
                 elif o.status == OrderStatus.AFTER_SALES: status_display = "🔧 售后"
 
+                all_items_str = ", ".join([f"{i.product_name} {i.variant} {i.quantity}" for i in o.items])
                 rows.append(PresaleOrderRow(
                     勾选=o.id in self.selected_order_ids,
                     id=o.id,
@@ -559,7 +562,8 @@ class PresaleState(AppState):
                     currency=o.currency,
                     platform=o.platform,
                     created_date=o.created_date.strftime("%Y-%m-%d") if o.created_date else "",
-                    notes=o.notes or "-"
+                    notes=o.notes or "-",
+                    search_keywords=all_items_str
                 ))
             self.orders = rows
             
