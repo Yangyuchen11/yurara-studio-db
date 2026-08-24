@@ -43,6 +43,12 @@ NAV_ITEMS = [
             {"label": "其他资产管理", "icon": "box", "href": "/consumable"},
         ]
     },
+    {
+        "group": "业务管理",
+        "items": [
+            {"label": "工期日程管理", "icon": "calendar_clock", "href": "/schedule"},
+        ]
+    },
 ]
 
 

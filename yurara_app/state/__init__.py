@@ -14,6 +14,7 @@ from .offline_sales_state import OfflineSalesState
 from .sales_order_state import SalesOrderState
 from .presale_state import PresaleState
 from .memo_state import MemoState
+from .schedule_state import ScheduleState
 
 
 

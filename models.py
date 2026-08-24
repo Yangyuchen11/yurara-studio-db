@@ -302,3 +302,37 @@ class MemoNote(Base):
     date = Column(String)           # 日期字符串，格式: "2026-06-16"，可被用户手动编辑
     content = Column(String, default="")  # 备忘录内容
     created_at = Column(String)     # ISO 时间戳字符串，用于排序（如: "2026-06-16T16:33:00"）
+
+# --- O. 业务管理 - 工期日程节点 ---
+class ScheduleNode(Base):
+    """工期与活动时间轴节点表"""
+    __tablename__ = "schedule_nodes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    item_type = Column(String, nullable=False)  # 'product' (商品工期) / 'event' (展会活动) / 'other' (其他日程)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
+    platform_name = Column(String, nullable=True) # 当 stage_name == '开售' 时的平台名称 (如: 微店, Booth)
+    title = Column(String, nullable=False)        # 节点标题 (如: "水母睡裙2.0 - 样衣打版" 或 "I-Doll 78 参展")
+    stage_name = Column(String, nullable=True)     # 阶段预设: 企划设计/样衣打版/产前样衣/大货投产/预售开启/预售结束/大货出货/质检入库/开售/其他
+    custom_stage = Column(String, nullable=True)  # 当 stage_name == '其他' 时的自定义阶段文本
+    
+    # 具体日期 (可选，用于同旬内精确定序)
+    start_date = Column(String, nullable=True)    # 格式: "2026-08-15"
+    end_date = Column(String, nullable=True)      # 格式: "2026-09-02"
+    
+    # 开始时间
+    start_year = Column(Integer, nullable=False, default=2026)
+    start_month = Column(Integer, nullable=False, default=1)  # 1-12
+    start_period = Column(String, nullable=False, default="early")  # 'early'(上旬), 'mid'(中旬), 'late'(下旬)
+    
+    # 结束时间 (单旬节点与开始相同)
+    end_year = Column(Integer, nullable=False, default=2026)
+    end_month = Column(Integer, nullable=False, default=1)
+    end_period = Column(String, nullable=False, default="early")
+    
+    status = Column(String, nullable=False, default="planned")  # 'planned'(计划中), 'in_progress'(进行中), 'completed'(已完成), 'delayed'(延期)
+    color = Column(String, nullable=True, default="violet")      # 主题色 (violet, blue, emerald, amber, rose, cyan, etc.)
+    remarks = Column(String, nullable=True)                     # 详细备注说明
+    created_at = Column(DateTime, default=datetime.now)
+
+    product = relationship("Product")

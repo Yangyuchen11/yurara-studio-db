@@ -18,6 +18,7 @@ from .pages.offline_sales import offline_sales_page
 from .pages.sales_order import sales_order_page
 from .pages.presale import presale_page
 from .pages.platforms import platforms_page
+from .pages.schedule import schedule_page
 from .state.auth_state import AuthState
 from .state.app_state import AppState
 from .state.finance_state import FinanceState
@@ -34,6 +35,7 @@ from .state.presale_state import PresaleState
 from .state.product_state import ProductState
 from .state.platforms_state import PlatformsState
 from .state.memo_state import MemoState
+from .state.schedule_state import ScheduleState
 
 # ---- 全局样式 ----
 
@@ -111,6 +113,24 @@ body {
     background-color: var(--violet-3) !important;
     color: var(--violet-11) !important;
     font-weight: 500 !important;
+}
+
+/* 时间轴全景甘特图水平滑动条加粗与突出显示 (14px 宽大易点) */
+.timeline-scrollbar-container::-webkit-scrollbar {
+    height: 14px !important;
+}
+.timeline-scrollbar-container::-webkit-scrollbar-track {
+    background: rgba(148, 163, 184, 0.15) !important;
+    border-radius: 8px !important;
+}
+.timeline-scrollbar-container::-webkit-scrollbar-thumb {
+    background: rgba(139, 92, 246, 0.6) !important;
+    border-radius: 8px !important;
+    border: 2px solid transparent !important;
+    background-clip: content-box !important;
+}
+.timeline-scrollbar-container::-webkit-scrollbar-thumb:hover {
+    background: rgba(139, 92, 246, 0.9) !important;
 }
 
 /* 平滑滚动 */
@@ -234,6 +254,7 @@ app.add_page(platforms_page, route="/platforms", title="销售平台管理 | Yur
 app.add_page(inventory_page, route="/inventory", title="库存管理 | Yurara Studio", on_load=[AuthState.check_auth, InventoryState.load_inventory_page, MemoState.load_memos])
 app.add_page(asset_page, route="/asset", title="固定资产 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, AssetState.load_asset_page, MemoState.load_memos])
 app.add_page(consumable_page, route="/consumable", title="其他资产 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, ConsumableState.load_consumable_page, MemoState.load_memos])
+app.add_page(schedule_page, route="/schedule", title="工期日程管理 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, ScheduleState.on_page_load, MemoState.load_memos])
 
 # 默认根路由：跳转到财务（需登录）
 def index_page() -> rx.Component:
