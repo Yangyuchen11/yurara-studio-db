@@ -18,12 +18,11 @@ from ..components.editable_table import data_card, custom_form_field
 
 PERIOD_NAMES = ["上", "中", "下"]
 
-SLOT_WIDTH_NUM = 100
-SLOT_WIDTH = "100px"
-MONTH_WIDTH = "300px"
-GRID_WIDTH = "3600px"
+SLOT_WIDTH = "var(--timeline-slot-width, 100px)"
+MONTH_WIDTH = "calc(var(--timeline-slot-width, 100px) * 3)"
+GRID_WIDTH = "calc(var(--timeline-slot-width, 100px) * 36)"
 HEADER_LEFT_WIDTH = "240px"
-TOTAL_WIDTH = "3840px"
+TOTAL_WIDTH = "calc(240px + var(--timeline-slot-width, 100px) * 36)"
 
 
 def metric_card(label: str, value: rx.Var, icon: str, color_scheme: str = "gray", badge_text: str = "") -> rx.Component:
@@ -140,9 +139,9 @@ def node_gantt_bar(node: ScheduleNodeItem, is_compact: bool = False) -> rx.Compo
                 ),
                 style={
                     "position": "absolute",
-                    "left": f"{node.left_px}px",
-                    "width": f"{node.width_px}px",
-                    "minWidth": "52px",
+                    "left": f"calc({node.left_px}px * var(--timeline-zoom, 1))",
+                    "width": f"calc({node.width_px}px * var(--timeline-zoom, 1))",
+                    "minWidth": "46px",
                     "top": "3px",
                     "height": "26px" if is_compact else "32px",
                     "borderRadius": "6px",
@@ -219,7 +218,7 @@ def timeline_clickable_grid_bg(lane_type: str, product_id: int, lane_title: str)
                     "cursor": "cell",
                 },
                 position="absolute",
-                left=f"{ci * SLOT_WIDTH_NUM}px",
+                left=f"calc(var(--timeline-slot-width, 100px) * {ci})",
                 top="0",
                 z_index="1",
                 on_click=ScheduleState.open_add_dialog_for_slot(lane_type, product_id, ci + 1, lane_title),
@@ -500,8 +499,14 @@ def timeline_gantt_matrix() -> rx.Component:
     return rx.box(
         rx.box(
             rx.vstack(
-                month_header,
-                sub_period_header,
+                rx.box(
+                    month_header,
+                    sub_period_header,
+                    id="timeline-header-area",
+                    class_name="timeline-header-area",
+                    title="💡 提示：在表头区域滚动鼠标滚轮可直接左右缩放时间轴，双击可重置为 100%",
+                    width=TOTAL_WIDTH,
+                ),
                 rx.cond(
                     ScheduleState.lanes.length() > 0,
                     rx.vstack(
@@ -526,6 +531,8 @@ def timeline_gantt_matrix() -> rx.Component:
             ),
             id="timeline-scroll-container",
             style={
+                "--timeline-slot-width": "100px",
+                "--timeline-zoom": "1",
                 "overflowX": "auto",
                 "width": "100%",
                 "scrollbarWidth": "auto",
@@ -1004,6 +1011,12 @@ def node_modal_dialog() -> rx.Component:
     )
 
 
+def timeline_zoom_script() -> rx.Component:
+    """引入时间轴鼠标滚轮左右平滑定点缩放及交互脚本"""
+    return rx.script(src="/timeline_zoom.js")
+
+
+
 def schedule_page() -> rx.Component:
     """工期日程管理主页面入口"""
     return page_layout(
@@ -1022,7 +1035,7 @@ def schedule_page() -> rx.Component:
             # 2. 近期关键节点看板 (280px 宽度，固定 76px 高度)
             upcoming_milestones_banner(),
 
-            # 3. 过滤控制与动作栏
+            # 3. 过滤控制、缩放调节与动作栏
             rx.card(
                 rx.hstack(
                     # 年份切换
@@ -1051,9 +1064,59 @@ def schedule_page() -> rx.Component:
                         on_change=ScheduleState.set_filter_type,
                         size="1",
                     ),
+                    rx.divider(orientation="vertical", size="2"),
+                    # 缩放调节控制组
+                    rx.hstack(
+                        rx.text("缩放:", size="1", color=rx.color("slate", 9), weight="medium"),
+                        rx.tooltip(
+                            rx.icon_button(
+                                rx.icon("zoom_out", size=13),
+                                size="1",
+                                variant="surface",
+                                color_scheme="gray",
+                                on_click=ScheduleState.zoom_out,
+                                title="缩小时间轴",
+                            ),
+                            content="缩小时间轴 (Ctrl + 滚轮向下)",
+                        ),
+                        rx.tooltip(
+                            rx.badge(
+                                "100%",
+                                id="timeline-zoom-text",
+                                size="1",
+                                color_scheme="violet",
+                                variant="surface",
+                                cursor="pointer",
+                                on_click=ScheduleState.zoom_reset,
+                            ),
+                            content="当前缩放比例 (点击重置为 100%)",
+                        ),
+                        rx.tooltip(
+                            rx.icon_button(
+                                rx.icon("zoom_in", size=13),
+                                size="1",
+                                variant="surface",
+                                color_scheme="gray",
+                                on_click=ScheduleState.zoom_in,
+                                title="放大时间轴",
+                            ),
+                            content="放大时间轴 (Ctrl + 滚轮向上)",
+                        ),
+                        rx.segmented_control.root(
+                            rx.segmented_control.item("50%", value="50"),
+                            rx.segmented_control.item("100%", value="100"),
+                            rx.segmented_control.item("150%", value="150"),
+                            rx.segmented_control.item("200%", value="200"),
+                            value=ScheduleState.zoom_preset_value,
+                            on_change=ScheduleState.set_zoom_preset,
+                            size="1",
+                        ),
+                        spacing="2",
+                        align="center",
+                    ),
                     rx.spacer(),
                     # 提示信息
-                    rx.text("💡 提示：按住 Shift 滚轮或拖动下方滑块可横向滑动；左侧项目栏已锁定固定；点击节点左右箭头微调平移", size="1", color=rx.color("slate", 9)),
+                    rx.text("💡 提示：按住 Ctrl/Alt + 滚轮 或在表头区域滚动即可平滑缩放；Shift + 滚轮横向平移", size="1", color=rx.color("slate", 9)),
                     # 右上角新增商品工期/日程按钮
                     rx.button(
                         rx.icon("folder_plus", size=14),
@@ -1071,7 +1134,7 @@ def schedule_page() -> rx.Component:
                 width="100%",
             ),
 
-            # 4. 36 旬甘特图时间轴矩阵 (左侧列 position: sticky 绝对固定，按具体日期像素精准分割)
+            # 4. 36 旬甘特图时间轴矩阵 (左侧列 position: sticky 绝对固定，支持鼠标滚轮平滑定点缩放)
             timeline_gantt_matrix(),
 
             # 5. 弹窗 1: 业务项目/活动创建弹窗 (满宽美化)
@@ -1079,6 +1142,9 @@ def schedule_page() -> rx.Component:
 
             # 6. 弹窗 2: 单个节点详情与创建/编辑弹窗 (满宽美化，支持独立勾选不设置具体日期)
             node_modal_dialog(),
+
+            # 7. 客户端缩放脚本注入
+            timeline_zoom_script(),
 
             spacing="4",
             width="100%",

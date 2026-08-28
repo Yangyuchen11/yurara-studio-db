@@ -108,6 +108,7 @@ class ScheduleState(AppState):
     # ===================== 状态变量 =====================
     selected_year: int = 2026
     filter_type: str = "all"  # 'all', 'product', 'event', 'other'
+    zoom_preset_value: str = "100"  # 当前缩放预设高亮 ('50','100','150','200')
     filter_product_id: int = 0
     
     # 展开/折叠状态记录 (默认全部展开)
@@ -522,20 +523,47 @@ class ScheduleState(AppState):
         """页面每次加载/进入时调用：拉取数据并自动平滑居左滚动到当前月份"""
         c_y, c_m, c_p = get_current_period()
         self.curr_year, self.curr_month, self.curr_period = c_y, c_m, c_p
-        target_left = max(0, (c_m - 1) * 300)
         yield ScheduleState.load_schedule_data()
         yield rx.call_script(
             f"""
             function scrollGanttTimeline() {{
+                if (window.initTimelineZoom) window.initTimelineZoom();
                 const el = document.getElementById('timeline-scroll-container');
                 if (el) {{
-                    el.scrollTo({{ left: {target_left}, behavior: 'smooth' }});
+                    const rawSlot = getComputedStyle(el).getPropertyValue('--timeline-slot-width');
+                    const slotWidth = parseFloat(rawSlot) || 100;
+                    const targetLeft = Math.max(0, ({c_m} - 1) * slotWidth * 3);
+                    el.scrollTo({{ left: targetLeft, behavior: 'smooth' }});
                 }}
             }}
             setTimeout(scrollGanttTimeline, 150);
-            setTimeout(scrollGanttTimeline, 400);
+            setTimeout(scrollGanttTimeline, 450);
             """
         )
+
+    # ===================== 缩放控制事件 =====================
+
+    @rx.event
+    def zoom_in(self):
+        """放大时间轴"""
+        yield rx.call_script("window.timelineZoomIn && window.timelineZoomIn()")
+
+    @rx.event
+    def zoom_out(self):
+        """缩小时间轴"""
+        yield rx.call_script("window.timelineZoomOut && window.timelineZoomOut()")
+
+    @rx.event
+    def zoom_reset(self):
+        """重置时间轴缩放到 100%"""
+        yield rx.call_script("window.timelineZoomReset && window.timelineZoomReset()")
+
+    @rx.event
+    def set_zoom_preset(self, val: str | list[str]):
+        """切换预设缩放比例"""
+        v = val[0] if isinstance(val, list) else str(val)
+        self.zoom_preset_value = v
+        yield rx.call_script(f"window.timelineSetZoom && window.timelineSetZoom({v})")
 
     # ===================== 交互与控制事件 =====================
 

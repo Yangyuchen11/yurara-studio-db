@@ -162,3 +162,16 @@ input:-webkit-autofill:active {
 .rt-AccordionContent .rt-TableCell {
     text-align: left !important;
 }
+
+/* 时间轴全景甘特图容器与动态缩放支持 */
+.timeline-scrollbar-container {
+    --timeline-slot-width: 100px;
+    --timeline-zoom: 1;
+    will-change: scroll-position;
+}
+
+/* 时间轴表头区域鼠标样式与悬停提示 */
+.timeline-header-area {
+    cursor: default;
+    user-select: none;
+}

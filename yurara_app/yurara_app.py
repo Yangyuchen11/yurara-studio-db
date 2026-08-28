@@ -222,6 +222,9 @@ app = rx.App(
         "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap",
         "/global.css"
     ],
+    head_components=[
+        rx.script(src="/timeline_zoom.js"),
+    ],
     theme=rx.theme(
         appearance="dark",
         accent_color="violet",
@@ -230,6 +233,7 @@ app = rx.App(
         scaling="95%",
     )
 )
+
 
 # ---- 路由注册 ----
 
