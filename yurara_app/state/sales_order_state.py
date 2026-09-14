@@ -670,7 +670,7 @@ class SalesOrderState(AppState):
 
             # Check stock for physical warning
             warning_msgs = []
-            valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动"]
+            valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动", "返修后入库"]
             
             final_unit = self.cart_net_unit_price
             items_data = []

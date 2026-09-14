@@ -412,7 +412,7 @@ class SalesOrderService:
         product_ids_to_sync = set()
         success_count = 0
         errors = []
-        valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动"]
+        valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动", "返修后入库"]
         
         for o_id in order_ids:
             if o_id in processed_order_ids:
@@ -584,7 +584,7 @@ class SalesOrderService:
 
         ship_date = ship_date or date.today()
         product_ids_to_sync = set()
-        valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动"]
+        valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动", "返修后入库"]
 
         # 如果是预售订单且绑定了尾款，查找所有绑定同一尾款单的关联定金单（合并发货联动）
         orders_to_ship = [order]
@@ -1260,7 +1260,7 @@ class SalesOrderService:
         parsed_orders = []
         consumed_stock_in_excel = {}
 
-        valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动"]
+        valid_reasons = ["入库", "出库", "退货入库", "发货撤销", "验收完成入库", "其他入库", "库存移动", "返修后入库"]
 
         def safe_str(val):
             return "" if pd.isna(val) else str(val).strip()

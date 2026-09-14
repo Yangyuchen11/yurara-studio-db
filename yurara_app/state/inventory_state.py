@@ -18,6 +18,7 @@ class PartStatRow(BaseModel):
     req_qty: int = 1
     produced: int = 0
     inspecting: int = 0
+    repaired: int = 0
     actual_qty: int = 0
     calculable_sets: int = 0
 
@@ -27,6 +28,7 @@ class InventoryStatRow(BaseModel):
     planned: int = 0
     produced: int = 0
     inspecting: int = 0
+    repaired: int = 0
     actual_qty: int = 0
     status: str = "🟢 有货"
     parts: list[PartStatRow] = []
@@ -124,6 +126,8 @@ class InventoryState(AppState):
         return [
             StockLogReason.IN_INSPECT, 
             StockLogReason.INSPECT_COMPLETED, 
+            StockLogReason.REPAIR_OUT,
+            StockLogReason.REPAIR_IN,
             StockLogReason.OTHER_IN, 
             StockLogReason.OUT_STOCK, 
             StockLogReason.TRANSFER
@@ -138,8 +142,16 @@ class InventoryState(AppState):
         return self.op_type == StockLogReason.OUT_STOCK
 
     @rx.var
+    def is_repair_in(self) -> bool:
+        return self.op_type == StockLogReason.REPAIR_IN
+
+    @rx.var
+    def is_repair_out(self) -> bool:
+        return (self.is_out_mode and self.op_out_mode == "验收不合格返修") or self.op_type == StockLogReason.REPAIR_OUT
+
+    @rx.var
     def is_consumable_out(self) -> bool:
-        return self.is_out_mode and self.op_out_mode == "消耗"
+        return self.is_out_mode and self.op_out_mode == "消耗" and not self.is_repair_out
 
     @rx.var
     def active_variants(self) -> list[str]:
@@ -344,6 +356,7 @@ class InventoryState(AppState):
             planned = s.get("planned", 0)
             produced = s.get("produced", 0)
             inspecting = s.get("inspecting", 0)
+            repaired = s.get("repaired", 0)
             actual_qty = s.get("actual", 0)
             status = "🔴 缺货" if actual_qty <= 0 else "🟢 有货"
             
@@ -353,6 +366,7 @@ class InventoryState(AppState):
                     req_qty=pt.get("req_qty", 1),
                     produced=pt.get("produced", 0),
                     inspecting=pt.get("inspecting", 0),
+                    repaired=pt.get("repaired", 0),
                     actual_qty=pt.get("actual_qty", 0),
                     calculable_sets=pt.get("calculable_sets", 0)
                 )
@@ -364,6 +378,7 @@ class InventoryState(AppState):
                 planned=planned,
                 produced=produced,
                 inspecting=inspecting,
+                repaired=repaired,
                 actual_qty=actual_qty,
                 status=status,
                 parts=parts_list
@@ -430,7 +445,11 @@ class InventoryState(AppState):
     @rx.event
     def set_op_date(self, val: str): self.op_date = val
     @rx.event
-    def set_op_type(self, val: str): self.op_type = val
+    def set_op_type(self, val: str):
+        self.op_type = val
+        if val == StockLogReason.REPAIR_OUT:
+            self.op_out_mode = "验收不合格返修"
+
     @rx.event
     def set_op_wh_name(self, name: str):
         self.op_wh_name = name
@@ -464,8 +483,11 @@ class InventoryState(AppState):
     def set_op_part(self, val: str): self.op_part = val
     @rx.event
     def set_op_qty(self, val: str):
-        try: self.op_qty = int(val) if val else 1
-        except ValueError: pass
+        try:
+            parsed = int(val) if val else 1
+            self.op_qty = max(1, parsed)
+        except ValueError:
+            pass
     @rx.event
     def set_op_out_mode(self, val: str): self.op_out_mode = val
     @rx.event
@@ -501,6 +523,8 @@ class InventoryState(AppState):
         """提交库存移动记录，并在库存/财务中产生多方联动。"""
         if not self.selected_product_name:
             return rx.toast("请先选择商品", level="error")
+        if self.op_qty <= 0:
+            return rx.toast("变动数量必须大于 0", level="error")
         if self.is_consumable_out and not self.op_cons_content.strip():
             return rx.toast("请填写【消耗内容】", level="error")
             

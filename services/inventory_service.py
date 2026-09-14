@@ -165,7 +165,7 @@ class InventoryService:
             w_id = l.warehouse_id
             if w_id not in wh_dict: continue
 
-            if l.reason not in [StockLogReason.INSPECT_COMPLETED, StockLogReason.OTHER_IN, StockLogReason.OUT_STOCK, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.TRANSFER]:
+            if l.reason not in [StockLogReason.INSPECT_COMPLETED, StockLogReason.OTHER_IN, StockLogReason.OUT_STOCK, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.TRANSFER, StockLogReason.REPAIR_IN]:
                 continue
 
             delta = l.change_amount
@@ -206,6 +206,7 @@ class InventoryService:
             part_actual = {p: 0 for p in parts_req}
             part_inspecting = {p: 0 for p in parts_req}
             part_produced = {p: 0 for p in parts_req}
+            part_repaired = {p: 0 for p in parts_req}
 
             v_logs = [l for l in logs if l.variant == v_name]
             for l in v_logs:
@@ -223,6 +224,15 @@ class InventoryService:
                         part_inspecting[p] -= d
                         part_actual[p] += d
                         part_produced[p] += d 
+                    elif l.reason == StockLogReason.REPAIR_OUT:
+                        loss_qty = abs(d)
+                        part_inspecting[p] -= loss_qty
+                        part_repaired[p] += loss_qty
+                    elif l.reason == StockLogReason.REPAIR_IN:
+                        in_qty = abs(d)
+                        part_repaired[p] -= in_qty
+                        part_actual[p] += in_qty
+                        part_produced[p] += in_qty
                     elif l.reason == StockLogReason.OUT_STOCK:
                         # consumption_only 模式下，跳过非消耗出库（售出、其他）
                         if consumption_only and not (l.note and "消耗" in l.note):
@@ -240,6 +250,7 @@ class InventoryService:
             actual_sets = calc_sets(part_actual)
             inspecting_sets = calc_sets(part_inspecting)
             produced_sets = calc_sets(part_produced)
+            repaired_sets = calc_sets(part_repaired)
 
             excess = {}
             parts_detail = []
@@ -250,6 +261,7 @@ class InventoryService:
                 
                 p_produced = part_produced[p]
                 p_inspecting = part_inspecting[p]
+                p_repaired = part_repaired[p]
                 p_actual = part_actual[p]
                 p_sets = max(0, p_actual // req) if req > 0 else 0
                 parts_detail.append({
@@ -257,6 +269,7 @@ class InventoryService:
                     "req_qty": req,
                     "produced": p_produced,
                     "inspecting": p_inspecting,
+                    "repaired": p_repaired,
                     "actual_qty": p_actual,
                     "calculable_sets": p_sets
                 })
@@ -265,6 +278,7 @@ class InventoryService:
                 "planned": c.quantity,
                 "produced": produced_sets,
                 "inspecting": inspecting_sets,
+                "repaired": repaired_sets,
                 "actual": actual_sets,
                 "excess": excess,
                 "parts": parts_detail
@@ -277,10 +291,74 @@ class InventoryService:
                                is_set=True, part_name=None,
                                out_type=None, cons_cat=None, cons_content=None):
         
+        if quantity <= 0:
+            raise ValueError("变动数量必须大于 0！")
+
         target_prod_obj = self.db.query(Product).filter(Product.id == product_id).first()
-        
-        # ✨ 核心修复：执行出库和库存移动前的严格库存校验
-        if move_type in [StockLogReason.OUT_STOCK, StockLogReason.TRANSFER]:
+        if not target_prod_obj:
+            raise ValueError(f"商品不存在 (ID: {product_id})")
+
+        # ✨ 1. 验收完成入库 & 返修出库：严格防负数校验（校验入库验收中余量）
+        is_repair_out = (move_type == StockLogReason.REPAIR_OUT or (move_type == StockLogReason.OUT_STOCK and out_type == "验收不合格返修"))
+        if move_type == StockLogReason.INSPECT_COMPLETED or is_repair_out:
+            stats = self.get_stock_overview_by_parts(product_id, product_name)
+            v_stat = stats.get(variant)
+            if not v_stat:
+                raise ValueError(f"商品【{product_name}】不存在款式【{variant}】")
+
+            parts_dict = {p["part_name"]: p for p in v_stat.get("parts", [])}
+            action_name = "返修出库" if is_repair_out else "验收完成入库"
+
+            if is_set:
+                for pt_name, pt_info in parts_dict.items():
+                    req_needed = quantity * pt_info.get("req_qty", 1)
+                    avail_inspect = pt_info.get("inspecting", 0)
+                    if avail_inspect < req_needed:
+                        raise ValueError(
+                            f"入库验收数量不足！【{product_name}-{variant}】部件【{pt_name}】在验收中仅剩 {avail_inspect} 件，"
+                            f"无法执行{action_name} {req_needed} 件（{quantity}套）的操作。"
+                        )
+            else:
+                pt_info = parts_dict.get(part_name)
+                if not pt_info:
+                    raise ValueError(f"款式【{variant}】不存在部件【{part_name}】")
+                avail_inspect = pt_info.get("inspecting", 0)
+                if avail_inspect < quantity:
+                    raise ValueError(
+                        f"入库验收数量不足！【{product_name}-{variant}】部件【{part_name}】在验收中仅剩 {avail_inspect} 件，"
+                        f"无法执行{action_name} {quantity} 件的操作。"
+                    )
+
+        # ✨ 1.5 返修后入库：严格防负数校验（校验返修出库中的余量）
+        if move_type == StockLogReason.REPAIR_IN:
+            stats = self.get_stock_overview_by_parts(product_id, product_name)
+            v_stat = stats.get(variant)
+            if not v_stat:
+                raise ValueError(f"商品【{product_name}】不存在款式【{variant}】")
+
+            parts_dict = {p["part_name"]: p for p in v_stat.get("parts", [])}
+            if is_set:
+                for pt_name, pt_info in parts_dict.items():
+                    req_needed = quantity * pt_info.get("req_qty", 1)
+                    avail_repaired = pt_info.get("repaired", 0)
+                    if avail_repaired < req_needed:
+                        raise ValueError(
+                            f"返修数量不足！【{product_name}-{variant}】部件【{pt_name}】在返修出库中仅剩 {avail_repaired} 件，"
+                            f"无法执行返修后入库 {req_needed} 件（{quantity}套）的操作。"
+                        )
+            else:
+                pt_info = parts_dict.get(part_name)
+                if not pt_info:
+                    raise ValueError(f"款式【{variant}】不存在部件【{part_name}】")
+                avail_repaired = pt_info.get("repaired", 0)
+                if avail_repaired < quantity:
+                    raise ValueError(
+                        f"返修数量不足！【{product_name}-{variant}】部件【{part_name}】在返修出库中仅剩 {avail_repaired} 件，"
+                        f"无法执行返修后入库 {quantity} 件的操作。"
+                    )
+
+        # ✨ 2. 出库和移库前的严格物理仓库库存校验
+        if (move_type == StockLogReason.OUT_STOCK and not is_repair_out) or move_type == StockLogReason.TRANSFER:
             wh_details = self.get_warehouse_inventory_details()
             
             # 解析本次操作具体扣减了哪些底层部件
@@ -305,13 +383,12 @@ class InventoryService:
                 if avail_qty < req_qty:
                     raise ValueError(f"库存不足！【{product_name}-{variant}】的部件【{pt}】在【{wh_name}】中仅剩 {avail_qty} 件，无法执行扣减 {req_qty} 件的操作。")
 
-        actual_change_amt = -quantity if move_type == StockLogReason.OUT_STOCK else quantity
-
         if move_type == StockLogReason.TRANSFER:
             if warehouse_id == to_warehouse_id:
                 raise ValueError("移出仓库和移入仓库不能相同！")
             
             # 优化流水备注：清晰写明移入移出仓库的名字
+            wh_details = self.get_warehouse_inventory_details()
             wh_from_name = wh_details.get(warehouse_id, {}).get("name", "未分配仓库")
             wh_to_name = self.db.query(Warehouse).filter(Warehouse.id == to_warehouse_id).first().name if to_warehouse_id else "未分配仓库"
             
@@ -327,7 +404,20 @@ class InventoryService:
             ))
             msg = "库存移动成功（生成一进一出两笔记录）"
 
+        elif is_repair_out:
+            # ✨ 验收不合格返修出库：扣减入库验收中数量
+            self.db.add(InventoryLog(
+                product_name=product_name, variant=variant, change_amount=-quantity,
+                reason=StockLogReason.REPAIR_OUT,
+                note=f"验收不合格返修 | {remark}" if remark else "验收不合格返修",
+                is_other_out=True, date=date_obj,
+                warehouse_id=warehouse_id, part_name=None if is_set else part_name
+            ))
+            unit_label = "套" if is_set else "件"
+            msg = f"【{product_name}-{variant}】验收不合格返修出库已录入，已从入库验收中扣减 {quantity} {unit_label}"
+
         elif move_type == StockLogReason.OUT_STOCK:
+            actual_change_amt = -quantity
             target_cost_id = None
             if out_type == "消耗" and target_prod_obj and is_set:
                 new_cost = CostItem(
@@ -363,6 +453,15 @@ class InventoryService:
                 warehouse_id=warehouse_id, part_name=None if is_set else part_name
             ))
             msg = "验收完成入库已录入"
+
+        elif move_type == StockLogReason.REPAIR_IN:
+            self.db.add(InventoryLog(
+                product_name=product_name, variant=variant, change_amount=quantity,
+                reason=StockLogReason.REPAIR_IN, note=remark or "返修后入库", date=date_obj,
+                warehouse_id=warehouse_id, part_name=None if is_set else part_name
+            ))
+            unit_label = "套" if is_set else "件"
+            msg = f"【{product_name}-{variant}】返修后入库已录入，已增加仓储实物并减扣返修中数量 {quantity} {unit_label}"
             
         elif move_type == StockLogReason.OTHER_IN:
             self.db.add(InventoryLog(
@@ -405,6 +504,54 @@ class InventoryService:
 
         if getattr(log_to_del, 'order_id', None):
             raise ValueError("拒绝操作：此库存变动由【销售订单】自动生成。为了保证数据一致性，请前往【线上销售管理】模块撤销发货或删除该订单。")
+
+        target_prod = self.db.query(Product).filter(Product.name == log_to_del.product_name).first()
+
+        # ✨ 防负数预检：模拟删除该记录后，验证是否会导致验收中或仓储实物变为负数
+        if target_prod and log_to_del.reason in [
+            StockLogReason.IN_INSPECT, StockLogReason.INSPECT_COMPLETED,
+            StockLogReason.REPAIR_OUT, StockLogReason.REPAIR_IN,
+            StockLogReason.OTHER_IN, StockLogReason.IN_STOCK
+        ]:
+            all_logs = self.db.query(InventoryLog).filter(
+                InventoryLog.product_name == target_prod.name,
+                InventoryLog.id != log_to_del.id
+            ).all()
+
+            for c in target_prod.colors:
+                parts_req = {p.part_name: p.quantity for p in c.parts} or {"整套": 1}
+                sim_inspecting = {p: 0 for p in parts_req}
+                sim_repaired = {p: 0 for p in parts_req}
+                sim_actual = {p: 0 for p in parts_req}
+
+                v_logs = [l for l in all_logs if l.variant == c.color_name]
+                for l in v_logs:
+                    delta = l.change_amount
+                    l_parts = [(l.part_name, delta)] if (l.part_name and l.part_name in parts_req) else [(p, delta * req) for p, req in parts_req.items()]
+                    for p, d in l_parts:
+                        if l.reason == StockLogReason.IN_INSPECT:
+                            sim_inspecting[p] += d
+                        elif l.reason == StockLogReason.INSPECT_COMPLETED:
+                            sim_inspecting[p] -= d
+                            sim_actual[p] += d
+                        elif l.reason == StockLogReason.REPAIR_OUT:
+                            sim_inspecting[p] -= abs(d)
+                            sim_repaired[p] += abs(d)
+                        elif l.reason == StockLogReason.REPAIR_IN:
+                            sim_repaired[p] -= abs(d)
+                            sim_actual[p] += abs(d)
+                        elif l.reason == StockLogReason.OUT_STOCK:
+                            sim_actual[p] += d
+                        elif l.reason in [StockLogReason.OTHER_IN, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.TRANSFER]:
+                            sim_actual[p] += d
+
+                for p in parts_req:
+                    if sim_inspecting[p] < 0:
+                        raise ValueError(f"无法删除该记录：删除后将导致【{target_prod.name}-{c.color_name}】部件【{p}】的验收中数量变为负数 ({sim_inspecting[p]})！请先撤销后续的扣减记录。")
+                    if sim_repaired[p] < 0:
+                        raise ValueError(f"无法删除该记录：删除后将导致【{target_prod.name}-{c.color_name}】部件【{p}】的返修中数量变为负数 ({sim_repaired[p]})！请先撤销后续的返修后入库记录。")
+                    if sim_actual[p] < 0 and log_to_del.reason in [StockLogReason.INSPECT_COMPLETED, StockLogReason.REPAIR_IN, StockLogReason.OTHER_IN, StockLogReason.IN_STOCK]:
+                        raise ValueError(f"无法删除该记录：删除后将导致【{target_prod.name}-{c.color_name}】部件【{p}】的仓储实物数量变为负数 ({sim_actual[p]})！请先撤销后续的出库或移库记录。")
 
         msg_list = []
         target_prod = self.db.query(Product).filter(Product.name == log_to_del.product_name).first()

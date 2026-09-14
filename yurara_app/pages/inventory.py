@@ -31,6 +31,14 @@ def render_part_row(part) -> rx.Component:
         ),
         rx.table.cell(rx.text(part.produced.to_string(), size="1", color=rx.color("slate", 11))),
         rx.table.cell(rx.text(part.inspecting.to_string(), size="1", color=rx.color("slate", 11))),
+        rx.table.cell(
+            rx.text(
+                part.repaired.to_string(),
+                size="1",
+                color=rx.cond(part.repaired > 0, rx.color("ruby", 10), rx.color("slate", 11)),
+                weight=rx.cond(part.repaired > 0, "bold", "normal")
+            )
+        ),
         rx.table.cell(rx.text(part.actual_qty.to_string(), size="1", weight="bold")),
     )
 
@@ -95,6 +103,7 @@ def render_progress_row(row) -> rx.Component:
                                         rx.table.column_header_cell("单套配比", size="1"),
                                         rx.table.column_header_cell("部件入库完成(件)", size="1"),
                                         rx.table.column_header_cell("部件验收中(件)", size="1"),
+                                        rx.table.column_header_cell("部件返修出库(件)", size="1"),
                                         rx.table.column_header_cell("部件仓储实物(件)", size="1"),
                                     )
                                 ),
@@ -148,7 +157,29 @@ def render_log_row(row) -> rx.Component:
                 color=rx.cond(row.change_qty > 0, "green", "red")
             )
         ),
-        rx.table.cell(rx.badge(row.reason, color_scheme="blue", variant="soft")),
+        rx.table.cell(
+            rx.badge(
+                row.reason,
+                color_scheme=rx.cond(
+                    row.reason == StockLogReason.REPAIR_OUT,
+                    "ruby",
+                    rx.cond(
+                        row.reason == StockLogReason.REPAIR_IN,
+                        "teal",
+                        rx.cond(
+                            row.reason == StockLogReason.IN_INSPECT,
+                            "violet",
+                            rx.cond(
+                                row.reason == StockLogReason.INSPECT_COMPLETED,
+                                "green",
+                                "blue"
+                            )
+                        )
+                    )
+                ),
+                variant="soft"
+            )
+        ),
         rx.table.cell(rx.text(row.note, size="1", color=rx.color("slate", 10))),
         rx.table.cell(
             rx.hstack(
@@ -368,6 +399,7 @@ def movement_entry_form() -> rx.Component:
                         value=InventoryState.op_qty.to_string(),
                         on_change=InventoryState.set_op_qty,
                         type="number",
+                        min="1",
                         size="2"
                     )
                 ),
@@ -417,6 +449,19 @@ def movement_entry_form() -> rx.Component:
                 rx.fragment()
             ),
             
+            # 返修后入库提示
+            rx.cond(
+                InventoryState.is_repair_in,
+                rx.callout(
+                    "💡【返修后入库】：记录返修后再次验收合格的大货或散件。将增加目标仓库实物库存与生产完成数，并同时减扣【部件返修出库】中的余量。",
+                    icon="check-circle",
+                    color_scheme="teal",
+                    variant="soft",
+                    size="1"
+                ),
+                rx.fragment()
+            ),
+
             # 出库特有消耗记账表单
             rx.cond(
                 InventoryState.is_out_mode,
@@ -424,12 +469,23 @@ def movement_entry_form() -> rx.Component:
                     custom_form_field(
                         "出库分类模式",
                         rx.radio(
-                            ["消耗", "其他"],
+                            ["消耗", "其他", "验收不合格返修"],
                             value=InventoryState.op_out_mode,
                             on_change=InventoryState.set_op_out_mode,
                             direction="row",
                             spacing="3"
                         )
+                    ),
+                    rx.cond(
+                        InventoryState.is_repair_out,
+                        rx.callout(
+                            "💡【验收不合格返修】：将直接减扣【入库验收中】的数量，不影响仓库物理实物。返修完毕后可通过【入库验收】重新入库。",
+                            icon="wrench",
+                            color_scheme="ruby",
+                            variant="soft",
+                            size="1"
+                        ),
+                        rx.fragment()
                     ),
                     rx.cond(
                         InventoryState.is_consumable_out,

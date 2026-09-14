@@ -617,6 +617,7 @@ def _sync_recalculate_report(
                 from constants import StockLogReason
                 valid_stock_reasons = [
                     StockLogReason.INSPECT_COMPLETED, 
+                    StockLogReason.REPAIR_IN,
                     StockLogReason.OTHER_IN, 
                     StockLogReason.OUT_STOCK, 
                     StockLogReason.IN_STOCK, 
@@ -638,6 +639,7 @@ def _sync_recalculate_report(
                 from constants import StockLogReason
                 is_production_in = (log.change_amount > 0 and log.reason in [
                     StockLogReason.INSPECT_COMPLETED, 
+                    StockLogReason.REPAIR_IN,
                     StockLogReason.IN_STOCK, 
                     StockLogReason.EXTRA_PROD,
                     "成品入库", "生产入库", "打样入库" # 兼容极早期历史数据

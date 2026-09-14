@@ -72,6 +72,8 @@ class StockLogReason:
     OUT_STOCK = "出库"
     IN_INSPECT = "入库验收"
     INSPECT_COMPLETED = "验收完成入库"
+    REPAIR_OUT = "验收不合格返修"
+    REPAIR_IN = "返修后入库"
     OTHER_IN = "其他入库"
     TRANSFER = "库存移动"
     
