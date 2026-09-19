@@ -839,8 +839,10 @@ def movement_entry_form() -> rx.Component:
                             placeholder="请说明冲销原因，如：质检复核多录2套，据实冲销扣减...",
                             value=InventoryState.op_remark,
                             on_change=InventoryState.set_op_remark,
-                            size="2"
-                        )
+                            size="2",
+                            width="100%",
+                        ),
+                        width="100%",
                     ),
                     rx.button(
                         "⚠️ 提交入库冲销 (单项核准纠错)",
@@ -858,11 +860,12 @@ def movement_entry_form() -> rx.Component:
                     rx.cond(
                         InventoryState.is_repair_in,
                         rx.callout(
-                            "💡【返修后入库】：记录返修后再次验收合格的大货或散件。将增加目标仓库实物库存与生产完成数，并同时减扣【部件返修出库】中的余量。",
-                            icon="check_check",
+                            "💡【返修后入库】：专用于之前进行过【验收不合格返修】的货物在修好后重新回仓入库。系统将增加物理仓储实物并自动从“返修出库中”减扣对应数量，同时计入累计生产完成数。",
+                            icon="info",
                             color_scheme="teal",
                             variant="soft",
-                            size="1"
+                            size="1",
+                            width="100%"
                         ),
                         rx.fragment()
                     ),
@@ -938,9 +941,12 @@ def movement_entry_form() -> rx.Component:
                             placeholder="本批次操作补充备注，如：工厂大货到货、调拨运单号等...",
                             value=InventoryState.op_remark,
                             on_change=InventoryState.set_op_remark,
-                            size="2"
-                        )
+                            size="2",
+                            width="100%",
+                        ),
+                        width="100%",
                     ),
+
                     
                     # 批量填报矩阵卡片
                     rx.card(
