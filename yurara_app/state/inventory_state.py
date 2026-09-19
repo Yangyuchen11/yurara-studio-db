@@ -5,6 +5,7 @@
 """
 import reflex as rx
 from datetime import date
+import math
 from pydantic import BaseModel
 from typing import Any
 from ..state.app_state import AppState
@@ -81,6 +82,18 @@ class InventoryState(AppState):
     stats: list[InventoryStatRow] = []
     excess_parts: list[ExcessPartRow] = []
     logs: list[InventoryLogModel] = []
+
+    # 物理变动日志筛选与分页状态
+    log_filter_product: str = "全部商品"
+    log_filter_variant: str = "全部款式"
+    log_filter_spec: str = "全部规格"
+    log_filter_warehouse: str = "全部仓库"
+    log_filter_reason: str = "全部类型"
+    log_filter_date_start: str = ""
+    log_filter_date_end: str = ""
+    log_filter_search: str = ""
+    log_page_index: int = 1
+    log_page_size: int = 20
     
     # 仓库列表和仓库库存明细
     warehouses: list[WarehouseItemModel] = []
@@ -115,6 +128,14 @@ class InventoryState(AppState):
     edit_log_id: int = 0
     edit_log_note: str = ""
 
+    # 超计划入库拦截对话框状态
+    is_overprod_dialog_open: bool = False
+    overprod_variant: str = ""
+    overprod_planned: int = 0
+    overprod_current: int = 0
+    overprod_incoming: int = 0
+    overprod_diff: int = 0
+
     # ===================== 计算属性 =====================
 
     @rx.var
@@ -126,12 +147,17 @@ class InventoryState(AppState):
         return [
             StockLogReason.IN_INSPECT, 
             StockLogReason.INSPECT_COMPLETED, 
+            StockLogReason.INSPECT_REVERSAL,
             StockLogReason.REPAIR_OUT,
             StockLogReason.REPAIR_IN,
             StockLogReason.OTHER_IN, 
             StockLogReason.OUT_STOCK, 
             StockLogReason.TRANSFER
         ]
+
+    @rx.var
+    def is_reversal_mode(self) -> bool:
+        return self.op_type == StockLogReason.INSPECT_REVERSAL
 
     @rx.var
     def is_transfer_mode(self) -> bool:
@@ -147,11 +173,11 @@ class InventoryState(AppState):
 
     @rx.var
     def is_repair_out(self) -> bool:
-        return (self.is_out_mode and self.op_out_mode == "验收不合格返修") or self.op_type == StockLogReason.REPAIR_OUT
+        return self.op_type == StockLogReason.REPAIR_OUT
 
     @rx.var
     def is_consumable_out(self) -> bool:
-        return self.is_out_mode and self.op_out_mode == "消耗" and not self.is_repair_out
+        return self.is_out_mode and self.op_out_mode == "消耗"
 
     @rx.var
     def active_variants(self) -> list[str]:
@@ -214,6 +240,33 @@ class InventoryState(AppState):
         return PRODUCT_COST_CATEGORIES
 
     @rx.var
+    def transfer_source_available(self) -> int:
+        """当前选中的移出源仓库中，选定款式的当前可用成套/散件物理库存"""
+        if not self.op_wh_name or not self.op_variant or not self.selected_product_name:
+            return 0
+        wh = next((w for w in self.warehouses if w.name == self.op_wh_name), None)
+        if not wh:
+            return 0
+        rows = self.warehouse_stocks.get(str(wh.id), [])
+        target_part = self.op_part if (not self.op_is_set and self.has_parts_for_color) else "整套"
+        for r in rows:
+            if r.product_name == self.selected_product_name and r.variant == self.op_variant:
+                if target_part == "整套":
+                    if r.part_name == "整套":
+                        return r.physical_qty
+                    return r.assemblable_sets
+                elif r.part_name == target_part:
+                    return r.physical_qty
+        return 0
+
+    @rx.var
+    def is_transfer_qty_excess(self) -> bool:
+        """检查移库录入数量是否超出源仓库可用库存"""
+        if not self.is_transfer_mode:
+            return False
+        return self.op_qty > self.transfer_source_available
+
+    @rx.var
     def has_excess_parts(self) -> bool:
         return len(self.excess_parts) > 0
 
@@ -230,6 +283,125 @@ class InventoryState(AppState):
     def wh_filter_display(self) -> str:
         """当前筛选显示名（用于 select 控件的 value）。"""
         return self.wh_filter_product if self.wh_filter_product else "全部商品"
+
+    # --- 物理变动日志筛选与分页计算属性 ---
+    @rx.var
+    def log_product_options(self) -> list[str]:
+        """物理流水商品筛选选项（全部商品 + 所有商品名）"""
+        return ["全部商品"] + self.product_names
+
+    @rx.var
+    def log_variant_options(self) -> list[str]:
+        """根据当前筛选的商品动态计算款式选项"""
+        if self.log_filter_product and self.log_filter_product != "全部商品":
+            variants = sorted(list({l.variant for l in self.logs if l.product_name == self.log_filter_product and l.variant}))
+        else:
+            variants = sorted(list({l.variant for l in self.logs if l.variant}))
+        return ["全部款式"] + variants
+
+    @rx.var
+    def log_spec_options(self) -> list[str]:
+        return ["全部规格", "仅成套", "仅散件"]
+
+    @rx.var
+    def log_warehouse_options(self) -> list[str]:
+        whs = sorted(list({l.warehouse_name for l in self.logs if l.warehouse_name}))
+        return ["全部仓库"] + whs
+
+    @rx.var
+    def log_reason_options(self) -> list[str]:
+        reasons = sorted(list({l.reason for l in self.logs if l.reason}))
+        return ["全部类型"] + reasons
+
+    @rx.var
+    def log_page_size_options(self) -> list[str]:
+        return ["20", "50", "100"]
+
+    @rx.var
+    def log_page_size_str(self) -> str:
+        return str(self.log_page_size)
+
+    @rx.var
+    def filtered_logs(self) -> list[InventoryLogModel]:
+        res = []
+        search = self.log_filter_search.strip().lower()
+
+        for l in self.logs:
+            # 1. 商品筛选
+            if self.log_filter_product and self.log_filter_product != "全部商品":
+                if l.product_name != self.log_filter_product:
+                    continue
+
+            # 2. 款式筛选
+            if self.log_filter_variant and self.log_filter_variant != "全部款式":
+                if l.variant != self.log_filter_variant:
+                    continue
+
+            # 3. 规格筛选
+            if self.log_filter_spec == "仅成套":
+                if l.part_display != "[成套]":
+                    continue
+            elif self.log_filter_spec == "仅散件":
+                if l.part_display == "[成套]":
+                    continue
+
+            # 4. 仓库筛选
+            if self.log_filter_warehouse and self.log_filter_warehouse != "全部仓库":
+                if l.warehouse_name != self.log_filter_warehouse:
+                    continue
+
+            # 5. 变动类型筛选
+            if self.log_filter_reason and self.log_filter_reason != "全部类型":
+                if l.reason != self.log_filter_reason:
+                    continue
+
+            # 6. 关键字匹配搜索 (支持匹配日期、说明/备注、商品名、款式、部件、仓库、类型)
+            if search:
+                matched = (
+                    search in (l.date or "").lower() or
+                    search in (l.note or "").lower() or
+                    search in (l.product_name or "").lower() or
+                    search in (l.variant or "").lower() or
+                    search in (l.part_display or "").lower() or
+                    search in (l.warehouse_name or "").lower() or
+                    search in (l.reason or "").lower()
+                )
+                if not matched:
+                    continue
+
+            res.append(l)
+
+        return res
+
+    @rx.var
+    def paginated_logs(self) -> list[InventoryLogModel]:
+        start = (self.log_page_index - 1) * self.log_page_size
+        end = start + self.log_page_size
+        return self.filtered_logs[start:end]
+
+    @rx.var
+    def log_total_pages(self) -> int:
+        n = len(self.filtered_logs)
+        if n == 0:
+            return 1
+        return math.ceil(n / self.log_page_size)
+
+    @rx.var
+    def log_page_info(self) -> str:
+        total = len(self.filtered_logs)
+        if total == 0:
+            return "0 条记录"
+        start = (self.log_page_index - 1) * self.log_page_size + 1
+        end = min(self.log_page_index * self.log_page_size, total)
+        return f"显示第 {start}-{end} 条，共 {total} 条记录 (第 {self.log_page_index}/{self.log_total_pages} 页)"
+
+    @rx.var
+    def log_has_prev_page(self) -> bool:
+        return self.log_page_index > 1
+
+    @rx.var
+    def log_has_next_page(self) -> bool:
+        return self.log_page_index < self.log_total_pages
 
     # ===================== 事件处理器 =====================
 
@@ -399,7 +571,7 @@ class InventoryState(AppState):
         logs_list = []
         whs_map = {w.id: w.name for w in service.db.query(Warehouse).all()}
         
-        logs = service.get_recent_logs(prod.name)
+        logs = service.get_recent_logs(product_name=None, limit=None)
         for l in logs:
             part_display = l.part_name if l.part_name else "[成套]"
             wh_display = whs_map.get(l.warehouse_id, "未分配仓库")
@@ -447,8 +619,6 @@ class InventoryState(AppState):
     @rx.event
     def set_op_type(self, val: str):
         self.op_type = val
-        if val == StockLogReason.REPAIR_OUT:
-            self.op_out_mode = "验收不合格返修"
 
     @rx.event
     def set_op_wh_name(self, name: str):
@@ -520,7 +690,20 @@ class InventoryState(AppState):
 
     @rx.event
     def submit_inventory_movement(self):
-        """提交库存移动记录，并在库存/财务中产生多方联动。"""
+        """提交库存移动记录（事件处理器，零入参兼容 on_click 触发）。"""
+        return self._do_submit_inventory_movement(force_overprod=False)
+
+    @rx.event
+    def close_overprod_dialog(self):
+        self.is_overprod_dialog_open = False
+
+    @rx.event
+    def confirm_overprod_movement(self):
+        self.is_overprod_dialog_open = False
+        return self._do_submit_inventory_movement(force_overprod=True)
+
+    def _do_submit_inventory_movement(self, force_overprod: bool = False):
+        """实际执行库存移动提交逻辑。"""
         if not self.selected_product_name:
             return rx.toast("请先选择商品", level="error")
         if self.op_qty <= 0:
@@ -532,7 +715,24 @@ class InventoryState(AppState):
         try:
             service = InventoryService(db)
             prod = db.query(Product).filter(Product.name == self.selected_product_name).first()
-            
+            if not prod:
+                return rx.toast("商品不存在", level="error")
+
+            # 💡 防人为失误：超计划生产入库强提醒拦截
+            if self.op_type == StockLogReason.INSPECT_COMPLETED and not force_overprod:
+                stats_map = service.get_stock_overview_by_parts(prod.id, prod.name)
+                v_stat = stats_map.get(self.op_variant, {})
+                planned = v_stat.get("planned", 0)
+                produced = v_stat.get("produced", 0)
+                if planned > 0 and (produced + self.op_qty) > planned:
+                    self.overprod_variant = self.op_variant
+                    self.overprod_planned = planned
+                    self.overprod_current = produced
+                    self.overprod_incoming = self.op_qty
+                    self.overprod_diff = (produced + self.op_qty) - planned
+                    self.is_overprod_dialog_open = True
+                    return
+
             # 转化仓库 id
             wh_id = int(self.op_wh_id) if self.op_wh_id and self.op_wh_id != "None" else None
             to_wh_id = int(self.op_to_wh_id) if self.op_to_wh_id and self.op_to_wh_id != "None" else None
@@ -668,3 +868,96 @@ class InventoryState(AppState):
             return rx.toast(f"更新失败: {e}", level="error")
         finally:
             db.close()
+
+    # --- 物理变动日志筛选与分页事件处理器 ---
+    @rx.event
+    def set_log_filter_product(self, val: str):
+        self.log_filter_product = val
+        self.log_filter_variant = "全部款式"
+        self.log_page_index = 1
+
+    @rx.event
+    def set_log_filter_variant(self, val: str):
+        self.log_filter_variant = val
+        self.log_page_index = 1
+
+    @rx.event
+    def set_log_filter_spec(self, val: str):
+        self.log_filter_spec = val
+        self.log_page_index = 1
+
+    @rx.event
+    def set_log_filter_warehouse(self, val: str):
+        self.log_filter_warehouse = val
+        self.log_page_index = 1
+
+    @rx.event
+    def set_log_filter_reason(self, val: str):
+        self.log_filter_reason = val
+        self.log_page_index = 1
+
+    @rx.event
+    def set_log_filter_date_start(self, val: str):
+        self.log_filter_date_start = val
+        self.log_page_index = 1
+
+    @rx.event
+    def set_log_filter_date_end(self, val: str):
+        self.log_filter_date_end = val
+        self.log_page_index = 1
+
+    @rx.event
+    def set_log_filter_search(self, val: str):
+        self.log_filter_search = val
+        self.log_page_index = 1
+
+    @rx.event
+    def set_log_page_size(self, val: str):
+        try:
+            self.log_page_size = int(val)
+        except ValueError:
+            self.log_page_size = 20
+        self.log_page_index = 1
+
+    @rx.event
+    def log_prev_page(self):
+        if self.log_page_index > 1:
+            self.log_page_index -= 1
+
+    @rx.event
+    def log_next_page(self):
+        if self.log_page_index < self.log_total_pages:
+            self.log_page_index += 1
+
+    @rx.event
+    def log_first_page(self):
+        self.log_page_index = 1
+
+    @rx.event
+    def log_last_page(self):
+        self.log_page_index = self.log_total_pages
+
+    @rx.event
+    def reset_log_filters(self):
+        self.log_filter_product = "全部商品"
+        self.log_filter_variant = "全部款式"
+        self.log_filter_spec = "全部规格"
+        self.log_filter_warehouse = "全部仓库"
+        self.log_filter_reason = "全部类型"
+        self.log_filter_date_start = ""
+        self.log_filter_date_end = ""
+        self.log_filter_search = ""
+        self.log_page_index = 1
+
+    @rx.event
+    def filter_current_product_logs(self):
+        if self.selected_product_name:
+            self.log_filter_product = self.selected_product_name
+            self.log_filter_variant = "全部款式"
+            self.log_page_index = 1
+
+    @rx.event
+    def filter_all_products_logs(self):
+        self.log_filter_product = "全部商品"
+        self.log_filter_variant = "全部款式"
+        self.log_page_index = 1

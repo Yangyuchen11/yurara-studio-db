@@ -117,11 +117,14 @@ class InventoryService:
     def get_product_colors(self, product_id):
         return self.db.query(ProductColor).filter(ProductColor.product_id == product_id).order_by(ProductColor.id.asc()).all()
 
-    def get_recent_logs(self, product_name=None, limit=100):
+    def get_recent_logs(self, product_name=None, limit=None):
         query = self.db.query(InventoryLog)
         if product_name:
             query = query.filter(InventoryLog.product_name == product_name)
-        return query.order_by(InventoryLog.id.desc()).limit(limit).all()
+        query = query.order_by(InventoryLog.id.desc())
+        if limit is not None:
+            query = query.limit(limit)
+        return query.all()
 
     # ================= 3. 仓库管理 =================
     def get_all_warehouses(self):
@@ -165,7 +168,7 @@ class InventoryService:
             w_id = l.warehouse_id
             if w_id not in wh_dict: continue
 
-            if l.reason not in [StockLogReason.INSPECT_COMPLETED, StockLogReason.OTHER_IN, StockLogReason.OUT_STOCK, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.TRANSFER, StockLogReason.REPAIR_IN]:
+            if l.reason not in [StockLogReason.INSPECT_COMPLETED, StockLogReason.INSPECT_REVERSAL, StockLogReason.OTHER_IN, StockLogReason.OUT_STOCK, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.TRANSFER, StockLogReason.REPAIR_IN]:
                 continue
 
             delta = l.change_amount
@@ -220,7 +223,7 @@ class InventoryService:
                 for p, d in l_parts:
                     if l.reason == StockLogReason.IN_INSPECT:
                         part_inspecting[p] += d
-                    elif l.reason == StockLogReason.INSPECT_COMPLETED:
+                    elif l.reason in [StockLogReason.INSPECT_COMPLETED, StockLogReason.INSPECT_REVERSAL]:
                         part_inspecting[p] -= d
                         part_actual[p] += d
                         part_produced[p] += d 
@@ -299,7 +302,7 @@ class InventoryService:
             raise ValueError(f"商品不存在 (ID: {product_id})")
 
         # ✨ 1. 验收完成入库 & 返修出库：严格防负数校验（校验入库验收中余量）
-        is_repair_out = (move_type == StockLogReason.REPAIR_OUT or (move_type == StockLogReason.OUT_STOCK and out_type == "验收不合格返修"))
+        is_repair_out = (move_type == StockLogReason.REPAIR_OUT)
         if move_type == StockLogReason.INSPECT_COMPLETED or is_repair_out:
             stats = self.get_stock_overview_by_parts(product_id, product_name)
             v_stat = stats.get(variant)
@@ -357,8 +360,8 @@ class InventoryService:
                         f"无法执行返修后入库 {quantity} 件的操作。"
                     )
 
-        # ✨ 2. 出库和移库前的严格物理仓库库存校验
-        if (move_type == StockLogReason.OUT_STOCK and not is_repair_out) or move_type == StockLogReason.TRANSFER:
+        # ✨ 2. 出库、移库及入库冲销前的严格物理仓库库存校验
+        if (move_type == StockLogReason.OUT_STOCK and not is_repair_out) or move_type == StockLogReason.TRANSFER or move_type == StockLogReason.INSPECT_REVERSAL:
             wh_details = self.get_warehouse_inventory_details()
             
             # 解析本次操作具体扣减了哪些底层部件
@@ -382,6 +385,21 @@ class InventoryService:
                 avail_qty = stock_in_wh.get(pt, 0)
                 if avail_qty < req_qty:
                     raise ValueError(f"库存不足！【{product_name}-{variant}】的部件【{pt}】在【{wh_name}】中仅剩 {avail_qty} 件，无法执行扣减 {req_qty} 件的操作。")
+
+        # ✨ 2.5 入库冲销前的累计生产数校验
+        if move_type == StockLogReason.INSPECT_REVERSAL:
+            stats = self.get_stock_overview_by_parts(product_id, product_name)
+            v_stat = stats.get(variant, {})
+            avail_produced = v_stat.get("produced", 0)
+            if is_set:
+                if avail_produced < quantity:
+                    raise ValueError(f"冲销失败！款式【{product_name}-{variant}】累计生产入库仅有 {avail_produced} 套，无法冲销 {quantity} 套。")
+            else:
+                parts_dict = {p["part_name"]: p for p in v_stat.get("parts", [])}
+                pt_info = parts_dict.get(part_name)
+                pt_prod = pt_info.get("produced", 0) if pt_info else 0
+                if pt_prod < quantity:
+                    raise ValueError(f"冲销失败！款式【{product_name}-{variant}】部件【{part_name}】累计生产入库仅有 {pt_prod} 件，无法冲销 {quantity} 件。")
 
         if move_type == StockLogReason.TRANSFER:
             if warehouse_id == to_warehouse_id:
@@ -454,6 +472,17 @@ class InventoryService:
             ))
             msg = "验收完成入库已录入"
 
+        elif move_type == StockLogReason.INSPECT_REVERSAL:
+            self.db.add(InventoryLog(
+                product_name=product_name, variant=variant, change_amount=-quantity,
+                reason=StockLogReason.INSPECT_REVERSAL,
+                note=f"入库冲销 | {remark}" if remark else "入库冲销",
+                date=date_obj,
+                warehouse_id=warehouse_id, part_name=None if is_set else part_name
+            ))
+            unit_label = "套" if is_set else "件"
+            msg = f"【{product_name}-{variant}】入库冲销已成功录入，已扣减实物与生产数各 {quantity} {unit_label}，并恢复验收中余量"
+
         elif move_type == StockLogReason.REPAIR_IN:
             self.db.add(InventoryLog(
                 product_name=product_name, variant=variant, change_amount=quantity,
@@ -509,7 +538,7 @@ class InventoryService:
 
         # ✨ 防负数预检：模拟删除该记录后，验证是否会导致验收中或仓储实物变为负数
         if target_prod and log_to_del.reason in [
-            StockLogReason.IN_INSPECT, StockLogReason.INSPECT_COMPLETED,
+            StockLogReason.IN_INSPECT, StockLogReason.INSPECT_COMPLETED, StockLogReason.INSPECT_REVERSAL,
             StockLogReason.REPAIR_OUT, StockLogReason.REPAIR_IN,
             StockLogReason.OTHER_IN, StockLogReason.IN_STOCK
         ]:
@@ -531,7 +560,7 @@ class InventoryService:
                     for p, d in l_parts:
                         if l.reason == StockLogReason.IN_INSPECT:
                             sim_inspecting[p] += d
-                        elif l.reason == StockLogReason.INSPECT_COMPLETED:
+                        elif l.reason in [StockLogReason.INSPECT_COMPLETED, StockLogReason.INSPECT_REVERSAL]:
                             sim_inspecting[p] -= d
                             sim_actual[p] += d
                         elif l.reason == StockLogReason.REPAIR_OUT:

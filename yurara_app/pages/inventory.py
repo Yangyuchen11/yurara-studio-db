@@ -164,15 +164,19 @@ def render_log_row(row) -> rx.Component:
                     row.reason == StockLogReason.REPAIR_OUT,
                     "ruby",
                     rx.cond(
-                        row.reason == StockLogReason.REPAIR_IN,
-                        "teal",
+                        row.reason == StockLogReason.INSPECT_REVERSAL,
+                        "amber",
                         rx.cond(
-                            row.reason == StockLogReason.IN_INSPECT,
-                            "violet",
+                            row.reason == StockLogReason.REPAIR_IN,
+                            "teal",
                             rx.cond(
-                                row.reason == StockLogReason.INSPECT_COMPLETED,
-                                "green",
-                                "blue"
+                                row.reason == StockLogReason.IN_INSPECT,
+                                "violet",
+                                rx.cond(
+                                    row.reason == StockLogReason.INSPECT_COMPLETED,
+                                    "green",
+                                    "blue"
+                                )
                             )
                         )
                     )
@@ -199,6 +203,202 @@ def render_log_row(row) -> rx.Component:
                 spacing="1"
             )
         )
+    )
+
+
+def log_filter_toolbar() -> rx.Component:
+    """物理仓储移动变动明细表的多维列名组合筛选工具栏（整齐单行布局）"""
+    return rx.flex(
+        custom_form_field(
+            "商品",
+            rx.select.root(
+                rx.select.trigger(width="100%"),
+                rx.select.content(
+                    rx.foreach(InventoryState.log_product_options, lambda item: rx.select.item(item, value=item)),
+                    position="popper",
+                    side="bottom",
+                ),
+                value=InventoryState.log_filter_product,
+                on_change=InventoryState.set_log_filter_product,
+                size="1",
+            ),
+            width="140px",
+            flex_shrink="0",
+        ),
+        custom_form_field(
+            "款式",
+            rx.select.root(
+                rx.select.trigger(width="100%"),
+                rx.select.content(
+                    rx.foreach(InventoryState.log_variant_options, lambda item: rx.select.item(item, value=item)),
+                    position="popper",
+                    side="bottom",
+                ),
+                value=InventoryState.log_filter_variant,
+                on_change=InventoryState.set_log_filter_variant,
+                size="1",
+            ),
+            width="105px",
+            flex_shrink="0",
+        ),
+        custom_form_field(
+            "规格/模式",
+            rx.select.root(
+                rx.select.trigger(width="100%"),
+                rx.select.content(
+                    rx.foreach(InventoryState.log_spec_options, lambda item: rx.select.item(item, value=item)),
+                    position="popper",
+                    side="bottom",
+                ),
+                value=InventoryState.log_filter_spec,
+                on_change=InventoryState.set_log_filter_spec,
+                size="1",
+            ),
+            width="100px",
+            flex_shrink="0",
+        ),
+        custom_form_field(
+            "所属仓库",
+            rx.select.root(
+                rx.select.trigger(width="100%"),
+                rx.select.content(
+                    rx.foreach(InventoryState.log_warehouse_options, lambda item: rx.select.item(item, value=item)),
+                    position="popper",
+                    side="bottom",
+                ),
+                value=InventoryState.log_filter_warehouse,
+                on_change=InventoryState.set_log_filter_warehouse,
+                size="1",
+            ),
+            width="115px",
+            flex_shrink="0",
+        ),
+        custom_form_field(
+            "变动类型",
+            rx.select.root(
+                rx.select.trigger(width="100%"),
+                rx.select.content(
+                    rx.foreach(InventoryState.log_reason_options, lambda item: rx.select.item(item, value=item)),
+                    position="popper",
+                    side="bottom",
+                ),
+                value=InventoryState.log_filter_reason,
+                on_change=InventoryState.set_log_filter_reason,
+                size="1",
+            ),
+            width="125px",
+            flex_shrink="0",
+        ),
+        custom_form_field(
+            "关键字匹配搜索",
+            rx.input(
+                placeholder="输入日期/说明/商品/款式/单号...",
+                value=InventoryState.log_filter_search,
+                on_change=InventoryState.set_log_filter_search,
+                size="1",
+                width="100%",
+            ),
+            flex="1",
+            min_width="160px",
+        ),
+        rx.hstack(
+            rx.button(
+                rx.hstack(rx.icon("rotate_ccw", size=12), rx.text("重置", size="1"), spacing="1", align="center"),
+                variant="soft",
+                color_scheme="gray",
+                size="1",
+                on_click=InventoryState.reset_log_filters,
+            ),
+            rx.button(
+                rx.hstack(rx.icon("box", size=12), rx.text("仅当前商品", size="1"), spacing="1", align="center"),
+                variant="soft",
+                color_scheme="violet",
+                size="1",
+                on_click=InventoryState.filter_current_product_logs,
+            ),
+            rx.button(
+                rx.hstack(rx.icon("layers", size=12), rx.text("全部商品", size="1"), spacing="1", align="center"),
+                variant="soft",
+                color_scheme="blue",
+                size="1",
+                on_click=InventoryState.filter_all_products_logs,
+            ),
+            spacing="1",
+            align="center",
+            padding_bottom="1px",
+            flex_shrink="0",
+        ),
+        wrap="nowrap",
+        spacing="2",
+        align="end",
+        width="100%",
+        padding_y="0.25rem",
+        overflow_x="auto",
+    )
+
+
+def log_pagination_bar() -> rx.Component:
+    """物理仓储日志分页控制栏"""
+    return rx.hstack(
+        # 左侧：每页条数
+        rx.hstack(
+            rx.text("每页显示", size="1", color=rx.color("slate", 10)),
+            rx.select.root(
+                rx.select.trigger(width="70px"),
+                rx.select.content(
+                    rx.foreach(InventoryState.log_page_size_options, lambda s: rx.select.item(s, value=s)),
+                    position="popper",
+                    side="top",
+                ),
+                value=InventoryState.log_page_size_str,
+                on_change=InventoryState.set_log_page_size,
+                size="1",
+            ),
+            rx.text("条", size="1", color=rx.color("slate", 10)),
+            spacing="1",
+            align="center",
+        ),
+        rx.spacer(),
+        # 中间：分页指示与翻页按钮
+        rx.hstack(
+            rx.button(
+                "首页",
+                on_click=InventoryState.log_first_page,
+                disabled=~InventoryState.log_has_prev_page,
+                size="1",
+                variant="soft",
+                color_scheme="gray",
+            ),
+            rx.button(
+                "上一页",
+                on_click=InventoryState.log_prev_page,
+                disabled=~InventoryState.log_has_prev_page,
+                size="1",
+                variant="soft",
+            ),
+            rx.badge(InventoryState.log_page_info, size="1", variant="surface", color_scheme="violet"),
+            rx.button(
+                "下一页",
+                on_click=InventoryState.log_next_page,
+                disabled=~InventoryState.log_has_next_page,
+                size="1",
+                variant="soft",
+            ),
+            rx.button(
+                "末页",
+                on_click=InventoryState.log_last_page,
+                disabled=~InventoryState.log_has_next_page,
+                size="1",
+                variant="soft",
+                color_scheme="gray",
+            ),
+            spacing="2",
+            align="center",
+        ),
+        spacing="3",
+        align="center",
+        width="100%",
+        padding_y="0.5rem",
     )
 
 
@@ -324,59 +524,100 @@ def movement_entry_form() -> rx.Component:
                 spacing="3",
                 width="100%"
             ),
-            rx.grid(
-                rx.cond(
-                    InventoryState.is_transfer_mode,
-                    custom_form_field(
-                        "移出仓库 (源库)",
-                        rx.select.root(
-    rx.select.trigger(),
-    rx.select.content(
-        rx.foreach(InventoryState.transfer_warehouse_options, lambda item: rx.select.item(item, value=item)),
-        position="popper",
-        side="bottom",
-    ),
-    value=InventoryState.op_wh_name,
-                            on_change=InventoryState.set_op_wh_name,
-                            size="2"
-)
+            # 跨仓调拨向导专区 vs 单仓库选择
+            rx.cond(
+                InventoryState.is_transfer_mode,
+                rx.card(
+                    rx.vstack(
+                        rx.hstack(
+                            rx.icon("arrow_left_right", size=16, color=rx.color("blue", 9)),
+                            rx.text("跨仓调拨一步式向导 (原子划转)", weight="bold", size="2", color=rx.color("blue", 11)),
+                            rx.spacer(),
+                            rx.badge(
+                                rx.fragment("源仓可用: ", InventoryState.transfer_source_available.to_string(), " 套/件"),
+                                color_scheme=rx.cond(InventoryState.is_transfer_qty_excess, "ruby", "teal"),
+                                variant="soft",
+                                size="1"
+                            ),
+                            width="100%",
+                            align="center"
+                        ),
+                        rx.grid(
+                            custom_form_field(
+                                "移出仓库 (源仓扣减)",
+                                rx.select.root(
+                                    rx.select.trigger(),
+                                    rx.select.content(
+                                        rx.foreach(InventoryState.transfer_warehouse_options, lambda item: rx.select.item(item, value=item)),
+                                        position="popper",
+                                        side="bottom",
+                                    ),
+                                    value=InventoryState.op_wh_name,
+                                    on_change=InventoryState.set_op_wh_name,
+                                    size="2"
+                                )
+                            ),
+                            custom_form_field(
+                                "移入仓库 (目的仓增加)",
+                                rx.select.root(
+                                    rx.select.trigger(),
+                                    rx.select.content(
+                                        rx.foreach(InventoryState.warehouse_options, lambda item: rx.select.item(item, value=item)),
+                                        position="popper",
+                                        side="bottom",
+                                    ),
+                                    value=InventoryState.op_to_wh_name,
+                                    on_change=InventoryState.set_op_to_wh_name,
+                                    size="2"
+                                )
+                            ),
+                            columns="2",
+                            spacing="3",
+                            width="100%"
+                        ),
+                        rx.callout(
+                            "💡【防错指引】：调拨为一体化原子事务，系统将自动从源仓扣减实物并向目的仓增加实物，生产完成数保持不变。切勿在目的仓单独录入【验收完成入库】！",
+                            icon="info",
+                            color_scheme="blue",
+                            variant="soft",
+                            size="1",
+                            width="100%"
+                        ),
+                        rx.cond(
+                            InventoryState.is_transfer_qty_excess,
+                            rx.callout(
+                                rx.fragment("⚠️ 调拨录入数量已超出源仓当前实际可用库存（当前源仓仅有 ", InventoryState.transfer_source_available.to_string(), " 套/件）！"),
+                                icon="triangle_alert",
+                                color_scheme="ruby",
+                                variant="soft",
+                                size="1",
+                                width="100%"
+                            ),
+                            rx.fragment()
+                        ),
+                        spacing="2",
+                        width="100%"
                     ),
-                    custom_form_field(
-                        "目标操作仓库",
-                        rx.select.root(
-    rx.select.trigger(),
-    rx.select.content(
-        rx.foreach(InventoryState.warehouse_options, lambda item: rx.select.item(item, value=item)),
-        position="popper",
-        side="bottom",
-    ),
-    value=InventoryState.op_wh_name,
-                            on_change=InventoryState.set_op_wh_name,
-                            size="2"
-)
-                    )
+                    bg=rx.color("blue", 2),
+                    border=f"1px solid {rx.color('blue', 5)}",
+                    padding="0.75rem",
+                    width="100%"
                 ),
-                rx.cond(
-                    InventoryState.is_transfer_mode,
-                    custom_form_field(
-                        "移入仓库 (目的库)",
-                        rx.select.root(
-    rx.select.trigger(),
-    rx.select.content(
-        rx.foreach(InventoryState.warehouse_options, lambda item: rx.select.item(item, value=item)),
-        position="popper",
-        side="bottom",
-    ),
-    value=InventoryState.op_to_wh_name,
-                            on_change=InventoryState.set_op_to_wh_name,
-                            size="2"
-)
+                custom_form_field(
+                    "目标操作仓库",
+                    rx.select.root(
+                        rx.select.trigger(),
+                        rx.select.content(
+                            rx.foreach(InventoryState.warehouse_options, lambda item: rx.select.item(item, value=item)),
+                            position="popper",
+                            side="bottom",
+                        ),
+                        value=InventoryState.op_wh_name,
+                        on_change=InventoryState.set_op_wh_name,
+                        size="2"
                     ),
-                    rx.fragment()
-                ),
-                columns="2",
-                spacing="3",
-                width="100%"
+                    width="100%"
+                )
             ),
             rx.grid(
                 custom_form_field(
@@ -454,7 +695,7 @@ def movement_entry_form() -> rx.Component:
                 InventoryState.is_repair_in,
                 rx.callout(
                     "💡【返修后入库】：记录返修后再次验收合格的大货或散件。将增加目标仓库实物库存与生产完成数，并同时减扣【部件返修出库】中的余量。",
-                    icon="check-circle",
+                    icon="check_check",
                     color_scheme="teal",
                     variant="soft",
                     size="1"
@@ -462,30 +703,45 @@ def movement_entry_form() -> rx.Component:
                 rx.fragment()
             ),
 
-            # 出库特有消耗记账表单
+            # 验收不合格返修专属提示
+            rx.cond(
+                InventoryState.is_repair_out,
+                rx.callout(
+                    "💡【验收不合格返修】：直接减扣【入库验收中】的数量，并计入【部件返修中】。不影响仓库物理实物。返修完毕后可通过【返修后入库】重新入库。",
+                    icon="wrench",
+                    color_scheme="ruby",
+                    variant="soft",
+                    size="1"
+                ),
+                rx.fragment()
+            ),
+
+            # 入库冲销专属提示
+            rx.cond(
+                InventoryState.is_reversal_mode,
+                rx.callout(
+                    "💡【入库冲销 / 红字更正】：专用于纠正【验收完成入库】误录敲错数量的场景。系统将同步扣减目标仓库的物理实物与商品累计生产总数，并将对应数量恢复至【入库验收中】。严禁使用普通出库冲抵入库笔误！",
+                    icon="rotate-ccw",
+                    color_scheme="amber",
+                    variant="soft",
+                    size="1"
+                ),
+                rx.fragment()
+            ),
+
+            # 出库特有消耗记账表单（已彻底移除重复的验收不合格返修）
             rx.cond(
                 InventoryState.is_out_mode,
                 rx.vstack(
                     custom_form_field(
                         "出库分类模式",
                         rx.radio(
-                            ["消耗", "其他", "验收不合格返修"],
+                            ["消耗", "其他"],
                             value=InventoryState.op_out_mode,
                             on_change=InventoryState.set_op_out_mode,
                             direction="row",
                             spacing="3"
                         )
-                    ),
-                    rx.cond(
-                        InventoryState.is_repair_out,
-                        rx.callout(
-                            "💡【验收不合格返修】：将直接减扣【入库验收中】的数量，不影响仓库物理实物。返修完毕后可通过【入库验收】重新入库。",
-                            icon="wrench",
-                            color_scheme="ruby",
-                            variant="soft",
-                            size="1"
-                        ),
-                        rx.fragment()
                     ),
                     rx.cond(
                         InventoryState.is_consumable_out,
@@ -579,6 +835,89 @@ def log_memo_dialog() -> rx.Component:
             max_width="400px"
         ),
         open=InventoryState.is_log_edit_open,
+    )
+
+
+def overproduction_warning_dialog() -> rx.Component:
+    """超计划入库拦截与强提醒对话框"""
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("triangle_alert", size=24, color=rx.color("ruby", 9)),
+                    rx.heading("⚠️ 超计划生产入库风险预警", size="4", weight="bold", color=rx.color("ruby", 11)),
+                    spacing="2",
+                    align="center",
+                ),
+                rx.callout(
+                    rx.vstack(
+                        rx.text(
+                            rx.fragment(
+                                "款式【", InventoryState.overprod_variant, "】计划生产 ",
+                                InventoryState.overprod_planned.to_string(), " 套，当前已累计入库 ",
+                                InventoryState.overprod_current.to_string(), " 套。"
+                            ),
+                            weight="medium",
+                            size="2",
+                        ),
+                        rx.text(
+                            rx.fragment(
+                                "本次尝试录入 ", InventoryState.overprod_incoming.to_string(),
+                                " 套后，累计入库将达到 ",
+                                (InventoryState.overprod_current + InventoryState.overprod_incoming).to_string(),
+                                " 套（超出计划生产数 ", InventoryState.overprod_diff.to_string(), " 套）！"
+                            ),
+                            weight="bold",
+                            size="2",
+                            color=rx.color("ruby", 11),
+                        ),
+                        spacing="1",
+                    ),
+                    icon="info",
+                    color_scheme="ruby",
+                    variant="soft",
+                    width="100%",
+                ),
+                rx.vstack(
+                    rx.text("📌 请仔细核对本次录入的货物来源：", size="2", weight="bold"),
+                    rx.text(
+                        "1. 如果这批货是从其他网点（如中山仓）调拨运抵，请立即【取消】并在变动操作类型中选择【库存移动】，切勿录入【验收完成入库】（否则会导致累计生产数重复计算）！",
+                        size="1",
+                        color=rx.color("slate", 11),
+                    ),
+                    rx.text(
+                        "2. 如果这批货确实是工厂额外完工交付的合格超产大货，请点击下方【确认属于超产，强制录入】。",
+                        size="1",
+                        color=rx.color("slate", 11),
+                    ),
+                    spacing="2",
+                    padding="0.75rem",
+                    border_radius="6px",
+                    bg=rx.color("slate", 2),
+                    width="100%",
+                ),
+                rx.hstack(
+                    rx.button(
+                        "❌ 取消并核对",
+                        variant="soft",
+                        color_scheme="gray",
+                        on_click=InventoryState.close_overprod_dialog,
+                    ),
+                    rx.button(
+                        "⚠️ 确认属于超产，强制录入",
+                        color_scheme="ruby",
+                        on_click=InventoryState.confirm_overprod_movement,
+                    ),
+                    spacing="3",
+                    justify="end",
+                    width="100%",
+                ),
+                spacing="4",
+                width="100%",
+            ),
+            max_width="520px",
+        ),
+        open=InventoryState.is_overprod_dialog_open,
     )
 
 
@@ -765,32 +1104,45 @@ def inventory_page() -> rx.Component:
                                     rx.heading("📜 仓储物理日志与操作审计变动历史", size="4", weight="bold", margin_top="1rem"),
                                     data_card(
                                         "物理仓储移动变动明细",
+                                        # 组合筛选工具栏
+                                        log_filter_toolbar(),
+                                        rx.divider(),
+                                        # 表格与分页
                                         rx.cond(
-                                            InventoryState.logs.length() == 0,
-                                            empty_state("该商品近期没有进行过入库或出库等物理变动操作。"),
-                                            rx.table.root(
-                                                rx.table.header(
-                                                    rx.table.row(
-                                                        rx.table.column_header_cell("日期", size="1"),
-                                                        rx.table.column_header_cell("商品", size="1"),
-                                                        rx.table.column_header_cell("款式", size="1"),
-                                                        rx.table.column_header_cell("规格/模式", size="1"),
-                                                        rx.table.column_header_cell("所属仓库", size="1"),
-                                                        rx.table.column_header_cell("变动量", size="1"),
-                                                        rx.table.column_header_cell("物理类型", size="1"),
-                                                        rx.table.column_header_cell("审计说明(可改)", size="1"),
-                                                        rx.table.column_header_cell("操作", size="1")
-                                                    )
+                                            InventoryState.filtered_logs.length() == 0,
+                                            empty_state("当前筛选条件下未查询到任何物理仓储变动明细。"),
+                                            rx.vstack(
+                                                rx.scroll_area(
+                                                    rx.table.root(
+                                                        rx.table.header(
+                                                            rx.table.row(
+                                                                rx.table.column_header_cell("日期", size="1"),
+                                                                rx.table.column_header_cell("商品", size="1"),
+                                                                rx.table.column_header_cell("款式", size="1"),
+                                                                rx.table.column_header_cell("规格/模式", size="1"),
+                                                                rx.table.column_header_cell("所属仓库", size="1"),
+                                                                rx.table.column_header_cell("变动量", size="1"),
+                                                                rx.table.column_header_cell("物理类型", size="1"),
+                                                                rx.table.column_header_cell("审计说明(可改)", size="1"),
+                                                                rx.table.column_header_cell("操作", size="1")
+                                                            )
+                                                        ),
+                                                        rx.table.body(
+                                                            rx.foreach(
+                                                                InventoryState.paginated_logs,
+                                                                render_log_row
+                                                            )
+                                                        ),
+                                                        size="1",
+                                                        width="100%",
+                                                        variant="ghost"
+                                                    ),
+                                                    type="auto",
+                                                    scrollbars="both",
                                                 ),
-                                                rx.table.body(
-                                                    rx.foreach(
-                                                        InventoryState.logs,
-                                                        render_log_row
-                                                    )
-                                                ),
-                                                size="1",
+                                                log_pagination_bar(),
                                                 width="100%",
-                                                variant="ghost"
+                                                spacing="3"
                                             )
                                         )
                                     ),
@@ -930,8 +1282,9 @@ def inventory_page() -> rx.Component:
                 on_change=InventoryState.select_tab
             ),
             
-            # 日志备注弹出 Dialog
+            # 日志备注弹出 Dialog 与超计划预警拦截 Dialog
             log_memo_dialog(),
+            overproduction_warning_dialog(),
             spacing="4",
             width="100%"
         ),

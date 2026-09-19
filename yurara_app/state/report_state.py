@@ -617,6 +617,7 @@ def _sync_recalculate_report(
                 from constants import StockLogReason
                 valid_stock_reasons = [
                     StockLogReason.INSPECT_COMPLETED, 
+                    StockLogReason.INSPECT_REVERSAL,
                     StockLogReason.REPAIR_IN,
                     StockLogReason.OTHER_IN, 
                     StockLogReason.OUT_STOCK, 
