@@ -68,6 +68,23 @@ class WarehouseStockRow(BaseModel):
     assemblable_sets: int = 0
 
 
+class BatchSetRow(BaseModel):
+    key: str = ""
+    variant: str = ""
+    planned: int = 0
+    stock_display: str = ""
+    input_val: str = ""
+
+
+class BatchPartRow(BaseModel):
+    key: str = ""
+    variant: str = ""
+    part_name: str = ""
+    req_qty: int = 1
+    stock_display: str = ""
+    input_val: str = ""
+
+
 class InventoryState(AppState):
     active_tab: str = "stock"  # "stock" 或 "warehouse"
     product_names: list[str] = []
@@ -118,6 +135,11 @@ class InventoryState(AppState):
     op_cons_cat: str = PRODUCT_COST_CATEGORIES[0]
     op_cons_content: str = ""
     op_remark: str = ""
+    op_auto_inspect_complete: bool = False  # 勾选时一键连贯完成【入库验收】+【验收完成入库】
+
+    # 批量录入矩阵状态
+    batch_mode: str = "set"  # "set"(成套) 或 "part"(散件)
+    batch_inputs: dict[str, str] = {}
     
     # 新建仓库状态
     new_wh_name: str = ""
@@ -174,6 +196,10 @@ class InventoryState(AppState):
     @rx.var
     def is_repair_out(self) -> bool:
         return self.op_type == StockLogReason.REPAIR_OUT
+
+    @rx.var
+    def is_in_inspect_mode(self) -> bool:
+        return self.op_type == StockLogReason.IN_INSPECT
 
     @rx.var
     def is_consumable_out(self) -> bool:
@@ -265,6 +291,111 @@ class InventoryState(AppState):
         if not self.is_transfer_mode:
             return False
         return self.op_qty > self.transfer_source_available
+
+    def _query_wh_stock(self, wh_name: str, variant: str, part_name: str = None) -> tuple[int, int]:
+        """返回指定仓库指定款式/部件的 (physical_qty, assemblable_sets)"""
+        if not wh_name or not self.selected_product_name:
+            return 0, 0
+        wh = next((w for w in self.warehouses if w.name == wh_name), None)
+        if not wh:
+            return 0, 0
+        rows = self.warehouse_stocks.get(str(wh.id), [])
+        prod_rows = [r for r in rows if r.product_name == self.selected_product_name and r.variant == variant]
+        if not prod_rows:
+            return 0, 0
+        if part_name and part_name != "整套":
+            p_row = next((r for r in prod_rows if r.part_name == part_name), None)
+            return (p_row.physical_qty if p_row else 0), 0
+        else:
+            set_row = next((r for r in prod_rows if r.part_name == "整套"), None)
+            if set_row:
+                return set_row.physical_qty, set_row.physical_qty
+            return prod_rows[0].assemblable_sets, prod_rows[0].assemblable_sets
+
+    @rx.var
+    def is_batch_set_mode(self) -> bool:
+        return self.batch_mode == "set"
+
+    @rx.var
+    def batch_set_rows(self) -> list[BatchSetRow]:
+        """成套批量录入矩阵的行数据（实时计算所选仓库在库成套数）"""
+        res = []
+        for s in self.stats:
+            v = s.variant
+            k = f"SET::{v}"
+            inp = self.batch_inputs.get(k, "")
+            if self.is_transfer_mode:
+                src_sets = self._query_wh_stock(self.op_wh_name, v)[1]
+                dst_sets = self._query_wh_stock(self.op_to_wh_name, v)[1]
+                stock_str = f"源: {src_sets}套 -> 目的: {dst_sets}套"
+            else:
+                cur_sets = self._query_wh_stock(self.op_wh_name, v)[1]
+                stock_str = f"当前在库: {cur_sets} 套"
+            res.append(BatchSetRow(
+                key=k,
+                variant=v,
+                planned=s.planned,
+                stock_display=stock_str,
+                input_val=inp
+            ))
+        return res
+
+    @rx.var
+    def batch_part_rows(self) -> list[BatchPartRow]:
+        """散件细分批量录入矩阵的行数据（实时计算所选仓库在库物理件数）"""
+        res = []
+        for s in self.stats:
+            v = s.variant
+            for p in s.parts:
+                k = f"PART::{v}::{p.part_name}"
+                inp = self.batch_inputs.get(k, "")
+                if self.is_transfer_mode:
+                    src_qty = self._query_wh_stock(self.op_wh_name, v, p.part_name)[0]
+                    dst_qty = self._query_wh_stock(self.op_to_wh_name, v, p.part_name)[0]
+                    stock_str = f"源: {src_qty}件 -> 目的: {dst_qty}件"
+                else:
+                    cur_qty = self._query_wh_stock(self.op_wh_name, v, p.part_name)[0]
+                    stock_str = f"当前在库: {cur_qty} 件"
+                res.append(BatchPartRow(
+                    key=k,
+                    variant=v,
+                    part_name=p.part_name,
+                    req_qty=p.req_qty,
+                    stock_display=stock_str,
+                    input_val=inp
+                ))
+        return res
+
+    @rx.var
+    def batch_summary_text(self) -> str:
+        prefix = "SET::" if self.batch_mode == "set" else "PART::"
+        cnt = 0
+        total_q = 0
+        for k, v in self.batch_inputs.items():
+            if k.startswith(prefix) and v and v.strip():
+                try:
+                    q = int(v.strip())
+                    if q > 0:
+                        cnt += 1
+                        total_q += q
+                except ValueError:
+                    pass
+        unit = "套" if self.batch_mode == "set" else "件"
+        if cnt == 0:
+            return "未输入任何数量（留空或 0 自动忽略）"
+        return f"已填报 {cnt} 项，本次将批量原子化写入 {cnt} 笔明细，合计变动 {total_q} {unit}"
+
+    @rx.var
+    def batch_has_valid_inputs(self) -> bool:
+        prefix = "SET::" if self.batch_mode == "set" else "PART::"
+        for k, v in self.batch_inputs.items():
+            if k.startswith(prefix) and v and v.strip():
+                try:
+                    if int(v.strip()) > 0:
+                        return True
+                except ValueError:
+                    pass
+        return False
 
     @rx.var
     def has_excess_parts(self) -> bool:
@@ -689,8 +820,41 @@ class InventoryState(AppState):
             db.close()
 
     @rx.event
+    def set_op_type(self, val: str):
+        self.op_type = val
+        if val != StockLogReason.IN_INSPECT:
+            self.op_auto_inspect_complete = False
+
+    @rx.event
+    def set_op_auto_inspect_complete(self, val: bool):
+        self.op_auto_inspect_complete = val
+
+    @rx.event
+    def set_batch_mode(self, mode: str):
+        if "散件" in mode or mode == "part":
+            self.batch_mode = "part"
+        else:
+            self.batch_mode = "set"
+
+    @rx.event
+    def set_batch_input(self, key: str, val: str):
+        clean_val = "".join([c for c in val if c.isdigit()])
+        new_d = dict(self.batch_inputs)
+        new_d[key] = clean_val
+        self.batch_inputs = new_d
+
+    @rx.event
+    def clear_batch_inputs(self):
+        self.batch_inputs = {}
+
+    @rx.event
+    def submit_batch_inventory_movement(self):
+        """提交多款式/多散件批量库存移动。"""
+        return self._do_submit_batch_inventory_movement(force_overprod=False)
+
+    @rx.event
     def submit_inventory_movement(self):
-        """提交库存移动记录（事件处理器，零入参兼容 on_click 触发）。"""
+        """提交单项库存移动（专用于【入库冲销】单项纠错）。"""
         return self._do_submit_inventory_movement(force_overprod=False)
 
     @rx.event
@@ -700,10 +864,114 @@ class InventoryState(AppState):
     @rx.event
     def confirm_overprod_movement(self):
         self.is_overprod_dialog_open = False
-        return self._do_submit_inventory_movement(force_overprod=True)
+        if self.is_reversal_mode:
+            return self._do_submit_inventory_movement(force_overprod=True)
+        return self._do_submit_batch_inventory_movement(force_overprod=True)
+
+    def _do_submit_batch_inventory_movement(self, force_overprod: bool = False):
+        """实际执行多款式/多散件批量库存移动提交逻辑。"""
+        if not self.selected_product_name:
+            return rx.toast("请先选择商品", level="error")
+        if self.is_consumable_out and not self.op_cons_content.strip():
+            return rx.toast("请填写【消耗内容】", level="error")
+
+        prefix = "SET::" if self.batch_mode == "set" else "PART::"
+        entries = []
+        for k, v in self.batch_inputs.items():
+            if k.startswith(prefix) and v and v.strip():
+                try:
+                    q = int(v.strip())
+                    if q > 0:
+                        if self.batch_mode == "set":
+                            var_n = k.replace("SET::", "")
+                            entries.append({"variant": var_n, "part_name": None, "quantity": q})
+                        else:
+                            parts = k.split("::")
+                            entries.append({"variant": parts[1], "part_name": parts[2], "quantity": q})
+                except ValueError:
+                    pass
+
+        if not entries:
+            return rx.toast("未检测到有效变动数量，请至少在一个款式或部件输入大于 0 的数量！", level="error")
+
+        db = self.get_db()
+        try:
+            service = InventoryService(db)
+            prod = db.query(Product).filter(Product.name == self.selected_product_name).first()
+            if not prod:
+                return rx.toast("商品不存在", level="error")
+
+            # 💡 防人为失误：批量超计划生产入库强提醒拦截 (Scheme 2 批量适配，包含一键验收合格入库)
+            is_check_overprod = (self.op_type == StockLogReason.INSPECT_COMPLETED) or (self.op_type == StockLogReason.IN_INSPECT and self.op_auto_inspect_complete)
+            if is_check_overprod and not force_overprod:
+                stats_map = service.get_stock_overview_by_parts(prod.id, prod.name)
+                var_qty_map = {}
+                for e in entries:
+                    v = e["variant"]
+                    var_qty_map[v] = var_qty_map.get(v, 0) + e["quantity"]
+
+                for v, in_q in var_qty_map.items():
+                    v_stat = stats_map.get(v, {})
+                    planned = v_stat.get("planned", 0)
+                    produced = v_stat.get("produced", 0)
+                    if planned > 0 and (produced + in_q) > planned:
+                        self.overprod_variant = v
+                        self.overprod_planned = planned
+                        self.overprod_current = produced
+                        self.overprod_incoming = in_q
+                        self.overprod_diff = (produced + in_q) - planned
+                        self.is_overprod_dialog_open = True
+                        return
+
+            # 转化仓库 id
+            wh_id = int(self.op_wh_id) if self.op_wh_id and self.op_wh_id != "None" else None
+            to_wh_id = int(self.op_to_wh_id) if self.op_to_wh_id and self.op_to_wh_id != "None" else None
+
+            # 日期对象
+            try:
+                date_val = date.fromisoformat(self.op_date)
+            except Exception:
+                date_val = date.today()
+
+            msg = service.add_batch_inventory_movements(
+                product_id=prod.id,
+                product_name=prod.name,
+                entries=entries,
+                move_type=self.op_type,
+                date_obj=date_val,
+                batch_remark=self.op_remark.strip(),
+                warehouse_id=wh_id,
+                to_warehouse_id=to_wh_id,
+                out_type=self.op_out_mode,
+                cons_cat=self.op_cons_cat,
+                cons_content=self.op_cons_content.strip(),
+                auto_inspect_complete=self.op_auto_inspect_complete
+            )
+
+            service.commit()
+
+            # 清空输入状态
+            self.batch_inputs = {}
+            self.op_remark = ""
+            self.op_cons_content = ""
+
+            # 刷新
+            self.load_current_inventory(service)
+            self.load_warehouse_list(service)
+
+            # 同步缓存
+            from cache_manager import sync_all_caches
+            sync_all_caches()
+
+            return rx.toast(msg)
+        except Exception as e:
+            db.rollback()
+            return rx.toast(f"批量提交失败: {e}", level="error")
+        finally:
+            db.close()
 
     def _do_submit_inventory_movement(self, force_overprod: bool = False):
-        """实际执行库存移动提交逻辑。"""
+        """实际执行单项库存移动提交逻辑。"""
         if not self.selected_product_name:
             return rx.toast("请先选择商品", level="error")
         if self.op_qty <= 0:
@@ -719,7 +987,8 @@ class InventoryState(AppState):
                 return rx.toast("商品不存在", level="error")
 
             # 💡 防人为失误：超计划生产入库强提醒拦截
-            if self.op_type == StockLogReason.INSPECT_COMPLETED and not force_overprod:
+            is_check_overprod = (self.op_type == StockLogReason.INSPECT_COMPLETED) or (self.op_type == StockLogReason.IN_INSPECT and self.op_auto_inspect_complete)
+            if is_check_overprod and not force_overprod:
                 stats_map = service.get_stock_overview_by_parts(prod.id, prod.name)
                 v_stat = stats_map.get(self.op_variant, {})
                 planned = v_stat.get("planned", 0)
@@ -742,23 +1011,37 @@ class InventoryState(AppState):
                 date_val = date.fromisoformat(self.op_date)
             except Exception:
                 date_val = date.today()
+
+            is_set_op = self.op_is_set if self.has_parts_for_color else True
+            actual_part_name = self.op_part if (not self.op_is_set and self.has_parts_for_color) else None
                 
-            msg = service.add_inventory_movement(
-                product_id=prod.id,
-                product_name=prod.name,
-                variant=self.op_variant,
-                quantity=self.op_qty,
-                move_type=self.op_type,
-                date_obj=date_val,
-                remark=self.op_remark.strip(),
-                warehouse_id=wh_id,
-                to_warehouse_id=to_wh_id,
-                is_set=self.op_is_set if self.has_parts_for_color else True,
-                part_name=self.op_part if (not self.op_is_set and self.has_parts_for_color) else None,
-                out_type=self.op_out_mode,
-                cons_cat=self.op_cons_cat,
-                cons_content=self.op_cons_content.strip()
-            )
+            if self.op_type == StockLogReason.IN_INSPECT and self.op_auto_inspect_complete:
+                service.add_inventory_movement(
+                    product_id=prod.id, product_name=prod.name, variant=self.op_variant,
+                    quantity=self.op_qty, move_type=StockLogReason.IN_INSPECT,
+                    date_obj=date_val, remark=self.op_remark.strip(),
+                    warehouse_id=wh_id, to_warehouse_id=to_wh_id,
+                    is_set=is_set_op, part_name=actual_part_name,
+                    out_type=self.op_out_mode, cons_cat=self.op_cons_cat, cons_content=self.op_cons_content.strip()
+                )
+                service.add_inventory_movement(
+                    product_id=prod.id, product_name=prod.name, variant=self.op_variant,
+                    quantity=self.op_qty, move_type=StockLogReason.INSPECT_COMPLETED,
+                    date_obj=date_val, remark=self.op_remark.strip(),
+                    warehouse_id=wh_id, to_warehouse_id=to_wh_id,
+                    is_set=is_set_op, part_name=actual_part_name,
+                    out_type=self.op_out_mode, cons_cat=self.op_cons_cat, cons_content=self.op_cons_content.strip()
+                )
+                msg = f"一键验收+合格入库成功（已生成入库验收与合格入库流水各1笔）"
+            else:
+                msg = service.add_inventory_movement(
+                    product_id=prod.id, product_name=prod.name, variant=self.op_variant,
+                    quantity=self.op_qty, move_type=self.op_type,
+                    date_obj=date_val, remark=self.op_remark.strip(),
+                    warehouse_id=wh_id, to_warehouse_id=to_wh_id,
+                    is_set=is_set_op, part_name=actual_part_name,
+                    out_type=self.op_out_mode, cons_cat=self.op_cons_cat, cons_content=self.op_cons_content.strip()
+                )
             
             service.commit()
             
@@ -780,6 +1063,7 @@ class InventoryState(AppState):
             return rx.toast(f"提交失败: {e}", level="error")
         finally:
             db.close()
+
 
     @rx.event
     def delete_log_cascade(self, log_id: int):

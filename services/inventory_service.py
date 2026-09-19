@@ -506,6 +506,89 @@ class InventoryService:
         self.sync_product_metrics(product_id)
         return msg
 
+    def add_batch_inventory_movements(self, product_id, product_name, entries: list[dict], 
+                                      move_type, date_obj, batch_remark, warehouse_id=None, 
+                                      to_warehouse_id=None, out_type=None, cons_cat=None, cons_content=None,
+                                      auto_inspect_complete=False):
+        """在一个数据库事务内批量执行多款式/多散件库存变动。"""
+        if not entries:
+            raise ValueError("没有待录入的条目！")
+            
+        success_count = 0
+        total_quantity = 0
+        for item in entries:
+            qty = item.get("quantity", 0)
+            if qty <= 0:
+                continue
+            v_name = item.get("variant")
+            p_name = item.get("part_name")
+            is_set = (p_name is None or p_name == "" or p_name == "整套")
+            actual_p_name = None if is_set else p_name
+            
+            if move_type == StockLogReason.IN_INSPECT and auto_inspect_complete:
+                # 1. 录入入库验收
+                self.add_inventory_movement(
+                    product_id=product_id,
+                    product_name=product_name,
+                    variant=v_name,
+                    quantity=qty,
+                    move_type=StockLogReason.IN_INSPECT,
+                    date_obj=date_obj,
+                    remark=batch_remark,
+                    warehouse_id=warehouse_id,
+                    to_warehouse_id=to_warehouse_id,
+                    is_set=is_set,
+                    part_name=actual_p_name,
+                    out_type=out_type,
+                    cons_cat=cons_cat,
+                    cons_content=cons_content
+                )
+                # 2. 紧接着录入验收完成入库
+                self.add_inventory_movement(
+                    product_id=product_id,
+                    product_name=product_name,
+                    variant=v_name,
+                    quantity=qty,
+                    move_type=StockLogReason.INSPECT_COMPLETED,
+                    date_obj=date_obj,
+                    remark=batch_remark,
+                    warehouse_id=warehouse_id,
+                    to_warehouse_id=to_warehouse_id,
+                    is_set=is_set,
+                    part_name=actual_p_name,
+                    out_type=out_type,
+                    cons_cat=cons_cat,
+                    cons_content=cons_content
+                )
+                success_count += 2
+                total_quantity += qty
+            else:
+                self.add_inventory_movement(
+                    product_id=product_id,
+                    product_name=product_name,
+                    variant=v_name,
+                    quantity=qty,
+                    move_type=move_type,
+                    date_obj=date_obj,
+                    remark=batch_remark,
+                    warehouse_id=warehouse_id,
+                    to_warehouse_id=to_warehouse_id,
+                    is_set=is_set,
+                    part_name=actual_p_name,
+                    out_type=out_type,
+                    cons_cat=cons_cat,
+                    cons_content=cons_content
+                )
+                success_count += 1
+                total_quantity += qty
+            
+        if success_count == 0:
+            raise ValueError("未检测到大于 0 的有效变动数量，请输入数量后再提交！")
+            
+        if move_type == StockLogReason.IN_INSPECT and auto_inspect_complete:
+            return f"一键验收+合格入库成功！共生成 {success_count} 笔明细流水（入库验收与合格入库各 {success_count // 2} 笔），合计入库 {total_quantity} 套/件"
+        return f"批量录入成功！共生成 {success_count} 笔明细流水，合计变动 {total_quantity} 套/件"
+
     def commit(self):
         self.db.commit()
 

@@ -141,6 +141,55 @@ def render_excess_row(row) -> rx.Component:
     )
 
 
+def render_batch_set_row(row) -> rx.Component:
+    """渲染批量成套录入矩阵行"""
+    return rx.table.row(
+        rx.table.cell(rx.badge(row.variant, color_scheme="violet", variant="soft")),
+        rx.table.cell(rx.text(row.planned.to_string(), " 套", size="1", color=rx.color("slate", 11))),
+        rx.table.cell(rx.badge(row.stock_display, color_scheme="blue", variant="surface", size="1")),
+        rx.table.cell(
+            rx.hstack(
+                rx.input(
+                    placeholder="0",
+                    value=row.input_val,
+                    on_change=lambda val: InventoryState.set_batch_input(row.key, val),
+                    size="1",
+                    width="100px",
+                ),
+                rx.text("套", size="1", color=rx.color("slate", 10)),
+                spacing="1",
+                align="center",
+            )
+        ),
+        align="center",
+    )
+
+
+def render_batch_part_row(row) -> rx.Component:
+    """渲染批量散件细分录入矩阵行"""
+    return rx.table.row(
+        rx.table.cell(rx.badge(row.variant, color_scheme="violet", variant="soft")),
+        rx.table.cell(rx.text(row.part_name, size="1", weight="medium")),
+        rx.table.cell(rx.text(row.req_qty.to_string(), " 件/套", size="1", color=rx.color("slate", 11))),
+        rx.table.cell(rx.badge(row.stock_display, color_scheme="teal", variant="surface", size="1")),
+        rx.table.cell(
+            rx.hstack(
+                rx.input(
+                    placeholder="0",
+                    value=row.input_val,
+                    on_change=lambda val: InventoryState.set_batch_input(row.key, val),
+                    size="1",
+                    width="100px",
+                ),
+                rx.text("件", size="1", color=rx.color("slate", 10)),
+                spacing="1",
+                align="center",
+            )
+        ),
+        align="center",
+    )
+
+
 def render_log_row(row) -> rx.Component:
     """渲染库存操作日志。"""
     return rx.table.row(
@@ -496,277 +545,286 @@ def movement_entry_form() -> rx.Component:
     return rx.card(
         rx.vstack(
             rx.heading("📝 新增库存变动录入", size="3", color=rx.color("violet", 10)),
-            rx.grid(
-                custom_form_field(
-                    "变动日期",
-                    rx.input(
-                        type="date",
-                        value=InventoryState.op_date,
-                        on_change=InventoryState.set_op_date,
-                        size="2"
-                    )
-                ),
-                custom_form_field(
-                    "变动操作类型",
-                    rx.select.root(
-    rx.select.trigger(),
-    rx.select.content(
-        rx.foreach(InventoryState.all_movement_types, lambda item: rx.select.item(item, value=item)),
-        position="popper",
-        side="bottom",
-    ),
-    value=InventoryState.op_type,
-                        on_change=InventoryState.set_op_type,
-                        size="2"
-)
-                ),
-                columns="2",
-                spacing="3",
-                width="100%"
-            ),
-            # 跨仓调拨向导专区 vs 单仓库选择
+            # 顶部操作核心要素：日期、变动类型、目标操作仓库（三者宽度完全一致，视觉对齐）
             rx.cond(
                 InventoryState.is_transfer_mode,
-                rx.card(
-                    rx.vstack(
-                        rx.hstack(
-                            rx.icon("arrow_left_right", size=16, color=rx.color("blue", 9)),
-                            rx.text("跨仓调拨一步式向导 (原子划转)", weight="bold", size="2", color=rx.color("blue", 11)),
-                            rx.spacer(),
-                            rx.badge(
-                                rx.fragment("源仓可用: ", InventoryState.transfer_source_available.to_string(), " 套/件"),
-                                color_scheme=rx.cond(InventoryState.is_transfer_qty_excess, "ruby", "teal"),
-                                variant="soft",
-                                size="1"
+                rx.vstack(
+                    rx.grid(
+                        custom_form_field(
+                            "变动日期",
+                            rx.input(
+                                type="date",
+                                value=InventoryState.op_date,
+                                on_change=InventoryState.set_op_date,
+                                size="2",
+                                width="100%",
                             ),
                             width="100%",
-                            align="center"
                         ),
-                        rx.grid(
-                            custom_form_field(
-                                "移出仓库 (源仓扣减)",
-                                rx.select.root(
-                                    rx.select.trigger(),
-                                    rx.select.content(
-                                        rx.foreach(InventoryState.transfer_warehouse_options, lambda item: rx.select.item(item, value=item)),
-                                        position="popper",
-                                        side="bottom",
-                                    ),
-                                    value=InventoryState.op_wh_name,
-                                    on_change=InventoryState.set_op_wh_name,
-                                    size="2"
-                                )
+                        custom_form_field(
+                            "变动操作类型",
+                            rx.select.root(
+                                rx.select.trigger(width="100%"),
+                                rx.select.content(
+                                    rx.foreach(InventoryState.all_movement_types, lambda item: rx.select.item(item, value=item)),
+                                    position="popper",
+                                    side="bottom",
+                                ),
+                                value=InventoryState.op_type,
+                                on_change=InventoryState.set_op_type,
+                                size="2",
+                                width="100%",
                             ),
-                            custom_form_field(
-                                "移入仓库 (目的仓增加)",
-                                rx.select.root(
-                                    rx.select.trigger(),
-                                    rx.select.content(
-                                        rx.foreach(InventoryState.warehouse_options, lambda item: rx.select.item(item, value=item)),
-                                        position="popper",
-                                        side="bottom",
-                                    ),
-                                    value=InventoryState.op_to_wh_name,
-                                    on_change=InventoryState.set_op_to_wh_name,
-                                    size="2"
-                                )
+                            width="100%",
+                        ),
+                        columns="2",
+                        spacing="3",
+                        width="100%",
+                    ),
+                    rx.card(
+                        rx.vstack(
+                            rx.hstack(
+                                rx.icon("arrow_left_right", size=16, color=rx.color("blue", 9)),
+                                rx.text("跨仓调拨一步式向导 (原子划转)", weight="bold", size="2", color=rx.color("blue", 11)),
+                                rx.spacer(),
+                                rx.badge(
+                                    rx.fragment("源仓可用: ", InventoryState.transfer_source_available.to_string(), " 套/件"),
+                                    color_scheme=rx.cond(InventoryState.is_transfer_qty_excess, "ruby", "teal"),
+                                    variant="soft",
+                                    size="1"
+                                ),
+                                width="100%",
+                                align="center"
                             ),
-                            columns="2",
-                            spacing="3",
-                            width="100%"
-                        ),
-                        rx.callout(
-                            "💡【防错指引】：调拨为一体化原子事务，系统将自动从源仓扣减实物并向目的仓增加实物，生产完成数保持不变。切勿在目的仓单独录入【验收完成入库】！",
-                            icon="info",
-                            color_scheme="blue",
-                            variant="soft",
-                            size="1",
-                            width="100%"
-                        ),
-                        rx.cond(
-                            InventoryState.is_transfer_qty_excess,
+                            rx.grid(
+                                custom_form_field(
+                                    "移出仓库 (源仓扣减)",
+                                    rx.select.root(
+                                        rx.select.trigger(width="100%"),
+                                        rx.select.content(
+                                            rx.foreach(InventoryState.transfer_warehouse_options, lambda item: rx.select.item(item, value=item)),
+                                            position="popper",
+                                            side="bottom",
+                                        ),
+                                        value=InventoryState.op_wh_name,
+                                        on_change=InventoryState.set_op_wh_name,
+                                        size="2",
+                                        width="100%",
+                                    ),
+                                    width="100%",
+                                ),
+                                custom_form_field(
+                                    "移入仓库 (目的仓增加)",
+                                    rx.select.root(
+                                        rx.select.trigger(width="100%"),
+                                        rx.select.content(
+                                            rx.foreach(InventoryState.warehouse_options, lambda item: rx.select.item(item, value=item)),
+                                            position="popper",
+                                            side="bottom",
+                                        ),
+                                        value=InventoryState.op_to_wh_name,
+                                        on_change=InventoryState.set_op_to_wh_name,
+                                        size="2",
+                                        width="100%",
+                                    ),
+                                    width="100%",
+                                ),
+                                columns="2",
+                                spacing="3",
+                                width="100%"
+                            ),
                             rx.callout(
-                                rx.fragment("⚠️ 调拨录入数量已超出源仓当前实际可用库存（当前源仓仅有 ", InventoryState.transfer_source_available.to_string(), " 套/件）！"),
-                                icon="triangle_alert",
-                                color_scheme="ruby",
+                                "💡【防错指引】：调拨为一体化原子事务，系统将自动从源仓扣减实物并向目的仓增加实物，生产完成数保持不变。切勿在目的仓单独录入【验收完成入库】！",
+                                icon="info",
+                                color_scheme="blue",
                                 variant="soft",
                                 size="1",
                                 width="100%"
                             ),
-                            rx.fragment()
+                            rx.cond(
+                                InventoryState.is_transfer_qty_excess,
+                                rx.callout(
+                                    rx.fragment("⚠️ 调拨录入数量已超出源仓当前实际可用库存（当前源仓仅有 ", InventoryState.transfer_source_available.to_string(), " 套/件）！"),
+                                    icon="triangle_alert",
+                                    color_scheme="ruby",
+                                    variant="soft",
+                                    size="1",
+                                    width="100%"
+                                ),
+                                rx.fragment()
+                            ),
+                            spacing="2",
+                            width="100%"
                         ),
-                        spacing="2",
+                        bg=rx.color("blue", 2),
+                        border=f"1px solid {rx.color('blue', 5)}",
+                        padding="0.75rem",
                         width="100%"
                     ),
-                    bg=rx.color("blue", 2),
-                    border=f"1px solid {rx.color('blue', 5)}",
-                    padding="0.75rem",
-                    width="100%"
-                ),
-                custom_form_field(
-                    "目标操作仓库",
-                    rx.select.root(
-                        rx.select.trigger(),
-                        rx.select.content(
-                            rx.foreach(InventoryState.warehouse_options, lambda item: rx.select.item(item, value=item)),
-                            position="popper",
-                            side="bottom",
-                        ),
-                        value=InventoryState.op_wh_name,
-                        on_change=InventoryState.set_op_wh_name,
-                        size="2"
-                    ),
-                    width="100%"
-                )
-            ),
-            rx.grid(
-                custom_form_field(
-                    "选择款式",
-                    rx.select.root(
-    rx.select.trigger(),
-    rx.select.content(
-        rx.foreach(InventoryState.active_variants, lambda item: rx.select.item(item, value=item)),
-        position="popper",
-        side="bottom",
-    ),
-    value=InventoryState.op_variant,
-                        on_change=InventoryState.set_op_variant,
-                        size="2"
-)
-                ),
-                custom_form_field(
-                    "变动套数/物理件数",
-                    rx.input(
-                        value=InventoryState.op_qty.to_string(),
-                        on_change=InventoryState.set_op_qty,
-                        type="number",
-                        min="1",
-                        size="2"
-                    )
-                ),
-                columns="2",
-                spacing="3",
-                width="100%"
-            ),
-            
-            # 部件散件联动
-            rx.cond(
-                InventoryState.has_parts_for_color,
-                rx.grid(
-                    rx.hstack(
-                        rx.switch(
-                            checked=InventoryState.op_is_set,
-                            on_change=InventoryState.set_op_is_set,
-                            size="1",
-                            color_scheme="violet"
-                        ),
-                        rx.text("整套动作 (款式所有部件同比例变动)", size="1", color=rx.color("slate", 10)),
-                        spacing="2",
-                        align="center",
-                        padding_top="1.5rem"
-                    ),
-                    rx.cond(
-                        InventoryState.op_is_set,
-                        rx.fragment(),
-                        custom_form_field(
-                            "选择归属物理散件",
-                            rx.select.root(
-    rx.select.trigger(),
-    rx.select.content(
-        rx.foreach(InventoryState.active_parts, lambda item: rx.select.item(item, value=item)),
-        position="popper",
-        side="bottom",
-    ),
-    value=InventoryState.op_part,
-                                on_change=InventoryState.set_op_part,
-                                size="2"
-)
-                        )
-                    ),
-                    columns="2",
                     spacing="3",
-                    width="100%"
+                    width="100%",
                 ),
-                rx.fragment()
+                # 常规变动：变动日期、变动操作类型、目标操作仓库 三者等宽并排
+                rx.grid(
+                    custom_form_field(
+                        "变动日期",
+                        rx.input(
+                            type="date",
+                            value=InventoryState.op_date,
+                            on_change=InventoryState.set_op_date,
+                            size="2",
+                            width="100%",
+                        ),
+                        width="100%",
+                    ),
+                    custom_form_field(
+                        "变动操作类型",
+                        rx.select.root(
+                            rx.select.trigger(width="100%"),
+                            rx.select.content(
+                                rx.foreach(InventoryState.all_movement_types, lambda item: rx.select.item(item, value=item)),
+                                position="popper",
+                                side="bottom",
+                            ),
+                            value=InventoryState.op_type,
+                            on_change=InventoryState.set_op_type,
+                            size="2",
+                            width="100%",
+                        ),
+                        width="100%",
+                    ),
+                    custom_form_field(
+                        "目标操作仓库",
+                        rx.select.root(
+                            rx.select.trigger(width="100%"),
+                            rx.select.content(
+                                rx.foreach(InventoryState.warehouse_options, lambda item: rx.select.item(item, value=item)),
+                                position="popper",
+                                side="bottom",
+                            ),
+                            value=InventoryState.op_wh_name,
+                            on_change=InventoryState.set_op_wh_name,
+                            size="2",
+                            width="100%",
+                        ),
+                        width="100%",
+                    ),
+                    columns="3",
+                    spacing="3",
+                    width="100%",
+                ),
             ),
-            
-            # 返修后入库提示
+            # ✨ 入库验收模式专属：一键完成入库验收合格快速通道勾选
             rx.cond(
-                InventoryState.is_repair_in,
+                InventoryState.is_in_inspect_mode,
                 rx.callout(
-                    "💡【返修后入库】：记录返修后再次验收合格的大货或散件。将增加目标仓库实物库存与生产完成数，并同时减扣【部件返修出库】中的余量。",
+                    rx.hstack(
+                        rx.checkbox(
+                            checked=InventoryState.op_auto_inspect_complete,
+                            on_change=InventoryState.set_op_auto_inspect_complete,
+                            size="2",
+                            color_scheme="green",
+                        ),
+                        rx.vstack(
+                            rx.hstack(
+                                rx.text("直接完成入库验收合格（一键完成入库验收 + 验收合格入库）", weight="bold", size="2", color=rx.color("green", 11)),
+                                rx.badge("免二次操作", color_scheme="green", variant="soft", size="1"),
+                                spacing="2",
+                                align="center",
+                            ),
+                            rx.text(
+                                "勾选此项后，提交时系统将直接按序产生【入库验收】与【验收完成入库】两条连贯流水，一步到位完成入库验收合格并累加生产完成数与大货库存，无需再次前往待验收区进行二次点收。",
+                                size="1",
+                                color=rx.color("slate", 10),
+                            ),
+                            spacing="1",
+                            align_items="start",
+                        ),
+                        spacing="3",
+                        align="center",
+                        width="100%",
+                    ),
                     icon="check_check",
-                    color_scheme="teal",
-                    variant="soft",
-                    size="1"
+                    color_scheme="green",
+                    variant="surface",
+                    size="1",
+                    width="100%",
                 ),
-                rx.fragment()
+                rx.fragment(),
             ),
-
-            # 验收不合格返修专属提示
-            rx.cond(
-                InventoryState.is_repair_out,
-                rx.callout(
-                    "💡【验收不合格返修】：直接减扣【入库验收中】的数量，并计入【部件返修中】。不影响仓库物理实物。返修完毕后可通过【返修后入库】重新入库。",
-                    icon="wrench",
-                    color_scheme="ruby",
-                    variant="soft",
-                    size="1"
-                ),
-                rx.fragment()
-            ),
-
-            # 入库冲销专属提示
+            # 区分：【入库冲销】单项核准模式 vs 【常规多款式/多散件批量填报矩阵】模式
             rx.cond(
                 InventoryState.is_reversal_mode,
-                rx.callout(
-                    "💡【入库冲销 / 红字更正】：专用于纠正【验收完成入库】误录敲错数量的场景。系统将同步扣减目标仓库的物理实物与商品累计生产总数，并将对应数量恢复至【入库验收中】。严禁使用普通出库冲抵入库笔误！",
-                    icon="rotate-ccw",
-                    color_scheme="amber",
-                    variant="soft",
-                    size="1"
-                ),
-                rx.fragment()
-            ),
-
-            # 出库特有消耗记账表单（已彻底移除重复的验收不合格返修）
-            rx.cond(
-                InventoryState.is_out_mode,
+                # ================= 模式 1：入库冲销（单项精准纠错核准模式） =================
                 rx.vstack(
-                    custom_form_field(
-                        "出库分类模式",
-                        rx.radio(
-                            ["消耗", "其他"],
-                            value=InventoryState.op_out_mode,
-                            on_change=InventoryState.set_op_out_mode,
-                            direction="row",
-                            spacing="3"
-                        )
+                    rx.callout(
+                        "💡【入库冲销 / 红字更正】：专用于纠正【验收完成入库】误录敲错数量的场景。系统将同步扣减目标仓库的物理实物与商品累计生产总数，并将对应数量恢复至【入库验收中】。为防范批量误冲风险，入库冲销仅支持单款式/单散件精准核准录入。",
+                        icon="rotate_ccw",
+                        color_scheme="amber",
+                        variant="soft",
+                        size="1",
+                        width="100%"
+                    ),
+                    rx.grid(
+                        custom_form_field(
+                            "选择冲销款式",
+                            rx.select.root(
+                                rx.select.trigger(),
+                                rx.select.content(
+                                    rx.foreach(InventoryState.active_variants, lambda item: rx.select.item(item, value=item)),
+                                    position="popper",
+                                    side="bottom",
+                                ),
+                                value=InventoryState.op_variant,
+                                on_change=InventoryState.set_op_variant,
+                                size="2"
+                            )
+                        ),
+                        custom_form_field(
+                            "冲销套数/物理件数",
+                            rx.input(
+                                value=InventoryState.op_qty.to_string(),
+                                on_change=InventoryState.set_op_qty,
+                                type="number",
+                                min="1",
+                                size="2"
+                            )
+                        ),
+                        columns="2",
+                        spacing="3",
+                        width="100%"
                     ),
                     rx.cond(
-                        InventoryState.is_consumable_out,
+                        InventoryState.has_parts_for_color,
                         rx.grid(
-                            custom_form_field(
-                                "计入商品成本科目",
-                                rx.select.root(
-    rx.select.trigger(),
-    rx.select.content(
-        rx.foreach(InventoryState.cost_categories, lambda item: rx.select.item(item, value=item)),
-        position="popper",
-        side="bottom",
-    ),
-    value=InventoryState.op_cons_cat,
-                                    on_change=InventoryState.set_op_cons_cat,
-                                    size="2"
-)
+                            rx.hstack(
+                                rx.switch(
+                                    checked=InventoryState.op_is_set,
+                                    on_change=InventoryState.set_op_is_set,
+                                    size="1",
+                                    color_scheme="amber"
+                                ),
+                                rx.text("整套动作 (款式所有部件同比例冲销)", size="1", color=rx.color("slate", 10)),
+                                spacing="2",
+                                align="center",
+                                padding_top="1.5rem"
                             ),
-                            custom_form_field(
-                                "消耗内容 (必填描述)",
-                                rx.input(
-                                    placeholder="如：宣发拍摄样衣",
-                                    value=InventoryState.op_cons_content,
-                                    on_change=InventoryState.set_op_cons_content,
-                                    size="2"
+                            rx.cond(
+                                InventoryState.op_is_set,
+                                rx.fragment(),
+                                custom_form_field(
+                                    "选择冲销归属散件",
+                                    rx.select.root(
+                                        rx.select.trigger(),
+                                        rx.select.content(
+                                            rx.foreach(InventoryState.active_parts, lambda item: rx.select.item(item, value=item)),
+                                            position="popper",
+                                            side="bottom",
+                                        ),
+                                        value=InventoryState.op_part,
+                                        on_change=InventoryState.set_op_part,
+                                        size="2"
+                                    )
                                 )
                             ),
                             columns="2",
@@ -775,26 +833,235 @@ def movement_entry_form() -> rx.Component:
                         ),
                         rx.fragment()
                     ),
+                    custom_form_field(
+                        "冲销审计原因 (必填)",
+                        rx.input(
+                            placeholder="请说明冲销原因，如：质检复核多录2套，据实冲销扣减...",
+                            value=InventoryState.op_remark,
+                            on_change=InventoryState.set_op_remark,
+                            size="2"
+                        )
+                    ),
+                    rx.button(
+                        "⚠️ 提交入库冲销 (单项核准纠错)",
+                        on_click=InventoryState.submit_inventory_movement,
+                        color_scheme="amber",
+                        width="100%",
+                        size="3"
+                    ),
                     spacing="3",
                     width="100%"
                 ),
-                rx.fragment()
-            ),
-            custom_form_field(
-                "备注 (选填)",
-                rx.input(
-                    placeholder="操作补充备注",
-                    value=InventoryState.op_remark,
-                    on_change=InventoryState.set_op_remark,
-                    size="2"
+                # ================= 模式 2：常规变动（多款式/多部件批量录入矩阵） =================
+                rx.vstack(
+                    # 返修后入库提示
+                    rx.cond(
+                        InventoryState.is_repair_in,
+                        rx.callout(
+                            "💡【返修后入库】：记录返修后再次验收合格的大货或散件。将增加目标仓库实物库存与生产完成数，并同时减扣【部件返修出库】中的余量。",
+                            icon="check_check",
+                            color_scheme="teal",
+                            variant="soft",
+                            size="1"
+                        ),
+                        rx.fragment()
+                    ),
+
+                    # 验收不合格返修专属提示
+                    rx.cond(
+                        InventoryState.is_repair_out,
+                        rx.callout(
+                            "💡【验收不合格返修】：直接减扣【入库验收中】的数量，并计入【部件返修中】。不影响仓库物理实物。返修完毕后可通过【返修后入库】重新入库。",
+                            icon="wrench",
+                            color_scheme="ruby",
+                            variant="soft",
+                            size="1"
+                        ),
+                        rx.fragment()
+                    ),
+
+                    # 出库特有消耗记账表单
+                    rx.cond(
+                        InventoryState.is_out_mode,
+                        rx.vstack(
+                            custom_form_field(
+                                "出库分类模式",
+                                rx.radio(
+                                    ["消耗", "其他"],
+                                    value=InventoryState.op_out_mode,
+                                    on_change=InventoryState.set_op_out_mode,
+                                    direction="row",
+                                    spacing="3"
+                                )
+                            ),
+                            rx.cond(
+                                InventoryState.is_consumable_out,
+                                rx.grid(
+                                    custom_form_field(
+                                        "计入商品成本科目",
+                                        rx.select.root(
+                                            rx.select.trigger(),
+                                            rx.select.content(
+                                                rx.foreach(InventoryState.cost_categories, lambda item: rx.select.item(item, value=item)),
+                                                position="popper",
+                                                side="bottom",
+                                            ),
+                                            value=InventoryState.op_cons_cat,
+                                            on_change=InventoryState.set_op_cons_cat,
+                                            size="2"
+                                        )
+                                    ),
+                                    custom_form_field(
+                                        "消耗内容 (必填描述)",
+                                        rx.input(
+                                            placeholder="如：宣发拍摄样衣",
+                                            value=InventoryState.op_cons_content,
+                                            on_change=InventoryState.set_op_cons_content,
+                                            size="2"
+                                        )
+                                    ),
+                                    columns="2",
+                                    spacing="3",
+                                    width="100%"
+                                ),
+                                rx.fragment()
+                            ),
+                            spacing="3",
+                            width="100%"
+                        ),
+                        rx.fragment()
+                    ),
+                    
+                    custom_form_field(
+                        "批次通用备注 (选填)",
+                        rx.input(
+                            placeholder="本批次操作补充备注，如：工厂大货到货、调拨运单号等...",
+                            value=InventoryState.op_remark,
+                            on_change=InventoryState.set_op_remark,
+                            size="2"
+                        )
+                    ),
+                    
+                    # 批量填报矩阵卡片
+                    rx.card(
+                        rx.vstack(
+                            rx.hstack(
+                                rx.hstack(
+                                    rx.icon("boxes", size=16, color=rx.color("violet", 9)),
+                                    rx.text("本批次款式 / 散件变动数量填报", weight="bold", size="2"),
+                                    spacing="1",
+                                    align="center"
+                                ),
+                                rx.spacer(),
+                                rx.radio(
+                                    ["成套录入 (默认)", "散件细分录入"],
+                                    value=rx.cond(InventoryState.is_batch_set_mode, "成套录入 (默认)", "散件细分录入"),
+                                    on_change=InventoryState.set_batch_mode,
+                                    direction="row",
+                                    spacing="3",
+                                    size="1"
+                                ),
+                                align="center",
+                                width="100%",
+                                padding_y="0.25rem"
+                            ),
+                            rx.cond(
+                                InventoryState.is_batch_set_mode,
+                                # 成套录入矩阵
+                                rx.scroll_area(
+                                    rx.table.root(
+                                        rx.table.header(
+                                            rx.table.row(
+                                                rx.table.column_header_cell("款式颜色", size="1"),
+                                                rx.table.column_header_cell("计划生产", size="1"),
+                                                rx.table.column_header_cell("当前仓库库存", size="1"),
+                                                rx.table.column_header_cell("本次变动数量", size="1")
+                                            )
+                                        ),
+                                        rx.table.body(
+                                            rx.foreach(
+                                                InventoryState.batch_set_rows,
+                                                render_batch_set_row
+                                            )
+                                        ),
+                                        size="1",
+                                        width="100%",
+                                        variant="surface"
+                                    ),
+                                    type="auto",
+                                    scrollbars="vertical",
+                                    max_height="320px",
+                                    width="100%"
+                                ),
+                                # 散件细分录入矩阵
+                                rx.scroll_area(
+                                    rx.table.root(
+                                        rx.table.header(
+                                            rx.table.row(
+                                                rx.table.column_header_cell("款式颜色", size="1"),
+                                                rx.table.column_header_cell("部件名称", size="1"),
+                                                rx.table.column_header_cell("配比要求", size="1"),
+                                                rx.table.column_header_cell("当前仓库库存", size="1"),
+                                                rx.table.column_header_cell("本次变动数量", size="1")
+                                            )
+                                        ),
+                                        rx.table.body(
+                                            rx.foreach(
+                                                InventoryState.batch_part_rows,
+                                                render_batch_part_row
+                                            )
+                                        ),
+                                        size="1",
+                                        width="100%",
+                                        variant="surface"
+                                    ),
+                                    type="auto",
+                                    scrollbars="vertical",
+                                    max_height="320px",
+                                    width="100%"
+                                )
+                            ),
+                            rx.hstack(
+                                rx.hstack(
+                                    rx.icon("info", size=13, color=rx.color("violet", 9)),
+                                    rx.text(InventoryState.batch_summary_text, size="1", weight="medium", color=rx.color("slate", 11)),
+                                    spacing="1",
+                                    align="center"
+                                ),
+                                rx.spacer(),
+                                rx.button(
+                                    rx.hstack(rx.icon("rotate_ccw", size=12), rx.text("清空已填", size="1"), spacing="1", align="center"),
+                                    variant="soft",
+                                    color_scheme="gray",
+                                    size="1",
+                                    on_click=InventoryState.clear_batch_inputs
+                                ),
+                                align="center",
+                                width="100%",
+                                padding_top="0.25rem"
+                            ),
+                            spacing="2",
+                            width="100%"
+                        ),
+                        bg=rx.color("slate", 2),
+                        border=f"1px solid {rx.color('slate', 5)}",
+                        padding="0.75rem",
+                        width="100%"
+                    ),
+                    rx.button(
+                        rx.cond(
+                            InventoryState.op_auto_inspect_complete,
+                            "⚡ 一键完成入库验收 + 验收合格入库 (双流水写入)",
+                            "🚀 一键批量录入并写入流水明细"
+                        ),
+                        on_click=InventoryState.submit_batch_inventory_movement,
+                        color_scheme=rx.cond(InventoryState.op_auto_inspect_complete, "green", "violet"),
+                        width="100%",
+                        size="3"
+                    ),
+                    spacing="3",
+                    width="100%"
                 )
-            ),
-            rx.button(
-                "🚀 提交库存移动/盘点",
-                on_click=InventoryState.submit_inventory_movement,
-                color_scheme="violet",
-                width="100%",
-                size="3"
             ),
             spacing="3",
             width="100%"
