@@ -905,23 +905,66 @@ class InventoryState(AppState):
             is_check_overprod = (self.op_type == StockLogReason.INSPECT_COMPLETED) or (self.op_type == StockLogReason.IN_INSPECT and self.op_auto_inspect_complete)
             if is_check_overprod and not force_overprod:
                 stats_map = service.get_stock_overview_by_parts(prod.id, prod.name)
-                var_qty_map = {}
-                for e in entries:
-                    v = e["variant"]
-                    var_qty_map[v] = var_qty_map.get(v, 0) + e["quantity"]
+                if self.batch_mode == "set":
+                    var_qty_map = {}
+                    for e in entries:
+                        v = e["variant"]
+                        var_qty_map[v] = var_qty_map.get(v, 0) + e["quantity"]
 
-                for v, in_q in var_qty_map.items():
-                    v_stat = stats_map.get(v, {})
-                    planned = v_stat.get("planned", 0)
-                    produced = v_stat.get("produced", 0)
-                    if planned > 0 and (produced + in_q) > planned:
-                        self.overprod_variant = v
-                        self.overprod_planned = planned
-                        self.overprod_current = produced
-                        self.overprod_incoming = in_q
-                        self.overprod_diff = (produced + in_q) - planned
-                        self.is_overprod_dialog_open = True
-                        return
+                    for v, in_q in var_qty_map.items():
+                        v_stat = stats_map.get(v, {})
+                        planned = v_stat.get("planned", 0)
+                        produced = v_stat.get("produced", 0)
+                        if planned > 0 and (produced + in_q) > planned:
+                            self.overprod_variant = v
+                            self.overprod_planned = planned
+                            self.overprod_current = produced
+                            self.overprod_incoming = in_q
+                            self.overprod_diff = (produced + in_q) - planned
+                            self.is_overprod_dialog_open = True
+                            return
+                else:
+                    # 分部件/散件细分录入模式：按部件配比折算成套数校验超产
+                    var_part_map = {}
+                    for e in entries:
+                        v = e["variant"]
+                        p_name = e.get("part_name")
+                        q = e.get("quantity", 0)
+                        if v not in var_part_map:
+                            var_part_map[v] = {}
+                        var_part_map[v][p_name] = var_part_map[v].get(p_name, 0) + q
+
+                    for v, part_inputs in var_part_map.items():
+                        v_stat = stats_map.get(v, {})
+                        planned = v_stat.get("planned", 0)
+                        produced = v_stat.get("produced", 0)
+                        v_parts = v_stat.get("parts", [])
+
+                        if not v_parts:
+                            in_q = sum(part_inputs.values())
+                            if planned > 0 and (produced + in_q) > planned:
+                                self.overprod_variant = v
+                                self.overprod_planned = planned
+                                self.overprod_current = produced
+                                self.overprod_incoming = in_q
+                                self.overprod_diff = (produced + in_q) - planned
+                                self.is_overprod_dialog_open = True
+                                return
+                        else:
+                            # 结合各部件已累计生产数与本次录入数，按木桶原理计算本次提交后能达到的成套数
+                            new_produced_sets = min(
+                                (pt.get("produced", 0) + part_inputs.get(pt.get("part_name"), 0)) // (pt.get("req_qty", 1) or 1)
+                                for pt in v_parts
+                            )
+                            in_sets = max(0, new_produced_sets - produced)
+                            if planned > 0 and new_produced_sets > planned and new_produced_sets > produced:
+                                self.overprod_variant = v
+                                self.overprod_planned = planned
+                                self.overprod_current = produced
+                                self.overprod_incoming = in_sets
+                                self.overprod_diff = new_produced_sets - planned
+                                self.is_overprod_dialog_open = True
+                                return
 
             # 转化仓库 id
             wh_id = int(self.op_wh_id) if self.op_wh_id and self.op_wh_id != "None" else None
@@ -993,14 +1036,34 @@ class InventoryState(AppState):
                 v_stat = stats_map.get(self.op_variant, {})
                 planned = v_stat.get("planned", 0)
                 produced = v_stat.get("produced", 0)
-                if planned > 0 and (produced + self.op_qty) > planned:
-                    self.overprod_variant = self.op_variant
-                    self.overprod_planned = planned
-                    self.overprod_current = produced
-                    self.overprod_incoming = self.op_qty
-                    self.overprod_diff = (produced + self.op_qty) - planned
-                    self.is_overprod_dialog_open = True
-                    return
+                v_parts = v_stat.get("parts", [])
+
+                is_set_op = self.op_is_set if self.has_parts_for_color else True
+                actual_part_name = self.op_part if (not self.op_is_set and self.has_parts_for_color) else None
+
+                if is_set_op or not v_parts:
+                    if planned > 0 and (produced + self.op_qty) > planned:
+                        self.overprod_variant = self.op_variant
+                        self.overprod_planned = planned
+                        self.overprod_current = produced
+                        self.overprod_incoming = self.op_qty
+                        self.overprod_diff = (produced + self.op_qty) - planned
+                        self.is_overprod_dialog_open = True
+                        return
+                else:
+                    new_produced_sets = min(
+                        (pt.get("produced", 0) + (self.op_qty if pt.get("part_name") == actual_part_name else 0)) // (pt.get("req_qty", 1) or 1)
+                        for pt in v_parts
+                    )
+                    in_sets = max(0, new_produced_sets - produced)
+                    if planned > 0 and new_produced_sets > planned and new_produced_sets > produced:
+                        self.overprod_variant = self.op_variant
+                        self.overprod_planned = planned
+                        self.overprod_current = produced
+                        self.overprod_incoming = in_sets
+                        self.overprod_diff = new_produced_sets - planned
+                        self.is_overprod_dialog_open = True
+                        return
 
             # 转化仓库 id
             wh_id = int(self.op_wh_id) if self.op_wh_id and self.op_wh_id != "None" else None
