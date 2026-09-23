@@ -68,3 +68,32 @@ def migrate_db(engine):
                     print("[Migration] Added column related_cost_id to finance_records")
                 except Exception as e:
                     print(f"[Migration] Failed to add related_cost_id: {e}")
+
+    # 自愈修复：历史商品成本待付款未标记 is_budget 或单价为 0 的项
+    try:
+        from models import CostItem, FinanceRecord, CompanyBalanceItem
+        from sqlalchemy.orm import Session
+        with Session(engine) as session:
+            pending_frs = session.query(FinanceRecord).filter(
+                FinanceRecord.category == "商品成本待付款",
+                FinanceRecord.related_item_id.isnot(None)
+            ).all()
+            healed_count = 0
+            for fr in pending_frs:
+                ci = session.query(CostItem).filter(CostItem.id == fr.related_item_id).first()
+                if ci and (not ci.is_budget or not ci.unit_price or ci.unit_price <= 0.001):
+                    liab = session.query(CompanyBalanceItem).filter(
+                        CompanyBalanceItem.finance_record_id == fr.id
+                    ).first()
+                    ci.is_budget = True
+                    if not ci.quantity or ci.quantity <= 0.001:
+                        ci.quantity = 1.0
+                    if (not ci.unit_price or ci.unit_price <= 0.001) and liab and liab.amount:
+                        ci.unit_price = float(liab.amount) / ci.quantity
+                    session.add(ci)
+                    healed_count += 1
+            if healed_count > 0:
+                session.commit()
+                print(f"[Migration] Self-healed {healed_count} pending cost items to budget with amounts.")
+    except Exception as e:
+        print(f"[Migration] Self-healing pending cost items error: {e}")

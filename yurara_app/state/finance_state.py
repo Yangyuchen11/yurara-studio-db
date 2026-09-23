@@ -1002,6 +1002,9 @@ class FinanceState(AppState):
                         for i in self.batch_items
                     ]
                     selected_budget_id = int(self.batch_selected_budget_id) if self.batch_selected_budget_id else None
+                    if selected_budget_id and len(self.batch_items) != 1:
+                        yield rx.toast("匹配特定预算项时，物品明细表内只能有且仅有一条物品记录！", level="warning")
+                        return
 
                     msg = FinanceService.create_pending_payment(
                         db,

@@ -57,6 +57,7 @@ def edit_part_row(row: PartRow) -> rx.Component:
                 size="1",
                 on_blur=lambda v: ProductState.update_edit_part_field(row.key, "part_name", v),
                 width="160px",
+                key=row.key + "_part_name",
             ),
         ),
         rx.table.cell(
@@ -65,6 +66,7 @@ def edit_part_row(row: PartRow) -> rx.Component:
                 type="number", size="1", min="1",
                 on_blur=lambda v: ProductState.update_edit_part_field(row.key, "quantity", v),
                 width="60px",
+                key=row.key + "_part_qty",
             ),
         ),
         # 适用款式选择器
@@ -97,6 +99,7 @@ def edit_part_row(row: PartRow) -> rx.Component:
                                         rx.text(c, size="1"),
                                         spacing="2",
                                         align="center",
+                                        key=c,
                                     )
                                 ),
                                 spacing="2",
@@ -117,6 +120,7 @@ def edit_part_row(row: PartRow) -> rx.Component:
                 size="1", variant="ghost", color_scheme="red",
             ),
         ),
+        key=row.key,
     )
 
 
@@ -129,6 +133,7 @@ def render_price_entry_create(row: ColorRow, price: PlatformPrice) -> rx.Compone
             size="1",
             on_change=lambda val: ProductState.update_create_color_price(row.key, price.platform_code, val),
             width="80px",
+            key=row.key + "_" + price.platform_code + "_price",
         ),
         rx.text(price.currency, size="1", color=rx.color("slate", 10), width="40px"),
         rx.icon_button(
@@ -141,6 +146,7 @@ def render_price_entry_create(row: ColorRow, price: PlatformPrice) -> rx.Compone
         ),
         spacing="2",
         align="center",
+        key=row.key + "_" + price.platform_code,
     )
 
 
@@ -153,6 +159,7 @@ def render_price_entry_edit(row: ColorRow, price: PlatformPrice) -> rx.Component
             size="1",
             on_change=lambda val: ProductState.update_edit_color_price(row.key, price.platform_code, val),
             width="80px",
+            key=row.key + "_" + price.platform_code + "_price",
         ),
         rx.text(price.currency, size="1", color=rx.color("slate", 10), width="40px"),
         rx.icon_button(
@@ -165,6 +172,7 @@ def render_price_entry_edit(row: ColorRow, price: PlatformPrice) -> rx.Component
         ),
         spacing="2",
         align="center",
+        key=row.key + "_" + price.platform_code,
     )
 
 
@@ -221,6 +229,7 @@ def create_color_row(row: ColorRow) -> rx.Component:
                 size="1",
                 on_blur=lambda v: ProductState.update_create_color_field(row.key, "name", v),
                 width="85px",
+                key=row.key + "_name",
             ),
         ),
         rx.table.cell(
@@ -229,6 +238,7 @@ def create_color_row(row: ColorRow) -> rx.Component:
                 type="number", size="1", min="0",
                 on_blur=lambda v: ProductState.update_create_color_field(row.key, "quantity", v),
                 width="65px",
+                key=row.key + "_qty",
             ),
         ),
         rx.table.cell(
@@ -249,6 +259,7 @@ def create_color_row(row: ColorRow) -> rx.Component:
                 size="1", variant="ghost", color_scheme="red",
             ),
         ),
+        key=row.key,
     )
 
 
@@ -262,6 +273,7 @@ def edit_color_row(row: ColorRow) -> rx.Component:
                 placeholder="颜色名称", size="1",
                 on_blur=lambda v: ProductState.update_edit_color_field(row.key, "name", v),
                 width="85px",
+                key=row.key + "_name",
             ),
         ),
         rx.table.cell(
@@ -270,6 +282,7 @@ def edit_color_row(row: ColorRow) -> rx.Component:
                 type="number", size="1", min="0",
                 on_blur=lambda v: ProductState.update_edit_color_field(row.key, "quantity", v),
                 width="65px",
+                key=row.key + "_qty",
             ),
         ),
         rx.table.cell(
@@ -290,6 +303,7 @@ def edit_color_row(row: ColorRow) -> rx.Component:
                 size="1", variant="ghost", color_scheme="red",
             ),
         ),
+        key=row.key,
     )
 
 
@@ -302,6 +316,7 @@ def create_part_row(row: PartRow) -> rx.Component:
                 size="1",
                 on_blur=lambda v: ProductState.update_create_part_field(row.key, "part_name", v),
                 width="160px",
+                key=row.key + "_part_name",
             ),
         ),
         rx.table.cell(
@@ -310,6 +325,7 @@ def create_part_row(row: PartRow) -> rx.Component:
                 type="number", size="1", min="1",
                 on_blur=lambda v: ProductState.update_create_part_field(row.key, "quantity", v),
                 width="60px",
+                key=row.key + "_part_qty",
             ),
         ),
         # 适用款式选择器
@@ -342,6 +358,7 @@ def create_part_row(row: PartRow) -> rx.Component:
                                         rx.text(c, size="1"),
                                         spacing="2",
                                         align="center",
+                                        key=c,
                                     )
                                 ),
                                 spacing="2",
@@ -362,6 +379,7 @@ def create_part_row(row: PartRow) -> rx.Component:
                 size="1", variant="ghost", color_scheme="red",
             ),
         ),
+        key=row.key,
     )
 
 
@@ -647,6 +665,7 @@ def product_card(product: ProductItem) -> rx.Component:
             spacing="3", width="100%",
         ),
         width="100%", padding="1.25rem",
+        key=product.id.to_string(),
     )
 
 
@@ -685,7 +704,8 @@ def _product_color_table_row(color: ColorRow) -> rx.Component:
                     rx.text("-", size="1", color=rx.color("slate", 8))
                 )
             )
-        )
+        ),
+        key=color.key,
     )
 
 

@@ -347,24 +347,65 @@ class FinanceService:
                 cost_item = db.query(CostItem).filter(CostItem.id == selected_budget_id).first()
                 if not cost_item:
                     raise ValueError(f"指定的预算项 (ID: {selected_budget_id}) 不存在")
+                cost_item.is_budget = True
+                # 若原有预算项单价为 0，则根据当前录入的待付款明细回填单价与数量
+                if not cost_item.unit_price or cost_item.unit_price <= 0.001:
+                    if items_data and len(items_data) == 1:
+                        b_qty = float(items_data[0].get('qty', 1.0) or 1.0)
+                        cost_item.quantity = b_qty
+                        cost_item.unit_price = total_amount / b_qty if b_qty > 0 else total_amount
+                    elif cost_item.quantity and cost_item.quantity > 0:
+                        cost_item.unit_price = total_amount / cost_item.quantity
+                    else:
+                        cost_item.quantity = 1.0
+                        cost_item.unit_price = total_amount
+                    cost_item.currency = curr
+                if shop and (not cost_item.supplier or cost_item.supplier == "预算设定"):
+                    cost_item.supplier = shop
             else:
                 rate = to_cny(1.0, curr, rates_map)
                 expected_cny = total_amount * rate
+
+                # 解析预算单价与数量
+                if items_data and len(items_data) == 1:
+                    first_item = items_data[0]
+                    parsed_qty = float(first_item.get('qty', 1.0) or 1.0)
+                    parsed_unit_price = total_amount / parsed_qty if parsed_qty > 0 else total_amount
+                    item_name_val = first_item.get('name') or items_summary
+                    if shipping_fee > 0:
+                        item_name_val += f" (含邮费 {shipping_fee:.2f})"
+                    first_url = first_item.get('url', '')
+                elif items_data and len(items_data) > 1:
+                    parsed_qty = 1.0
+                    parsed_unit_price = total_amount
+                    item_name_val = items_summary
+                    first_url = next((i.get('url', '') for i in items_data if i.get('url')), '')
+                else:
+                    parsed_qty = 1.0
+                    parsed_unit_price = total_amount
+                    item_name_val = "物流邮费" if shipping_fee > 0 else "待付款商品成本"
+                    first_url = ""
+
+                remarks_val = f"待付款 | 预计 {total_amount:.2f} {curr} ≈ CNY {expected_cny:.2f} | 来源: {shop}"
+                if desc:
+                    remarks_val += f" | {desc}"
+
                 cost_item = CostItem(
                     product_id=product_id,
-                    item_name=items_summary[:200],
+                    item_name=item_name_val[:200],
                     actual_cost=0.0,
-                    supplier="待付款",
+                    supplier=shop or "待付款",
                     category=cost_cat or "其他成本",
-                    unit_price=0.0,
-                    quantity=1.0,
-                    remarks=f"待付款 | 预计 {total_amount:.2f} {curr} ≈ CNY {expected_cny:.2f} | 来源: {shop}",
+                    unit_price=parsed_unit_price,
+                    quantity=parsed_qty,
+                    remarks=remarks_val,
                     currency=curr,
                     original_amount=0.0,
                     actual_qty=0.0,
                     actual_unit_price=0.0,
+                    is_budget=True,  # ✨ 标记为预算项，核算表才能以预算明细展现
                     finance_record_id=pending_rec.id,
-                    url=""
+                    url=first_url
                 )
                 db.add(cost_item)
                 db.flush()
@@ -456,9 +497,24 @@ class FinanceService:
             repay_cny = actual_repay * rate
             cost_item.actual_cost = (cost_item.actual_cost or 0.0) + repay_cny
             cost_item.original_amount = (cost_item.original_amount or 0.0) + actual_repay
+
+            # 计算本次还款对应的实际数量与单价
             if not cost_item.actual_qty or cost_item.actual_qty < 0.001:
-                cost_item.actual_qty = 1.0
-            cost_item.actual_unit_price = cost_item.original_amount / cost_item.actual_qty
+                if cost_item.unit_price and cost_item.unit_price > 0.001:
+                    cost_item.actual_qty = actual_repay / cost_item.unit_price
+                elif cost_item.quantity and cost_item.quantity > 0.001:
+                    cost_item.actual_qty = cost_item.quantity
+                else:
+                    cost_item.actual_qty = 1.0
+            else:
+                if cost_item.unit_price and cost_item.unit_price > 0.001:
+                    cost_item.actual_qty += actual_repay / cost_item.unit_price
+
+            if cost_item.actual_qty and cost_item.actual_qty > 0.001:
+                cost_item.actual_unit_price = cost_item.original_amount / cost_item.actual_qty
+            else:
+                cost_item.actual_unit_price = cost_item.original_amount
+
             cost_item.currency = target_liab.currency
 
         # 超额偿还：额外扣款、生成商品成本支出流水，并在成本核算表生成对应分类的成本项

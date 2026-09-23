@@ -121,14 +121,13 @@ class CostState(AppState):
     def total_budget_cost(self) -> float:
         """预算总成本 (折合 CNY)。"""
         rates = dict(self.rates_map)
-        budget_map = {}
+        budget_item_names = {item.item_name for item in self.cost_items if item.is_budget}
+        total_b = sum(
+            to_cny(item.unit_price * item.quantity, item.currency, rates)
+            for item in self.cost_items if item.is_budget
+        )
         for item in self.cost_items:
-            if item.is_budget:
-                equiv = to_cny(item.unit_price * item.quantity, item.currency, rates)
-                budget_map[item.item_name] = equiv
-        total_b = sum(budget_map.values())
-        for item in self.cost_items:
-            if not item.is_budget and item.item_name not in budget_map:
+            if not item.is_budget and item.item_name not in budget_item_names:
                 total_b += item.actual_cost
         return total_b
 
@@ -225,14 +224,13 @@ class CostState(AppState):
             ]
             real_total = sum(i.actual_cost for i in cat_items)
             
-            budget_map = {}
+            cat_budget_names = {i.item_name for i in cat_items if i.is_budget}
+            budget_total = sum(
+                to_cny(i.unit_price * i.quantity, i.currency, rates)
+                for i in cat_items if i.is_budget
+            )
             for i in cat_items:
-                if i.is_budget:
-                    equiv = to_cny(i.unit_price * i.quantity, i.currency, rates)
-                    budget_map[i.item_name] = equiv
-            budget_total = sum(budget_map.values())
-            for i in cat_items:
-                if not i.is_budget and i.item_name not in budget_map:
+                if not i.is_budget and i.item_name not in cat_budget_names:
                     budget_total += i.actual_cost
                     
             real_unit = real_total / self.make_qty if self.make_qty > 0 else 0.0

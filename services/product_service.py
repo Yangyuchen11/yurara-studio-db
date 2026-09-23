@@ -163,6 +163,10 @@ class ProductService:
         # 更新主表的总数量
         target_prod.total_quantity = new_total_qty
 
+        # 实时同步该商品的指标、大货资产与预计可销售总数 (marketable_quantity)
+        from services.inventory_service import InventoryService
+        InventoryService(self.db).sync_product_metrics(target_prod.id)
+
         self.db.commit()
         return target_prod
 

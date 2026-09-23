@@ -7,6 +7,7 @@ Reflex 0.9.x 兼容：使用 Pydantic BaseModel 作为状态的数据类型，�
 从而允许 rx.foreach 成功编译嵌套的列表与属性访问。
 """
 import base64
+import uuid
 import reflex as rx
 from pydantic import BaseModel
 from ..state.app_state import AppState
@@ -43,11 +44,11 @@ class ProductItem(BaseModel):
     color_rows: list[ColorRow] = []
 
 # ---- 空行模板 ----
-def _new_color_row(idx: int) -> ColorRow:
-    return ColorRow(key=f"row_{idx}", name="", quantity=0, image_data="", prices=[], aligned_price_strs=[])
+def _new_color_row(idx: int = 0) -> ColorRow:
+    return ColorRow(key=f"col_{uuid.uuid4().hex[:8]}", name="", quantity=0, image_data="", prices=[], aligned_price_strs=[])
 
-def _new_part_row(idx: int) -> PartRow:
-    return PartRow(key=f"part_{idx}", part_name="", quantity=1)
+def _new_part_row(idx: int = 0) -> PartRow:
+    return PartRow(key=f"part_{uuid.uuid4().hex[:8]}", part_name="", quantity=1)
 
 
 class ProductState(AppState):
@@ -161,7 +162,7 @@ class ProductState(AppState):
 
                     color_rows.append(
                         ColorRow(
-                            key=f"row_{len(color_rows)}",
+                            key=f"col_{uuid.uuid4().hex[:8]}",
                             name=c.color_name,
                             quantity=c.quantity,
                             image_data=getattr(c, "image_data", "") or "",
@@ -214,8 +215,8 @@ class ProductState(AppState):
             for p in self.all_platforms
         ]
         
-        self.create_color_rows = [ColorRow(key="row_0", name="", quantity=0, image_data="", prices=initial_prices)]
-        self.create_part_rows = [_new_part_row(0)]
+        self.create_color_rows = [ColorRow(key=f"col_{uuid.uuid4().hex[:8]}", name="", quantity=0, image_data="", prices=initial_prices)]
+        self.create_part_rows = [_new_part_row()]
         self.selected_platforms_to_add = {}
         self.active_tab = "create"
 
@@ -234,11 +235,18 @@ class ProductState(AppState):
             for p in self.all_platforms
         ]
         self.create_color_rows.append(
-            ColorRow(key=f"row_{len(self.create_color_rows)}", name="", quantity=0, image_data="", prices=initial_prices)
+            ColorRow(key=f"col_{uuid.uuid4().hex[:8]}", name="", quantity=0, image_data="", prices=initial_prices)
         )
 
     @rx.event
     def remove_create_color_row(self, key: str):
+        target = next((r for r in self.create_color_rows if r.key == key), None)
+        if target and target.name.strip():
+            deleted_name = target.name.strip()
+            for p in self.create_part_rows:
+                if deleted_name in p.target_colors:
+                    p.target_colors = [c for c in p.target_colors if c != deleted_name]
+            self.create_part_rows = list(self.create_part_rows)
         self.create_color_rows = [r for r in self.create_color_rows if r.key != key]
 
     @rx.event
@@ -246,7 +254,14 @@ class ProductState(AppState):
         for row in self.create_color_rows:
             if row.key == key:
                 if field == "name":
+                    old_name = row.name.strip()
+                    new_name = value.strip()
                     row.name = value
+                    if old_name and old_name != new_name:
+                        for p in self.create_part_rows:
+                            if old_name in p.target_colors:
+                                p.target_colors = [new_name if c == old_name else c for c in p.target_colors]
+                        self.create_part_rows = list(self.create_part_rows)
                 elif field == "quantity":
                     try:
                         row.quantity = int(value)
@@ -260,7 +275,7 @@ class ProductState(AppState):
         colors = [r.name.strip() for r in self.create_color_rows if r.name.strip()]
         self.create_part_rows.append(
             PartRow(
-                key=f"part_{len(self.create_part_rows)}",
+                key=f"part_{uuid.uuid4().hex[:8]}",
                 part_name="",
                 quantity=1,
                 target_colors=colors,
@@ -447,7 +462,7 @@ class ProductState(AppState):
                         aligned_price_strs.append("-")
                 
                 row = ColorRow(
-                    key=f"edit_row_{i}",
+                    key=f"edit_col_{uuid.uuid4().hex[:8]}",
                     name=c.color_name,
                     quantity=c.quantity,
                     image_data=getattr(c, "image_data", "") or "",
@@ -468,10 +483,10 @@ class ProductState(AppState):
                         grouped_parts[(p_name, p_qty)].append(c.color_name)
 
             part_rows = []
-            for i, ((p_name, p_qty), target_colors) in enumerate(grouped_parts.items()):
+            for (p_name, p_qty), target_colors in grouped_parts.items():
                 part_rows.append(
                     PartRow(
-                        key=f"edit_part_{i}",
+                        key=f"edit_part_{uuid.uuid4().hex[:8]}",
                         part_name=p_name,
                         quantity=p_qty,
                         target_colors=target_colors,
@@ -479,7 +494,7 @@ class ProductState(AppState):
                 )
 
             if not part_rows:
-                part_rows = [PartRow(key="edit_part_0", part_name="", quantity=1, target_colors=[])]
+                part_rows = [PartRow(key=f"edit_part_{uuid.uuid4().hex[:8]}", part_name="", quantity=1, target_colors=[])]
             self.edit_part_rows = part_rows
             self.selected_platforms_to_add = {}
             self.edit_error = ""
@@ -502,11 +517,18 @@ class ProductState(AppState):
             for p in self.all_platforms
         ]
         self.edit_color_rows.append(
-            ColorRow(key=f"edit_row_{len(self.edit_color_rows)}", name="", quantity=0, image_data="", prices=initial_prices)
+            ColorRow(key=f"edit_col_{uuid.uuid4().hex[:8]}", name="", quantity=0, image_data="", prices=initial_prices)
         )
 
     @rx.event
     def remove_edit_color_row(self, key: str):
+        target = next((r for r in self.edit_color_rows if r.key == key), None)
+        if target and target.name.strip():
+            deleted_name = target.name.strip()
+            for p in self.edit_part_rows:
+                if deleted_name in p.target_colors:
+                    p.target_colors = [c for c in p.target_colors if c != deleted_name]
+            self.edit_part_rows = list(self.edit_part_rows)
         self.edit_color_rows = [r for r in self.edit_color_rows if r.key != key]
 
     @rx.event
@@ -514,7 +536,14 @@ class ProductState(AppState):
         for row in self.edit_color_rows:
             if row.key == key:
                 if field == "name":
+                    old_name = row.name.strip()
+                    new_name = value.strip()
                     row.name = value
+                    if old_name and old_name != new_name:
+                        for p in self.edit_part_rows:
+                            if old_name in p.target_colors:
+                                p.target_colors = [new_name if c == old_name else c for c in p.target_colors]
+                        self.edit_part_rows = list(self.edit_part_rows)
                 elif field == "quantity":
                     try:
                         row.quantity = int(value)
@@ -625,7 +654,7 @@ class ProductState(AppState):
         colors = [r.name.strip() for r in self.edit_color_rows if r.name.strip()]
         self.edit_part_rows.append(
             PartRow(
-                key=f"edit_part_{len(self.edit_part_rows)}",
+                key=f"edit_part_{uuid.uuid4().hex[:8]}",
                 part_name="",
                 quantity=1,
                 target_colors=colors,
