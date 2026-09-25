@@ -336,3 +336,19 @@ class ScheduleNode(Base):
     created_at = Column(DateTime, default=datetime.now)
 
     product = relationship("Product")
+
+
+# --- P. 寄售管理 ---
+class ConsignmentItem(Base):
+    __tablename__ = "consignment_items"
+    id = Column(Integer, primary_key=True, index=True)
+    shop_name = Column(String, index=True)            # 寄售店铺
+    product_name = Column(String, index=True)         # 商品名
+    variant = Column(String)                          # 款式
+    quantity = Column(Integer, default=0)             # 寄售数量
+    remaining_qty = Column(Integer, default=0)        # 剩余数量 (手动记录)
+    remarks = Column(String, default="", nullable=True) # 备注
+    date = Column(Date, default=datetime.now)         # 寄售日期
+    inventory_log_id = Column(Integer, ForeignKey("inventory_logs.id", ondelete="SET NULL"), nullable=True)
+
+    inventory_log = relationship("InventoryLog")

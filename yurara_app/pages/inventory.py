@@ -890,7 +890,7 @@ def movement_entry_form() -> rx.Component:
                             custom_form_field(
                                 "出库分类模式",
                                 rx.radio(
-                                    ["消耗", "其他"],
+                                    ["消耗", "寄售", "其他"],
                                     value=InventoryState.op_out_mode,
                                     on_change=InventoryState.set_op_out_mode,
                                     direction="row",
@@ -926,6 +926,21 @@ def movement_entry_form() -> rx.Component:
                                     columns="2",
                                     spacing="3",
                                     width="100%"
+                                ),
+                                rx.fragment()
+                            ),
+                            rx.cond(
+                                InventoryState.is_consignment_out,
+                                custom_form_field(
+                                    "寄售店铺 (必填)",
+                                    rx.input(
+                                        placeholder="如：秋叶原店、某某代理店等...",
+                                        value=InventoryState.op_consignment_shop,
+                                        on_change=InventoryState.set_op_consignment_shop,
+                                        size="2",
+                                        width="100%",
+                                    ),
+                                    width="100%",
                                 ),
                                 rx.fragment()
                             ),
@@ -1194,6 +1209,441 @@ def overproduction_warning_dialog() -> rx.Component:
     )
 
 
+# ================= 寄售管理组件 =================
+def render_consignment_row(row) -> rx.Component:
+    """渲染单笔寄售条目（支持直接编辑剩余数量与备注，点击保存）"""
+    return rx.table.row(
+        rx.table.cell(rx.text(row.date, size="1", color=rx.color("slate", 10))),
+        rx.table.cell(
+            rx.badge(
+                rx.hstack(rx.icon("store", size=11), rx.text(row.shop_name, size="1"), spacing="1", align="center"),
+                color_scheme="violet",
+                variant="surface",
+                size="1"
+            )
+        ),
+        rx.table.cell(rx.text(row.product_name, size="1", weight="bold")),
+        rx.table.cell(rx.badge(row.variant, color_scheme="violet", variant="soft", size="1")),
+        rx.table.cell(
+            rx.badge(
+                rx.fragment(row.quantity.to_string(), " 件"),
+                color_scheme="blue",
+                variant="soft",
+                size="1"
+            )
+        ),
+        # 可编辑剩余数量栏
+        rx.table.cell(
+            rx.hstack(
+                rx.input(
+                    type="number",
+                    min="0",
+                    value=row.remaining_input,
+                    on_change=lambda val: InventoryState.set_consignment_row_input(row.id, "remaining_qty", val),
+                    size="1",
+                    width="70px",
+                ),
+                rx.text("件", size="1", color=rx.color("slate", 10)),
+                rx.badge(row.status_label, color_scheme=row.status_color, variant="surface", size="1"),
+                spacing="1",
+                align="center",
+            )
+        ),
+        # 可编辑备注栏
+        rx.table.cell(
+            rx.input(
+                placeholder="填写寄售相关备注...",
+                value=row.remarks_input,
+                on_change=lambda val: InventoryState.set_consignment_row_input(row.id, "remarks", val),
+                size="1",
+                width="100%",
+                min_width="160px",
+            )
+        ),
+        # 操作栏
+        rx.table.cell(
+            rx.hstack(
+                rx.button(
+                    rx.hstack(rx.icon("save", size=11), rx.text("保存", size="1"), spacing="1", align="center"),
+                    size="1",
+                    color_scheme="violet",
+                    variant="solid",
+                    on_click=InventoryState.save_consignment_row(row.id),
+                ),
+                rx.icon_button(
+                    rx.icon("pencil", size=12),
+                    size="1",
+                    variant="ghost",
+                    color_scheme="gray",
+                    on_click=InventoryState.open_consignment_edit(row.id),
+                ),
+                rx.icon_button(
+                    rx.icon("trash_2", size=12),
+                    size="1",
+                    variant="ghost",
+                    color_scheme="ruby",
+                    on_click=InventoryState.delete_consignment_item(row.id),
+                ),
+                spacing="1",
+                align="center",
+            )
+        ),
+        align="center",
+    )
+
+
+def consignment_management_view() -> rx.Component:
+    """寄售管理视图面板"""
+    return rx.vstack(
+        # 1. 顶部统计指标卡片
+        rx.grid(
+            stat_card("寄售店铺数", InventoryState.consignment_unique_shops_count, unit="家", color_scheme="violet", icon="store"),
+            stat_card("寄售记录数", InventoryState.consignment_total_count, unit="笔", color_scheme="blue", icon="file-text"),
+            stat_card("累计寄售总数", InventoryState.consignment_total_initial_qty, unit="件", color_scheme="cyan", icon="package"),
+            stat_card("当前在店剩余", InventoryState.consignment_total_remaining_qty, unit="件", color_scheme="green", icon="boxes"),
+            stat_card("估算售出/核销", InventoryState.consignment_total_sold_qty, unit="件", color_scheme="amber", icon="shopping-cart"),
+            columns="5",
+            spacing="3",
+            width="100%",
+            margin_top="1rem",
+        ),
+        
+        # 2. 寄售操作与说明 Callout
+        rx.callout(
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("info", size=14, color=rx.color("blue", 11)),
+                    rx.text("💡 寄售管理功能说明：", weight="bold", size="2", color=rx.color("blue", 11)),
+                    spacing="1",
+                    align="center",
+                ),
+                rx.text(
+                    "1. 在【出库】变动中选择【寄售】模式并填写店铺名称，出库扣减实物后将自动记录在此处；",
+                    size="1",
+                    color=rx.color("slate", 11),
+                ),
+                rx.text(
+                    "2. 表格中的【剩余数量】和【备注】均支持在单元格内直接修改，修改后点击该行的【保存】按钮即可更新；",
+                    size="1",
+                    color=rx.color("slate", 11),
+                ),
+                rx.text(
+                    "3. 【剩余数量】专用于手动盘点核对线下在店库存余量，修改该栏仅记录剩余件数，不会向仓库扣减或冲销实物。",
+                    size="1",
+                    color=rx.color("slate", 11),
+                ),
+                spacing="1",
+            ),
+            color_scheme="blue",
+            variant="soft",
+            size="1",
+            width="100%",
+        ),
+
+        # 3. 筛选与操作工具栏
+        rx.card(
+            rx.hstack(
+                # 店铺筛选
+                custom_form_field(
+                    "寄售店铺",
+                    rx.select.root(
+                        rx.select.trigger(width="100%"),
+                        rx.select.content(
+                            rx.foreach(InventoryState.consignment_shop_options, lambda s: rx.select.item(s, value=s)),
+                            position="popper",
+                            side="bottom",
+                        ),
+                        value=InventoryState.consignment_filter_shop,
+                        on_change=InventoryState.set_consignment_filter_shop,
+                        size="1",
+                    ),
+                    width="140px",
+                ),
+                # 商品筛选
+                custom_form_field(
+                    "所属商品",
+                    rx.select.root(
+                        rx.select.trigger(width="100%"),
+                        rx.select.content(
+                            rx.foreach(InventoryState.consignment_product_options, lambda p: rx.select.item(p, value=p)),
+                            position="popper",
+                            side="bottom",
+                        ),
+                        value=InventoryState.consignment_filter_product,
+                        on_change=InventoryState.set_consignment_filter_product,
+                        size="1",
+                    ),
+                    width="160px",
+                ),
+                # 关键词搜索
+                custom_form_field(
+                    "关键字快速搜索",
+                    rx.input(
+                        placeholder="搜索店铺/商品/款式/备注/日期...",
+                        value=InventoryState.consignment_filter_search,
+                        on_change=InventoryState.set_consignment_filter_search,
+                        size="1",
+                        width="100%",
+                    ),
+                    flex="1",
+                    min_width="180px",
+                ),
+                # 按钮组
+                rx.hstack(
+                    rx.button(
+                        rx.hstack(rx.icon("rotate_ccw", size=12), rx.text("重置筛选", size="1"), spacing="1", align="center"),
+                        variant="soft",
+                        color_scheme="gray",
+                        size="1",
+                        on_click=InventoryState.reset_consignment_filters,
+                    ),
+                    rx.button(
+                        rx.hstack(rx.icon("refresh_cw", size=12), rx.text("刷新列表", size="1"), spacing="1", align="center"),
+                        variant="soft",
+                        color_scheme="violet",
+                        size="1",
+                        on_click=InventoryState.load_consignments,
+                    ),
+                    rx.button(
+                        rx.hstack(rx.icon("plus", size=12), rx.text("手动新增寄售", size="1"), spacing="1", align="center"),
+                        color_scheme="green",
+                        size="1",
+                        on_click=InventoryState.open_consignment_add,
+                    ),
+                    spacing="2",
+                    align="end",
+                    padding_bottom="1px",
+                ),
+                spacing="3",
+                align="end",
+                width="100%",
+            ),
+            width="100%",
+            padding="0.75rem",
+        ),
+
+        # 4. 寄售记录表格
+        data_card(
+            "🏪 实体店铺寄售资产明细台账",
+            rx.cond(
+                InventoryState.filtered_consignments.length() == 0,
+                empty_state("暂无寄售记录。可在上方变动操作中选择【出库 -> 寄售】模式出库自动沉淀，或点击【手动新增寄售】直接补录。"),
+                rx.table.root(
+                    rx.table.header(
+                        rx.table.row(
+                            rx.table.column_header_cell("寄售日期", size="1"),
+                            rx.table.column_header_cell("寄售店铺", size="1"),
+                            rx.table.column_header_cell("商品名称", size="1"),
+                            rx.table.column_header_cell("款式规格", size="1"),
+                            rx.table.column_header_cell("初始寄售数", size="1"),
+                            rx.table.column_header_cell("【剩余数量】(手动编辑)", size="1"),
+                            rx.table.column_header_cell("【备注说明】(手动编辑)", size="1"),
+                            rx.table.column_header_cell("操作", size="1"),
+                        )
+                    ),
+                    rx.table.body(
+                        rx.foreach(
+                            InventoryState.filtered_consignments,
+                            render_consignment_row
+                        )
+                    ),
+                    size="1",
+                    width="100%",
+                    variant="surface",
+                ),
+            ),
+        ),
+        spacing="4",
+        width="100%",
+    )
+
+
+def consignment_edit_dialog() -> rx.Component:
+    """弹窗编辑寄售记录详情"""
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.dialog.title("📝 编辑寄售记录详情"),
+            rx.dialog.description("核对并调整寄售店铺、手动维护剩余件数及补充备注。", size="1"),
+            rx.vstack(
+                custom_form_field(
+                    "寄售店铺名称",
+                    rx.input(
+                        value=InventoryState.modal_cons_shop,
+                        on_change=InventoryState.set_modal_cons_shop,
+                        size="2",
+                        width="100%",
+                    )
+                ),
+                rx.grid(
+                    custom_form_field(
+                        "商品与款式 (只读)",
+                        rx.text(rx.fragment(InventoryState.modal_cons_product, " - ", InventoryState.modal_cons_variant), size="2", weight="bold"),
+                    ),
+                    custom_form_field(
+                        "初始寄售数量 (只读)",
+                        rx.badge(rx.fragment(InventoryState.modal_cons_qty.to_string(), " 件"), color_scheme="blue", size="2"),
+                    ),
+                    columns="2",
+                    spacing="3",
+                    width="100%",
+                ),
+                custom_form_field(
+                    "剩余数量 (件，用于手动记录当前还剩几件)",
+                    rx.input(
+                        type="number",
+                        min="0",
+                        value=InventoryState.modal_cons_remaining_qty.to_string(),
+                        on_change=InventoryState.set_modal_cons_remaining_qty,
+                        size="2",
+                        width="100%",
+                    ),
+                    helper="此栏目仅用于手动记录剩余数量，不会扣减或冲销主仓库实物。"
+                ),
+                custom_form_field(
+                    "备注说明",
+                    rx.input(
+                        placeholder="寄售说明、展出情况或结款备忘...",
+                        value=InventoryState.modal_cons_remarks,
+                        on_change=InventoryState.set_modal_cons_remarks,
+                        size="2",
+                        width="100%",
+                    )
+                ),
+                rx.hstack(
+                    rx.dialog.close(
+                        rx.button("取消", variant="soft", color_scheme="gray", on_click=InventoryState.close_consignment_edit)
+                    ),
+                    rx.button("确认保存", on_click=InventoryState.submit_consignment_edit, color_scheme="violet"),
+                    spacing="3",
+                    justify="end",
+                    width="100%",
+                    margin_top="1rem",
+                ),
+                spacing="3",
+                width="100%",
+            ),
+            max_width="480px",
+        ),
+        open=InventoryState.is_consignment_modal_open,
+    )
+
+
+def consignment_add_dialog() -> rx.Component:
+    """手动新增寄售记录弹窗"""
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.dialog.title("➕ 手动新增寄售记录"),
+            rx.dialog.description("手动补录一条已有外部寄售，用于独立跟踪店铺剩余数量与备注。", size="1"),
+            rx.vstack(
+                custom_form_field(
+                    "寄售店铺名称 (必填)",
+                    rx.input(
+                        placeholder="如：秋叶原店、某某代理店等...",
+                        value=InventoryState.add_cons_shop,
+                        on_change=InventoryState.set_add_cons_shop,
+                        size="2",
+                        width="100%",
+                    )
+                ),
+                rx.grid(
+                    custom_form_field(
+                        "寄售商品 (必选)",
+                        rx.select.root(
+                            rx.select.trigger(width="100%"),
+                            rx.select.content(
+                                rx.foreach(InventoryState.product_names, lambda p: rx.select.item(p, value=p)),
+                                position="popper",
+                                side="bottom",
+                            ),
+                            value=InventoryState.add_cons_product,
+                            on_change=InventoryState.set_add_cons_product,
+                            size="2",
+                        )
+                    ),
+                    custom_form_field(
+                        "款式颜色",
+                        rx.select.root(
+                            rx.select.trigger(width="100%"),
+                            rx.select.content(
+                                rx.foreach(InventoryState.active_variants, lambda v: rx.select.item(v, value=v)),
+                                position="popper",
+                                side="bottom",
+                            ),
+                            value=InventoryState.add_cons_variant,
+                            on_change=InventoryState.set_add_cons_variant,
+                            size="2",
+                        )
+                    ),
+                    columns="2",
+                    spacing="3",
+                    width="100%",
+                ),
+                rx.grid(
+                    custom_form_field(
+                        "寄售数量 (件)",
+                        rx.input(
+                            type="number",
+                            min="1",
+                            value=InventoryState.add_cons_qty.to_string(),
+                            on_change=InventoryState.set_add_cons_qty,
+                            size="2",
+                            width="100%",
+                        )
+                    ),
+                    custom_form_field(
+                        "初始剩余数量 (件)",
+                        rx.input(
+                            type="number",
+                            min="0",
+                            value=InventoryState.add_cons_remaining_qty.to_string(),
+                            on_change=InventoryState.set_add_cons_remaining_qty,
+                            size="2",
+                            width="100%",
+                        )
+                    ),
+                    columns="2",
+                    spacing="3",
+                    width="100%",
+                ),
+                custom_form_field(
+                    "寄售日期",
+                    rx.input(
+                        type="date",
+                        value=InventoryState.add_cons_date,
+                        on_change=InventoryState.set_add_cons_date,
+                        size="2",
+                        width="100%",
+                    )
+                ),
+                custom_form_field(
+                    "备注说明 (选填)",
+                    rx.input(
+                        placeholder="如：首批样衣试销、展示样品等...",
+                        value=InventoryState.add_cons_remarks,
+                        on_change=InventoryState.set_add_cons_remarks,
+                        size="2",
+                        width="100%",
+                    )
+                ),
+                rx.hstack(
+                    rx.dialog.close(
+                        rx.button("取消", variant="soft", color_scheme="gray", on_click=InventoryState.close_consignment_add)
+                    ),
+                    rx.button("确认添加", on_click=InventoryState.submit_consignment_add, color_scheme="green"),
+                    spacing="3",
+                    justify="end",
+                    width="100%",
+                    margin_top="1rem",
+                ),
+                spacing="3",
+                width="100%",
+            ),
+            max_width="480px",
+        ),
+        open=InventoryState.is_consignment_add_open,
+    )
+
+
 def inventory_page() -> rx.Component:
     """库存主页面布局。"""
     return page_layout(
@@ -1207,6 +1657,10 @@ def inventory_page() -> rx.Component:
                     rx.tabs.trigger(
                         rx.hstack(rx.icon("store", size=14), rx.text("物理仓库与明细"), spacing="1"),
                         value="warehouse",
+                    ),
+                    rx.tabs.trigger(
+                        rx.hstack(rx.icon("shopping-bag", size=14), rx.text("寄售管理"), spacing="1"),
+                        value="consignment",
                     ),
                     width="100%"
                 ),
@@ -1550,14 +2004,21 @@ def inventory_page() -> rx.Component:
                     ),
                     value="warehouse",
                 ),
+                # ==== 选项卡 3：寄售管理 ====
+                rx.tabs.content(
+                    consignment_management_view(),
+                    value="consignment",
+                ),
                 width="100%",
                 value=InventoryState.active_tab,
                 on_change=InventoryState.select_tab
             ),
             
-            # 日志备注弹出 Dialog 与超计划预警拦截 Dialog
+            # 日志备注弹出 Dialog、超计划预警拦截 Dialog 及 寄售弹窗
             log_memo_dialog(),
             overproduction_warning_dialog(),
+            consignment_edit_dialog(),
+            consignment_add_dialog(),
             spacing="4",
             width="100%"
         ),

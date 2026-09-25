@@ -13,7 +13,8 @@ from models import (
     FinanceRecord, CostItem, InventoryLog, FixedAsset, FixedAssetLog,
     ConsumableItem, ConsumableLog, CompanyBalanceItem,
     SalesOrder, SalesOrderItem, OrderRefund,
-    OfflineTemplate, OfflineTemplateItem
+    OfflineTemplate, OfflineTemplateItem,
+    ConsignmentItem
 )
 
 TABLES_MAP = [
@@ -35,6 +36,7 @@ TABLES_MAP = [
     ("order_refunds.csv", "order_refunds", OrderRefund),
     ("offline_templates.csv", "offline_templates", OfflineTemplate),
     ("offline_template_items.csv", "offline_template_items", OfflineTemplateItem),
+    ("consignments.csv", "consignment_items", ConsignmentItem),
 ]
 
 

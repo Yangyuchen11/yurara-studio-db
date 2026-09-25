@@ -11,7 +11,7 @@ from typing import Any
 from ..state.app_state import AppState
 from services.inventory_service import InventoryService
 from constants import PRODUCT_COST_CATEGORIES, StockLogReason
-from models import Product, ProductColor, Warehouse
+from models import Product, ProductColor, Warehouse, ConsignmentItem
 
 
 class PartStatRow(BaseModel):
@@ -85,6 +85,22 @@ class BatchPartRow(BaseModel):
     input_val: str = ""
 
 
+class ConsignmentItemModel(BaseModel):
+    id: int = 0
+    date: str = ""
+    shop_name: str = ""
+    product_name: str = ""
+    variant: str = ""
+    quantity: int = 0
+    remaining_qty: int = 0
+    remaining_input: str = ""
+    remarks: str = ""
+    remarks_input: str = ""
+    inventory_log_id: int | None = None
+    status_label: str = "全部在售"
+    status_color: str = "green"
+
+
 class InventoryState(AppState):
     active_tab: str = "stock"  # "stock" 或 "warehouse"
     product_names: list[str] = []
@@ -131,15 +147,44 @@ class InventoryState(AppState):
     op_is_set: bool = True
     op_part: str = ""
     op_qty: int = 1
-    op_out_mode: str = "消耗"  # "消耗" 或 "其他"
+    op_out_mode: str = "消耗"  # "消耗", "寄售" 或 "其他"
     op_cons_cat: str = PRODUCT_COST_CATEGORIES[0]
     op_cons_content: str = ""
+    op_consignment_shop: str = ""
     op_remark: str = ""
     op_auto_inspect_complete: bool = False  # 勾选时一键连贯完成【入库验收】+【验收完成入库】
 
     # 批量录入矩阵状态
     batch_mode: str = "set"  # "set"(成套) 或 "part"(散件)
     batch_inputs: dict[str, str] = {}
+
+    # 寄售管理状态与筛选
+    consignments: list[ConsignmentItemModel] = []
+    consignment_inputs: dict[str, str] = {}
+    consignment_filter_shop: str = "全部店铺"
+    consignment_filter_product: str = "全部商品"
+    consignment_filter_search: str = ""
+
+    # 寄售编辑弹窗状态
+    is_consignment_modal_open: bool = False
+    modal_cons_id: int = 0
+    modal_cons_shop: str = ""
+    modal_cons_product: str = ""
+    modal_cons_variant: str = ""
+    modal_cons_qty: int = 0
+    modal_cons_remaining_qty: int = 0
+    modal_cons_remarks: str = ""
+    modal_cons_date: str = ""
+
+    # 寄售手动新增弹窗状态
+    is_consignment_add_open: bool = False
+    add_cons_shop: str = ""
+    add_cons_product: str = ""
+    add_cons_variant: str = ""
+    add_cons_qty: int = 1
+    add_cons_remaining_qty: int = 1
+    add_cons_remarks: str = ""
+    add_cons_date: str = ""
     
     # 新建仓库状态
     new_wh_name: str = ""
@@ -204,6 +249,10 @@ class InventoryState(AppState):
     @rx.var
     def is_consumable_out(self) -> bool:
         return self.is_out_mode and self.op_out_mode == "消耗"
+
+    @rx.var
+    def is_consignment_out(self) -> bool:
+        return self.is_out_mode and self.op_out_mode == "寄售"
 
     @rx.var
     def active_variants(self) -> list[str]:
@@ -415,6 +464,93 @@ class InventoryState(AppState):
         """当前筛选显示名（用于 select 控件的 value）。"""
         return self.wh_filter_product if self.wh_filter_product else "全部商品"
 
+    # --- 寄售管理计算属性 ---
+    @rx.var
+    def consignment_shop_options(self) -> list[str]:
+        shops = sorted(list({c.shop_name for c in self.consignments if c.shop_name}))
+        return ["全部店铺"] + shops
+
+    @rx.var
+    def consignment_product_options(self) -> list[str]:
+        return ["全部商品"] + self.product_names
+
+    @rx.var
+    def filtered_consignments(self) -> list[ConsignmentItemModel]:
+        res = []
+        for c in self.consignments:
+            if self.consignment_filter_shop != "全部店铺" and c.shop_name != self.consignment_filter_shop:
+                continue
+            if self.consignment_filter_product != "全部商品" and c.product_name != self.consignment_filter_product:
+                continue
+            if self.consignment_filter_search:
+                q = self.consignment_filter_search.lower()
+                matched = (
+                    q in c.shop_name.lower() or 
+                    q in c.product_name.lower() or 
+                    q in c.variant.lower() or 
+                    q in (c.remarks or "").lower() or 
+                    q in c.date
+                )
+                if not matched:
+                    continue
+
+            rem_val = self.consignment_inputs.get(f"{c.id}::remaining_qty", str(c.remaining_qty))
+            remk_val = self.consignment_inputs.get(f"{c.id}::remarks", c.remarks or "")
+
+            try:
+                curr_rem = int(rem_val)
+            except ValueError:
+                curr_rem = c.remaining_qty
+
+            if curr_rem <= 0:
+                s_label = "已售罄"
+                s_color = "gray"
+            elif curr_rem < c.quantity:
+                s_label = f"余 {curr_rem}/{c.quantity} 件"
+                s_color = "amber"
+            else:
+                s_label = "全部在售"
+                s_color = "green"
+
+            res.append(
+                ConsignmentItemModel(
+                    id=c.id,
+                    date=c.date,
+                    shop_name=c.shop_name,
+                    product_name=c.product_name,
+                    variant=c.variant,
+                    quantity=c.quantity,
+                    remaining_qty=c.remaining_qty,
+                    remaining_input=rem_val,
+                    remarks=c.remarks or "",
+                    remarks_input=remk_val,
+                    inventory_log_id=c.inventory_log_id,
+                    status_label=s_label,
+                    status_color=s_color,
+                )
+            )
+        return res
+
+    @rx.var
+    def consignment_total_count(self) -> int:
+        return len(self.filtered_consignments)
+
+    @rx.var
+    def consignment_total_initial_qty(self) -> int:
+        return sum(c.quantity for c in self.filtered_consignments)
+
+    @rx.var
+    def consignment_total_remaining_qty(self) -> int:
+        return sum(c.remaining_qty for c in self.filtered_consignments)
+
+    @rx.var
+    def consignment_total_sold_qty(self) -> int:
+        return max(0, self.consignment_total_initial_qty - self.consignment_total_remaining_qty)
+
+    @rx.var
+    def consignment_unique_shops_count(self) -> int:
+        return len({c.shop_name for c in self.filtered_consignments if c.shop_name})
+
     # --- 物理变动日志筛选与分页计算属性 ---
     @rx.var
     def log_product_options(self) -> list[str]:
@@ -551,6 +687,7 @@ class InventoryState(AppState):
                 self.selected_product_name = self.product_names[0]
                 
             self.load_warehouse_list(service)
+            self._do_load_consignments(service)
             if self.selected_product_name:
                 self.load_current_inventory(service)
         finally:
@@ -563,7 +700,10 @@ class InventoryState(AppState):
         db = self.get_db()
         try:
             service = InventoryService(db)
-            self.load_warehouse_list(service)
+            if tab_name == "warehouse":
+                self.load_warehouse_list(service)
+            elif tab_name == "consignment":
+                self._do_load_consignments(service)
         finally:
             db.close()
 
@@ -796,6 +936,8 @@ class InventoryState(AppState):
     @rx.event
     def set_op_cons_content(self, val: str): self.op_cons_content = val
     @rx.event
+    def set_op_consignment_shop(self, val: str): self.op_consignment_shop = val
+    @rx.event
     def set_op_remark(self, val: str): self.op_remark = val
 
     @rx.event
@@ -874,6 +1016,8 @@ class InventoryState(AppState):
             return rx.toast("请先选择商品", level="error")
         if self.is_consumable_out and not self.op_cons_content.strip():
             return rx.toast("请填写【消耗内容】", level="error")
+        if self.is_consignment_out and not self.op_consignment_shop.strip():
+            return rx.toast("请填写【寄售店铺】", level="error")
 
         prefix = "SET::" if self.batch_mode == "set" else "PART::"
         entries = []
@@ -988,7 +1132,8 @@ class InventoryState(AppState):
                 out_type=self.op_out_mode,
                 cons_cat=self.op_cons_cat,
                 cons_content=self.op_cons_content.strip(),
-                auto_inspect_complete=self.op_auto_inspect_complete
+                auto_inspect_complete=self.op_auto_inspect_complete,
+                consignment_shop=self.op_consignment_shop.strip()
             )
 
             service.commit()
@@ -997,10 +1142,12 @@ class InventoryState(AppState):
             self.batch_inputs = {}
             self.op_remark = ""
             self.op_cons_content = ""
+            self.op_consignment_shop = ""
 
             # 刷新
             self.load_current_inventory(service)
             self.load_warehouse_list(service)
+            self._do_load_consignments(service)
 
             # 同步缓存
             from cache_manager import sync_all_caches
@@ -1021,6 +1168,8 @@ class InventoryState(AppState):
             return rx.toast("变动数量必须大于 0", level="error")
         if self.is_consumable_out and not self.op_cons_content.strip():
             return rx.toast("请填写【消耗内容】", level="error")
+        if self.is_consignment_out and not self.op_consignment_shop.strip():
+            return rx.toast("请填写【寄售店铺】", level="error")
             
         db = self.get_db()
         try:
@@ -1085,7 +1234,8 @@ class InventoryState(AppState):
                     date_obj=date_val, remark=self.op_remark.strip(),
                     warehouse_id=wh_id, to_warehouse_id=to_wh_id,
                     is_set=is_set_op, part_name=actual_part_name,
-                    out_type=self.op_out_mode, cons_cat=self.op_cons_cat, cons_content=self.op_cons_content.strip()
+                    out_type=self.op_out_mode, cons_cat=self.op_cons_cat, cons_content=self.op_cons_content.strip(),
+                    consignment_shop=self.op_consignment_shop.strip()
                 )
                 service.add_inventory_movement(
                     product_id=prod.id, product_name=prod.name, variant=self.op_variant,
@@ -1093,7 +1243,8 @@ class InventoryState(AppState):
                     date_obj=date_val, remark=self.op_remark.strip(),
                     warehouse_id=wh_id, to_warehouse_id=to_wh_id,
                     is_set=is_set_op, part_name=actual_part_name,
-                    out_type=self.op_out_mode, cons_cat=self.op_cons_cat, cons_content=self.op_cons_content.strip()
+                    out_type=self.op_out_mode, cons_cat=self.op_cons_cat, cons_content=self.op_cons_content.strip(),
+                    consignment_shop=self.op_consignment_shop.strip()
                 )
                 msg = f"一键验收+合格入库成功（已生成入库验收与合格入库流水各1笔）"
             else:
@@ -1103,7 +1254,8 @@ class InventoryState(AppState):
                     date_obj=date_val, remark=self.op_remark.strip(),
                     warehouse_id=wh_id, to_warehouse_id=to_wh_id,
                     is_set=is_set_op, part_name=actual_part_name,
-                    out_type=self.op_out_mode, cons_cat=self.op_cons_cat, cons_content=self.op_cons_content.strip()
+                    out_type=self.op_out_mode, cons_cat=self.op_cons_cat, cons_content=self.op_cons_content.strip(),
+                    consignment_shop=self.op_consignment_shop.strip()
                 )
             
             service.commit()
@@ -1111,10 +1263,12 @@ class InventoryState(AppState):
             # 刷新
             self.load_current_inventory(service)
             self.load_warehouse_list(service)
+            self._do_load_consignments(service)
             
             # 重置特殊表单
             self.op_remark = ""
             self.op_cons_content = ""
+            self.op_consignment_shop = ""
             
             # 同步缓存
             from cache_manager import sync_all_caches
@@ -1308,3 +1462,267 @@ class InventoryState(AppState):
         self.log_filter_product = "全部商品"
         self.log_filter_variant = "全部款式"
         self.log_page_index = 1
+
+    # ===================== 寄售管理事件与数据加载 =====================
+    @rx.event
+    def load_consignments(self):
+        """从数据库加载所有寄售条目（供UI事件绑定）"""
+        db = self.get_db()
+        try:
+            service = InventoryService(db)
+            self._do_load_consignments(service)
+        finally:
+            db.close()
+
+    def _do_load_consignments(self, service: InventoryService):
+        """从数据库加载所有寄售条目（内部复用 Session）"""
+        items = service.get_all_consignments()
+        row_list = []
+        for i in items:
+            date_str = i.date.strftime("%Y-%m-%d") if i.date else ""
+            rem_q = i.remaining_qty if i.remaining_qty is not None else (i.quantity or 0)
+            if rem_q <= 0:
+                s_label = "已售罄"
+                s_color = "gray"
+            elif rem_q < i.quantity:
+                s_label = f"余 {rem_q}/{i.quantity} 件"
+                s_color = "amber"
+            else:
+                s_label = "全部在售"
+                s_color = "green"
+
+            row_list.append(
+                ConsignmentItemModel(
+                    id=i.id,
+                    date=date_str,
+                    shop_name=i.shop_name or "",
+                    product_name=i.product_name or "",
+                    variant=i.variant or "通用",
+                    quantity=i.quantity or 0,
+                    remaining_qty=rem_q,
+                    remaining_input=str(rem_q),
+                    remarks=i.remarks or "",
+                    remarks_input=i.remarks or "",
+                    inventory_log_id=i.inventory_log_id,
+                    status_label=s_label,
+                    status_color=s_color,
+                )
+            )
+        self.consignments = row_list
+
+    @rx.event
+    def set_consignment_row_input(self, item_id: int, field: str, val: str):
+        self.consignment_inputs = {**self.consignment_inputs, f"{item_id}::{field}": val}
+
+    @rx.event
+    def save_consignment_row(self, item_id: int):
+        """保存单行寄售的剩余数量和备注"""
+        db = self.get_db()
+        try:
+            service = InventoryService(db)
+            rem_key = f"{item_id}::remaining_qty"
+            remk_key = f"{item_id}::remarks"
+            
+            curr = next((c for c in self.consignments if c.id == item_id), None)
+            new_rem = None
+            if rem_key in self.consignment_inputs:
+                try:
+                    new_rem = int(self.consignment_inputs[rem_key].strip())
+                    if new_rem < 0:
+                        return rx.toast("剩余数量不能小于 0", level="error")
+                except ValueError:
+                    return rx.toast("剩余数量必须为有效整数", level="error")
+            elif curr is not None:
+                new_rem = curr.remaining_qty
+
+            new_remk = self.consignment_inputs.get(remk_key, curr.remarks if curr else None)
+
+            service.update_consignment_item(item_id, remaining_qty=new_rem, remarks=new_remk)
+            service.commit()
+
+            # 清理该行的输入缓存
+            new_inputs = {k: v for k, v in self.consignment_inputs.items() if not k.startswith(f"{item_id}::")}
+            self.consignment_inputs = new_inputs
+
+            self._do_load_consignments(service)
+            return rx.toast("寄售记录已成功更新！")
+        except Exception as e:
+            db.rollback()
+            return rx.toast(f"保存失败: {e}", level="error")
+        finally:
+            db.close()
+
+    @rx.event
+    def open_consignment_edit(self, item_id: int):
+        target = next((c for c in self.consignments if c.id == item_id), None)
+        if not target:
+            return rx.toast("未找到对应记录", level="error")
+        self.modal_cons_id = target.id
+        self.modal_cons_shop = target.shop_name
+        self.modal_cons_product = target.product_name
+        self.modal_cons_variant = target.variant
+        self.modal_cons_qty = target.quantity
+        self.modal_cons_remaining_qty = target.remaining_qty
+        self.modal_cons_remarks = target.remarks
+        self.modal_cons_date = target.date
+        self.is_consignment_modal_open = True
+
+    @rx.event
+    def close_consignment_edit(self):
+        self.is_consignment_modal_open = False
+
+    @rx.event
+    def set_modal_cons_shop(self, val: str):
+        self.modal_cons_shop = val
+
+    @rx.event
+    def set_modal_cons_remaining_qty(self, val: str):
+        try:
+            self.modal_cons_remaining_qty = max(0, int(val)) if val else 0
+        except ValueError:
+            pass
+
+    @rx.event
+    def set_modal_cons_remarks(self, val: str):
+        self.modal_cons_remarks = val
+
+    @rx.event
+    def submit_consignment_edit(self):
+        db = self.get_db()
+        try:
+            service = InventoryService(db)
+            service.update_consignment_item(
+                self.modal_cons_id,
+                remaining_qty=self.modal_cons_remaining_qty,
+                remarks=self.modal_cons_remarks,
+                shop_name=self.modal_cons_shop
+            )
+            service.commit()
+            self.is_consignment_modal_open = False
+            self._do_load_consignments(service)
+            return rx.toast("寄售详情已更新！")
+        except Exception as e:
+            db.rollback()
+            return rx.toast(f"更新失败: {e}", level="error")
+        finally:
+            db.close()
+
+    @rx.event
+    def delete_consignment_item(self, item_id: int):
+        db = self.get_db()
+        try:
+            service = InventoryService(db)
+            service.delete_consignment_item(item_id)
+            service.commit()
+            self._do_load_consignments(service)
+            return rx.toast("寄售记录已成功删除！")
+        except Exception as e:
+            db.rollback()
+            return rx.toast(f"删除失败: {e}", level="error")
+        finally:
+            db.close()
+
+    @rx.event
+    def open_consignment_add(self):
+        self.add_cons_shop = ""
+        self.add_cons_product = self.selected_product_name if self.selected_product_name else (self.product_names[0] if self.product_names else "")
+        self.add_cons_variant = "通用"
+        self.add_cons_qty = 1
+        self.add_cons_remaining_qty = 1
+        self.add_cons_remarks = ""
+        self.add_cons_date = date.today().strftime("%Y-%m-%d")
+        self.is_consignment_add_open = True
+
+    @rx.event
+    def close_consignment_add(self):
+        self.is_consignment_add_open = False
+
+    @rx.event
+    def set_add_cons_shop(self, val: str):
+        self.add_cons_shop = val
+
+    @rx.event
+    def set_add_cons_product(self, val: str):
+        self.add_cons_product = val
+
+    @rx.event
+    def set_add_cons_variant(self, val: str):
+        self.add_cons_variant = val
+
+    @rx.event
+    def set_add_cons_qty(self, val: str):
+        try:
+            q = int(val) if val else 1
+            self.add_cons_qty = q
+            self.add_cons_remaining_qty = q
+        except ValueError:
+            pass
+
+    @rx.event
+    def set_add_cons_remaining_qty(self, val: str):
+        try:
+            self.add_cons_remaining_qty = max(0, int(val)) if val else 0
+        except ValueError:
+            pass
+
+    @rx.event
+    def set_add_cons_remarks(self, val: str):
+        self.add_cons_remarks = val
+
+    @rx.event
+    def set_add_cons_date(self, val: str):
+        self.add_cons_date = val
+
+    @rx.event
+    def submit_consignment_add(self):
+        if not self.add_cons_shop.strip():
+            return rx.toast("请填写寄售店铺名称", level="error")
+        if not self.add_cons_product.strip():
+            return rx.toast("请选择寄售商品", level="error")
+        if self.add_cons_qty <= 0:
+            return rx.toast("寄售数量必须大于 0", level="error")
+        
+        try:
+            d = date.fromisoformat(self.add_cons_date)
+        except Exception:
+            d = date.today()
+
+        db = self.get_db()
+        try:
+            service = InventoryService(db)
+            service.add_consignment_item(
+                shop_name=self.add_cons_shop.strip(),
+                product_name=self.add_cons_product.strip(),
+                variant=self.add_cons_variant.strip(),
+                quantity=self.add_cons_qty,
+                remaining_qty=self.add_cons_remaining_qty,
+                remarks=self.add_cons_remarks.strip(),
+                date_obj=d
+            )
+            service.commit()
+            self.is_consignment_add_open = False
+            self._do_load_consignments(service)
+            return rx.toast("寄售记录已成功添加！")
+        except Exception as e:
+            db.rollback()
+            return rx.toast(f"添加失败: {e}", level="error")
+        finally:
+            db.close()
+
+    @rx.event
+    def set_consignment_filter_shop(self, val: str):
+        self.consignment_filter_shop = val
+
+    @rx.event
+    def set_consignment_filter_product(self, val: str):
+        self.consignment_filter_product = val
+
+    @rx.event
+    def set_consignment_filter_search(self, val: str):
+        self.consignment_filter_search = val
+
+    @rx.event
+    def reset_consignment_filters(self):
+        self.consignment_filter_shop = "全部店铺"
+        self.consignment_filter_product = "全部商品"
+        self.consignment_filter_search = ""

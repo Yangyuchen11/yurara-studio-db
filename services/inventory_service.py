@@ -2,7 +2,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from datetime import date
-from models import Product, InventoryLog, ProductColor, CompanyBalanceItem, CostItem, FinanceRecord, Warehouse
+from models import Product, InventoryLog, ProductColor, CompanyBalanceItem, CostItem, FinanceRecord, Warehouse, ConsignmentItem
 from constants import PRODUCT_COST_CATEGORIES, AssetPrefix, BalanceCategory, Currency, StockLogReason, FinanceCategory
 
 class InventoryService:
@@ -292,7 +292,8 @@ class InventoryService:
     def add_inventory_movement(self, product_id, product_name, variant, quantity, 
                                move_type, date_obj, remark, warehouse_id=None, to_warehouse_id=None, 
                                is_set=True, part_name=None,
-                               out_type=None, cons_cat=None, cons_content=None):
+                               out_type=None, cons_cat=None, cons_content=None,
+                               consignment_shop=None):
         
         if quantity <= 0:
             raise ValueError("变动数量必须大于 0！")
@@ -446,15 +447,41 @@ class InventoryService:
                 self.db.flush() 
                 target_cost_id = new_cost.id
 
-            log_note = f"消耗: {cons_content} | {remark}" if out_type == "消耗" else f"出库: {remark}"
+            if out_type == "消耗":
+                log_note = f"消耗: {cons_content} | {remark}" if remark else f"消耗: {cons_content}"
+            elif out_type == "寄售":
+                shop_label = consignment_shop.strip() if consignment_shop else "默认寄售点"
+                log_note = f"寄售: {shop_label} | {remark}" if remark else f"寄售: {shop_label}"
+            else:
+                log_note = f"出库: {remark}" if remark else "出库"
             
-            self.db.add(InventoryLog(
+            new_log = InventoryLog(
                 product_name=product_name, variant=variant, change_amount=actual_change_amt,
                 reason=StockLogReason.OUT_STOCK, note=log_note, is_other_out=True, date=date_obj,
                 warehouse_id=warehouse_id, part_name=None if is_set else part_name,
                 cost_item_id=target_cost_id 
-            ))
-            msg = "出库成功"
+            )
+            self.db.add(new_log)
+            self.db.flush()
+
+            if out_type == "寄售":
+                shop_label = consignment_shop.strip() if consignment_shop else "默认寄售点"
+                cons_item = ConsignmentItem(
+                    shop_name=shop_label,
+                    product_name=product_name,
+                    variant=variant,
+                    quantity=quantity,
+                    remaining_qty=quantity,
+                    remarks=remark or "",
+                    date=date_obj,
+                    inventory_log_id=new_log.id
+                )
+                self.db.add(cons_item)
+
+            if out_type == "寄售":
+                msg = f"【{product_name}-{variant}】寄售出库成功并已录入寄售管理"
+            else:
+                msg = "出库成功"
 
         elif move_type == StockLogReason.IN_INSPECT:
             self.db.add(InventoryLog(
@@ -509,7 +536,7 @@ class InventoryService:
     def add_batch_inventory_movements(self, product_id, product_name, entries: list[dict], 
                                       move_type, date_obj, batch_remark, warehouse_id=None, 
                                       to_warehouse_id=None, out_type=None, cons_cat=None, cons_content=None,
-                                      auto_inspect_complete=False):
+                                      auto_inspect_complete=False, consignment_shop=None):
         """在一个数据库事务内批量执行多款式/多散件库存变动。"""
         if not entries:
             raise ValueError("没有待录入的条目！")
@@ -541,7 +568,8 @@ class InventoryService:
                     part_name=actual_p_name,
                     out_type=out_type,
                     cons_cat=cons_cat,
-                    cons_content=cons_content
+                    cons_content=cons_content,
+                    consignment_shop=consignment_shop
                 )
                 # 2. 紧接着录入验收完成入库
                 self.add_inventory_movement(
@@ -558,7 +586,8 @@ class InventoryService:
                     part_name=actual_p_name,
                     out_type=out_type,
                     cons_cat=cons_cat,
-                    cons_content=cons_content
+                    cons_content=cons_content,
+                    consignment_shop=consignment_shop
                 )
                 success_count += 2
                 total_quantity += qty
@@ -577,7 +606,8 @@ class InventoryService:
                     part_name=actual_p_name,
                     out_type=out_type,
                     cons_cat=cons_cat,
-                    cons_content=cons_content
+                    cons_content=cons_content,
+                    consignment_shop=consignment_shop
                 )
                 success_count += 1
                 total_quantity += qty
@@ -689,6 +719,14 @@ class InventoryService:
                         msg_list.append("关联消耗成本记录已删除(按向后兼容模式)")
                 except: pass
 
+        # 如果是寄售出库，清理关联的寄售记录
+        is_consignment_out = (log_to_del.reason == StockLogReason.OUT_STOCK and "寄售" in (log_to_del.note or ""))
+        if is_consignment_out:
+            cons_item = self.db.query(ConsignmentItem).filter(ConsignmentItem.inventory_log_id == log_to_del.id).first()
+            if cons_item:
+                self.db.delete(cons_item)
+                msg_list.append("关联寄售记录已同步删除")
+
         if log_to_del.reason == StockLogReason.OUT_STOCK and log_to_del.is_sold:
             target_fin = self.db.query(FinanceRecord).filter(
                 FinanceRecord.date == log_to_del.date,
@@ -729,3 +767,55 @@ class InventoryService:
         from services.cost_service import CostService
         cost_service = CostService(self.db)
         cost_service.perform_wip_fix(product_id)
+
+    # ================= 8. 寄售管理 =================
+    def get_all_consignments(self):
+        """获取所有寄售记录，按日期倒序"""
+        return self.db.query(ConsignmentItem).order_by(ConsignmentItem.date.desc(), ConsignmentItem.id.desc()).all()
+
+    def update_consignment_item(self, item_id: int, remaining_qty: int = None, remarks: str = None, shop_name: str = None):
+        """更新寄售条目（剩余数量/备注/店铺）"""
+        item = self.db.query(ConsignmentItem).filter(ConsignmentItem.id == item_id).first()
+        if not item:
+            raise ValueError(f"未找到 ID 为 {item_id} 的寄售记录")
+        if remaining_qty is not None:
+            item.remaining_qty = max(0, int(remaining_qty))
+        if remarks is not None:
+            item.remarks = str(remarks).strip()
+        if shop_name is not None and shop_name.strip():
+            item.shop_name = str(shop_name).strip()
+        self.db.flush()
+        return item
+
+    def delete_consignment_item(self, item_id: int):
+        """删除单笔寄售记录"""
+        item = self.db.query(ConsignmentItem).filter(ConsignmentItem.id == item_id).first()
+        if not item:
+            raise ValueError(f"未找到 ID 为 {item_id} 的寄售记录")
+        self.db.delete(item)
+        self.db.flush()
+
+    def add_consignment_item(self, shop_name: str, product_name: str, variant: str, quantity: int, remaining_qty: int = None, remarks: str = "", date_obj = None):
+        """手动新增寄售条目"""
+        if not shop_name or not shop_name.strip():
+            raise ValueError("寄售店铺名称不能为空")
+        if not product_name or not product_name.strip():
+            raise ValueError("商品名称不能为空")
+        if quantity <= 0:
+            raise ValueError("寄售数量必须大于 0")
+        if remaining_qty is None:
+            remaining_qty = quantity
+        if date_obj is None:
+            date_obj = date.today()
+        new_item = ConsignmentItem(
+            shop_name=shop_name.strip(),
+            product_name=product_name.strip(),
+            variant=variant.strip() if variant else "通用",
+            quantity=int(quantity),
+            remaining_qty=max(0, int(remaining_qty)),
+            remarks=remarks.strip() if remarks else "",
+            date=date_obj
+        )
+        self.db.add(new_item)
+        self.db.flush()
+        return new_item
