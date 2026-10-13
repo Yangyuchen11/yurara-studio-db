@@ -8,6 +8,7 @@ from constants import PRODUCT_COST_CATEGORIES
 from ..state.finance_state import FinanceState, FinanceRecordItem, TempBatchItem
 from ..components.layout import page_layout
 from ..components.editable_table import data_card, custom_form_field, empty_state, confirm_dialog
+from ..components.ime_search_input import ime_search_input
 
 
 def stat_indicator_card(label: str, value: rx.Var, unit: str = "CNY", color_scheme: str = "violet", icon: str = "circle") -> rx.Component:
@@ -1167,11 +1168,12 @@ def records_table_area() -> rx.Component:
     return rx.vstack(
         # ---- 顶部工具栏：搜索 + 业务大类筛选 + 细分类型筛选 + 清除 ----
         rx.hstack(
-            # 关键字搜索
-            rx.input(
+            # 关键字搜索（支持中文输入法：打拼音期间不触发搜索）
+            ime_search_input(
                 placeholder="🔍 输入关键字搜索分类、说明备注、币种、金额、收支类型或日期...",
                 value=FinanceState.search_query,
-                on_change=FinanceState.set_search_query,
+                on_search=FinanceState.set_search_query,
+                debounce=300,
                 flex="1",
                 size="2",
             ),
@@ -1226,6 +1228,7 @@ def records_table_area() -> rx.Component:
             align="center",
             width="100%",
         ),
+        rx.box(
         rx.cond(
             FinanceState.records.length() == 0,
             empty_state("暂无满足搜索条件的财务流水明细数据", "inbox"),
@@ -1283,6 +1286,12 @@ def records_table_area() -> rx.Component:
                 ),
                 width="100%"
             )
+        ),
+            # 刷新中：表格保持原位，仅轻微变淡，避免整块闪烁
+            opacity=rx.cond(FinanceState.is_loading, "0.55", "1"),
+            pointer_events=rx.cond(FinanceState.is_loading, "none", "auto"),
+            transition="opacity 0.15s ease",
+            width="100%",
         ),
         width="100%"
     )
@@ -1497,8 +1506,9 @@ def finance_page() -> rx.Component:
             ),
             
             # 3. 核心流水只读明细表格 (真分页)
+            # 仅首次加载时显示转圈；之后刷新保持卡片挂载（搜索框不会丢失焦点）
             rx.cond(
-                FinanceState.is_loading,
+                FinanceState.is_loading & ~FinanceState.has_loaded_once,
                 rx.center(rx.spinner(size="3"), padding="4rem", width="100%"),
                 data_card(
                     "📜 流水历史明细",

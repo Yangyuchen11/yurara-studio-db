@@ -1,21 +1,37 @@
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, defaultload
 from models import Product, ProductColor, ProductPrice, ProductPart
 
 class ProductService:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_all_products(self):
+    def get_all_products(self, include_images: bool = True):
         """
         获取所有产品，按ID倒序排列
         级联加载路径：Product -> ProductColor -> ProductPrice / ProductPart
+
+        include_images=False 时延迟加载 ProductColor.image_data（base64 大字段），
+        避免 JOIN 笛卡尔积中重复传输图片数据，显著加快列表首屏加载。
         """
+        options = [
+            joinedload(Product.colors).joinedload(ProductColor.prices),
+            joinedload(Product.colors).joinedload(ProductColor.parts),
+        ]
+        if not include_images:
+            options.append(defaultload(Product.colors).defer(ProductColor.image_data))
         return self.db.query(Product)\
-            .options(
-                joinedload(Product.colors).joinedload(ProductColor.prices),
-                joinedload(Product.colors).joinedload(ProductColor.parts)
-            )\
+            .options(*options)\
             .order_by(Product.id.desc()).all()
+
+    def get_color_images(self):
+        """
+        仅查询有图片的规格：返回 {color_id: image_data}。
+        用于列表页在数据渲染完成后再异步补充图片。
+        """
+        rows = self.db.query(ProductColor.id, ProductColor.image_data)\
+            .filter(ProductColor.image_data.isnot(None), ProductColor.image_data != "")\
+            .all()
+        return {cid: img for cid, img in rows}
 
     def get_product_by_id(self, product_id):
         """根据ID获取单个产品"""

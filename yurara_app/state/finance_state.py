@@ -246,6 +246,8 @@ class FinanceState(AppState):
     dynamic_cash_indicators: list[CashBalanceIndicator] = []
     total_cash_cny_str: str = "¥ 0.00"
     is_loading: bool = False
+    # 是否已完成首次加载：之后的刷新（搜索/筛选/删除等）不再用转圈替换整块内容，避免闪烁
+    has_loaded_once: bool = False
     search_query: str = ""
     filter_type: str = ""      # "" = 全部 / "收入" / "支出"
     filter_category: str = ""  # "" = 全部 / 具体分类名
@@ -402,11 +404,15 @@ class FinanceState(AppState):
 
     @rx.var
     def selected_debt_source_type(self) -> str:
-        """\u8fd4回当前选中的债务的来源类型"""
+        """返回当前选中的债务的来源类型"""
         for d in self.unsettled_debts:
             if d.id == self.debt_selected_id:
                 return d.source_type
         return ""
+
+    @rx.var
+    def show_initial_loading(self) -> bool:
+        return self.is_loading and not self.has_loaded_once
 
     # ===================== 事件处理器 =====================
 
@@ -825,6 +831,7 @@ class FinanceState(AppState):
             self.load_selected_budget_details()
             
         self.is_loading = False
+        self.has_loaded_once = True
 
     def load_budgets_options(self):
         """联动加载当前选定商品下的预算项选项"""

@@ -21,6 +21,7 @@ class PlatformPrice(BaseModel):
 
 class ColorRow(BaseModel):
     key: str = ""
+    color_id: int = 0  # 数据库 ProductColor.id，用于异步回填图片
     name: str = ""
     quantity: int = 0
     image_data: str = ""
@@ -41,6 +42,8 @@ class ProductItem(BaseModel):
     total_quantity: int = 0
     is_completed: bool = False
     color_summary: str = ""
+    # 该商品已设定价格的平台名称（列表定价表的列头）
+    price_platform_names: list[str] = []
     color_rows: list[ColorRow] = []
 
 # ---- 空行模板 ----
@@ -56,7 +59,10 @@ class ProductState(AppState):
 
     # --- 商品列表（list of ProductItem） ---
     products: list[ProductItem] = []
-    is_loading: bool = False
+    # 默认为 True：页面首次渲染（on_load 触发前）即显示加载提示，避免闪现“暂无产品”
+    is_loading: bool = True
+    # 表格数据已显示、图片仍在后台加载中
+    images_loading: bool = False
 
     # --- 当前激活的 Tab ---
     active_tab: str = "list"
@@ -112,10 +118,19 @@ class ProductState(AppState):
 
     @rx.event
     async def load_products(self):
+        """
+        分两阶段加载：
+        1) 不含图片的商品/规格/定价数据 —— 尽快渲染表格；
+        2) 单独查询规格图片并回填 —— 图片后到。
+        """
         if not await self.is_authenticated_user():
+            self.is_loading = False
             return
         self.is_loading = True
         yield
+
+        # ---------- 阶段 1：表格数据（不含图片） ----------
+        loaded_ok = False
         db = self.get_db()
         try:
             from services.product_service import ProductService
@@ -126,9 +141,15 @@ class ProductState(AppState):
             self.all_platforms = [{"code": p.code, "name": p.name, "currency": p.currency} for p in plats]
 
             service = ProductService(db)
-            prods = service.get_all_products()
+            prods = service.get_all_products(include_images=False)
             result = []
             for p in prods:
+                # 仅保留该商品中至少有一个规格设定了价格的平台（保持平台原始顺序）
+                priced_codes = {
+                    pr.platform for c in p.colors for pr in c.prices if (pr.price or 0) > 0
+                }
+                used_platforms = [pl for pl in self.all_platforms if pl["code"] in priced_codes]
+
                 # 构建展平的颜色行（用于列表展示的定价表格）
                 color_rows = []
                 color_names = []
@@ -139,7 +160,7 @@ class ProductState(AppState):
                     aligned_price_strs = []
                     c_prices_lookup = {pr.platform: pr.price for pr in c.prices}
                     
-                    for pl in self.all_platforms:
+                    for pl in used_platforms:
                         p_code = pl["code"]
                         p_price = c_prices_lookup.get(p_code, 0.0)
                         plat_prices.append(
@@ -163,9 +184,10 @@ class ProductState(AppState):
                     color_rows.append(
                         ColorRow(
                             key=f"col_{uuid.uuid4().hex[:8]}",
+                            color_id=c.id,
                             name=c.color_name,
                             quantity=c.quantity,
-                            image_data=getattr(c, "image_data", "") or "",
+                            image_data="",  # 图片在阶段 2 回填
                             parts_summary=parts_summary,
                             prices=plat_prices,
                             aligned_price_strs=aligned_price_strs
@@ -181,17 +203,45 @@ class ProductState(AppState):
                         is_completed=p.is_production_completed or False,
                         # 颜色名称摘要字符串
                         color_summary="规格: " + "、".join(color_names) if color_names else "暂无规格",
+                        price_platform_names=[pl["name"] for pl in used_platforms],
                         # 展平的颜色行，供产品卡片列表中的定价表使用
                         color_rows=color_rows,
                     )
                 )
 
             self.products = result
+            loaded_ok = True
         except Exception as e:
             print(f"[ProductState] load_products error: {e}")
         finally:
             db.close()
             self.is_loading = False
+
+        if not loaded_ok or not self.products:
+            self.images_loading = False
+            return
+
+        # 先把表格推送到前端
+        self.images_loading = True
+        yield
+
+        # ---------- 阶段 2：回填图片 ----------
+        db = self.get_db()
+        try:
+            from services.product_service import ProductService
+            image_map = ProductService(db).get_color_images()
+            if image_map:
+                for prod in self.products:
+                    for row in prod.color_rows:
+                        img = image_map.get(row.color_id)
+                        if img:
+                            row.image_data = img
+                self.products = list(self.products)
+        except Exception as e:
+            print(f"[ProductState] load images error: {e}")
+        finally:
+            db.close()
+            self.images_loading = False
 
     # ===================== 新建表单 =====================
 
@@ -448,14 +498,16 @@ class ProductState(AppState):
                 for pl in self.all_platforms:
                     p_code = pl["code"]
                     p_price = c_prices_lookup.get(p_code, 0.0)
-                    plat_prices.append(
-                        PlatformPrice(
-                            platform_code=p_code,
-                            platform_name=pl["name"],
-                            price=p_price,
-                            currency=pl["currency"]
+                    # 编辑模式只展示已设定价格的平台，其余平台通过「追加定价平台」添加
+                    if p_code in c_prices_lookup:
+                        plat_prices.append(
+                            PlatformPrice(
+                                platform_code=p_code,
+                                platform_name=pl["name"],
+                                price=p_price,
+                                currency=pl["currency"]
+                            )
                         )
-                    )
                     if p_price > 0:
                         aligned_price_strs.append(f"{p_price:.2f} {pl['currency']}")
                     else:
@@ -579,32 +631,38 @@ class ProductState(AppState):
                         break
         self.edit_color_rows = list(self.edit_color_rows)
 
+    def _find_platform(self, key: str):
+        """按 code 或显示名称查找平台（下拉框传入的是名称）。"""
+        return next(
+            (p for p in self.all_platforms if p["code"] == key or p["name"] == key),
+            None,
+        )
+
     @rx.event
-    def set_selected_platform_to_add(self, row_key: str, platform_code: str):
-        self.selected_platforms_to_add[row_key] = platform_code
+    def set_selected_platform_to_add(self, row_key: str, platform_name: str):
+        plat = self._find_platform(platform_name)
+        self.selected_platforms_to_add[row_key] = plat["code"] if plat else platform_name
 
     @rx.event
     def add_create_color_price(self, row_key: str):
         platform_code = self.selected_platforms_to_add.get(row_key, "")
         if not platform_code:
-            if self.all_platforms:
-                platform_code = self.all_platforms[0]["code"]
-            else:
-                return
-        plat = next((p for p in self.all_platforms if p["code"] == platform_code), None)
+            return rx.toast.warning("请先选择要追加的平台")
+        plat = self._find_platform(platform_code)
         if not plat:
             return
         for r in self.create_color_rows:
             if r.key == row_key:
-                if not any(p.platform_code == platform_code for p in r.prices):
-                    r.prices.append(
-                        PlatformPrice(
-                            platform_code=plat["code"],
-                            platform_name=plat["name"],
-                            price=0.0,
-                            currency=plat["currency"]
-                        )
+                if any(p.platform_code == plat["code"] for p in r.prices):
+                    return rx.toast.info(f"{plat['name']} 已在定价列表中")
+                r.prices.append(
+                    PlatformPrice(
+                        platform_code=plat["code"],
+                        platform_name=plat["name"],
+                        price=0.0,
+                        currency=plat["currency"]
                     )
+                )
                 break
         self.create_color_rows = list(self.create_color_rows)
 
@@ -620,24 +678,22 @@ class ProductState(AppState):
     def add_edit_color_price(self, row_key: str):
         platform_code = self.selected_platforms_to_add.get(row_key, "")
         if not platform_code:
-            if self.all_platforms:
-                platform_code = self.all_platforms[0]["code"]
-            else:
-                return
-        plat = next((p for p in self.all_platforms if p["code"] == platform_code), None)
+            return rx.toast.warning("请先选择要追加的平台")
+        plat = self._find_platform(platform_code)
         if not plat:
             return
         for r in self.edit_color_rows:
             if r.key == row_key:
-                if not any(p.platform_code == platform_code for p in r.prices):
-                    r.prices.append(
-                        PlatformPrice(
-                            platform_code=plat["code"],
-                            platform_name=plat["name"],
-                            price=0.0,
-                            currency=plat["currency"]
-                        )
+                if any(p.platform_code == plat["code"] for p in r.prices):
+                    return rx.toast.info(f"{plat['name']} 已在定价列表中")
+                r.prices.append(
+                    PlatformPrice(
+                        platform_code=plat["code"],
+                        platform_name=plat["name"],
+                        price=0.0,
+                        currency=plat["currency"]
                     )
+                )
                 break
         self.edit_color_rows = list(self.edit_color_rows)
 

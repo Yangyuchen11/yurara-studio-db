@@ -649,7 +649,7 @@ def product_card(product: ProductItem) -> rx.Component:
                             rx.table.column_header_cell("数量", size="1"),
                             rx.table.column_header_cell("部件规格", size="1"),
                             rx.foreach(
-                                ProductState.platform_launch_options,
+                                product.price_platform_names,
                                 lambda name: rx.table.column_header_cell(name, size="1")
                             )
                         )
@@ -682,9 +682,16 @@ def _product_color_table_row(color: ColorRow) -> rx.Component:
                     object_fit="cover",
                     border_radius="3px",
                     border="1px solid var(--slate-3)",
+                    loading="lazy",
+                    decoding="async",
                 ),
                 rx.center(
-                    rx.icon("image", size=10, color=rx.color("slate", 8)),
+                    rx.cond(
+                        ProductState.images_loading,
+                        # 图片仍在后台加载
+                        rx.spinner(size="1"),
+                        rx.icon("image", size=10, color=rx.color("slate", 8)),
+                    ),
                     width="20px",
                     height="20px",
                     background=rx.color("slate", 2),
@@ -713,10 +720,31 @@ def list_tab() -> rx.Component:
     return rx.vstack(
         rx.cond(
             ProductState.is_loading,
-            rx.center(rx.spinner(size="3"), padding="3rem"),
+            # 首屏加载提示
+            rx.center(
+                rx.vstack(
+                    rx.spinner(size="3"),
+                    rx.text("正在加载商品数据…", size="2", color=rx.color("slate", 10)),
+                    align="center",
+                    spacing="3",
+                ),
+                padding="4rem 0",
+                width="100%",
+            ),
             rx.cond(
                 ProductState.has_products,
                 rx.vstack(
+                    # 表格已显示、图片仍在加载时的轻量提示
+                    rx.cond(
+                        ProductState.images_loading,
+                        rx.hstack(
+                            rx.spinner(size="1"),
+                            rx.text("图片加载中…", size="1", color=rx.color("slate", 10)),
+                            spacing="2",
+                            align="center",
+                        ),
+                        rx.fragment(),
+                    ),
                     rx.foreach(ProductState.products, product_card),
                     spacing="3", width="100%",
                 ),
