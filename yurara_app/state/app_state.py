@@ -552,15 +552,23 @@ class AppState(rx.State):
                 Base.metadata.create_all(bind=conn)
                 
                 with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                    # 兼容不同系统压缩包可能产生的目录前缀（如 folder/xxx.csv 或 ./xxx.csv）
+                    zip_files = {os.path.basename(name): name for name in zf.namelist() if not name.endswith('/')}
+                    inserted_total = 0
                     for file_name, table_name, model_cls in TABLES_MAP:
-                        if file_name in zf.namelist():
-                            with zf.open(file_name) as f:
+                        if file_name in zip_files:
+                            with zf.open(zip_files[file_name]) as f:
                                 df_import = pd.read_csv(f, encoding='utf-8-sig')
                                 if not df_import.empty:
                                     if model_cls and hasattr(model_cls, "__table__"):
                                         valid_cols = [c.name for c in model_cls.__table__.columns]
                                         df_import = df_import[[col for col in df_import.columns if col in valid_cols]]
                                     df_import.to_sql(table_name, conn, if_exists='append', index=False)
+                                    inserted_total += len(df_import)
+                                    print(f"[Restore] Imported {table_name}: {len(df_import)} rows")
+                    
+                    if inserted_total == 0:
+                        raise ValueError("备份文件中未找到任何有效的表格数据，请确认上传的是正确的备份 ZIP！")
                 
                 # 恢复外键约束并自增校正序列
                 if "postgres" in str(engine.url):

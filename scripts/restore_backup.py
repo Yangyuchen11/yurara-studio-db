@@ -49,22 +49,27 @@ def restore_database(zip_path: str, database_url: str = None):
         Base.metadata.create_all(bind=conn)
 
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            namelist = zf.namelist()
-            print(f"📂 发现 {len(namelist)} 个文件")
+            zip_files = {os.path.basename(name): name for name in zf.namelist() if not name.endswith('/')}
+            print(f"📂 发现 {len(zip_files)} 个数据文件")
+            inserted_total = 0
             for file_name, table_name, model_cls in TABLES_MAP:
-                if file_name in namelist:
-                    with zf.open(file_name) as zf_file:
+                if file_name in zip_files:
+                    with zf.open(zip_files[file_name]) as zf_file:
                         df_import = pd.read_csv(zf_file, encoding='utf-8-sig')
                         if not df_import.empty:
                             if model_cls and hasattr(model_cls, "__table__"):
                                 valid_cols = [c.name for c in model_cls.__table__.columns]
                                 df_import = df_import[[col for col in df_import.columns if col in valid_cols]]
                             df_import.to_sql(table_name, conn, if_exists='append', index=False)
+                            inserted_total += len(df_import)
                             print(f"  ✅ 导入 {table_name}: {len(df_import)} 行")
                         else:
                             print(f"  ℹ️ {table_name}: 0 行（跳过）")
                 else:
                     print(f"  ⚠️ 备份中无 {file_name}")
+
+            if inserted_total == 0:
+                raise ValueError("❌ 备份文件中未找到任何有效的表格数据！")
 
         print("🔧 正在校正序列号...")
         if "postgres" in str(engine.url):
