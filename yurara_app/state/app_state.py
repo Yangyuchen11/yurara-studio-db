@@ -205,7 +205,12 @@ class AppState(rx.State):
         """检查当前 Session 是否已登录。"""
         from .auth_state import AuthState
         auth_state = await self.get_state(AuthState)
-        return auth_state.authenticated
+        if auth_state.authenticated:
+            return True
+        if auth_state.auth_user and auth_state.auth_token:
+            auth_state.authenticated = True
+            return True
+        return False
 
 
     @rx.event
