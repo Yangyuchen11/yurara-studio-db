@@ -540,45 +540,75 @@ class AppState(rx.State):
             import pandas as pd
             from database import Base
             
+            # 1. 结构重建
             with engine.begin() as conn:
-                # 临时关闭外键约束校验
                 if "postgres" in str(engine.url):
-                    conn.execute(text("SET session_replication_role = 'replica';"))
+                    try:
+                        conn.execute(text("SET session_replication_role = 'replica';"))
+                    except Exception:
+                        pass
                 elif "sqlite" in str(engine.url):
                     conn.execute(text("PRAGMA foreign_keys = OFF;"))
                 
-                # 干净重构所有表结构并重置自增 ID
                 Base.metadata.drop_all(bind=conn)
                 Base.metadata.create_all(bind=conn)
                 
-                with zipfile.ZipFile(io.BytesIO(data)) as zf:
-                    # 兼容不同系统压缩包可能产生的目录前缀（如 folder/xxx.csv 或 ./xxx.csv）
-                    zip_files = {os.path.basename(name): name for name in zf.namelist() if not name.endswith('/')}
-                    inserted_total = 0
-                    for file_name, table_name, model_cls in TABLES_MAP:
-                        if file_name in zip_files:
-                            with zf.open(zip_files[file_name]) as f:
-                                df_import = pd.read_csv(f, encoding='utf-8-sig')
-                                if not df_import.empty:
-                                    if model_cls and hasattr(model_cls, "__table__"):
-                                        valid_cols = [c.name for c in model_cls.__table__.columns]
-                                        df_import = df_import[[col for col in df_import.columns if col in valid_cols]]
+            # 2. 逐表导入并提交数据
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                zip_files = {os.path.basename(name): name for name in zf.namelist() if not name.endswith('/')}
+                inserted_total = 0
+                for file_name, table_name, model_cls in TABLES_MAP:
+                    if file_name in zip_files:
+                        with zf.open(zip_files[file_name]) as f:
+                            df_import = pd.read_csv(f, encoding='utf-8-sig')
+                            if not df_import.empty:
+                                if model_cls and hasattr(model_cls, "__table__"):
+                                    valid_cols = [c.name for c in model_cls.__table__.columns]
+                                    df_import = df_import[[col for col in df_import.columns if col in valid_cols]]
+                                with engine.begin() as conn:
+                                    if "postgres" in str(engine.url):
+                                        try:
+                                            conn.execute(text("SET session_replication_role = 'replica';"))
+                                        except Exception:
+                                            pass
                                     df_import.to_sql(table_name, conn, if_exists='append', index=False)
-                                    inserted_total += len(df_import)
-                                    print(f"[Restore] Imported {table_name}: {len(df_import)} rows")
-                    
-                    if inserted_total == 0:
-                        raise ValueError("备份文件中未找到任何有效的表格数据，请确认上传的是正确的备份 ZIP！")
-                
-                # 恢复外键约束并自增校正序列
-                if "postgres" in str(engine.url):
-                    conn.execute(text("SET session_replication_role = 'origin';"))
-                    for _, table_name, _ in TABLES_MAP:
-                        try:
-                            conn.execute(text(f"SELECT setval(pg_get_serial_sequence('{table_name}', 'id'), coalesce(max(id),0) + 1, false) FROM {table_name};"))
-                        except Exception:
-                            pass
-                elif "sqlite" in str(engine.url):
+                                inserted_total += len(df_import)
+                                print(f"[Restore] Imported {table_name}: {len(df_import)} rows")
+            
+                if inserted_total == 0:
+                    raise ValueError("备份文件中未找到任何有效的表格数据，请确认上传的是正确的备份 ZIP！")
+            
+            # 3. 恢复外键约束并自增校正序列
+            if "postgres" in str(engine.url):
+                with engine.connect() as conn:
+                    try:
+                        conn.execute(text("SET session_replication_role = 'origin';"))
+                        conn.commit()
+                    except Exception:
+                        pass
+                    for _, table_name, model_cls in TABLES_MAP:
+                        if model_cls and hasattr(model_cls, "__table__") and "id" in model_cls.__table__.columns:
+                            try:
+                                conn.execute(text(f"""
+                                    DO $$
+                                    DECLARE
+                                        seq_name text;
+                                        max_id bigint;
+                                    BEGIN
+                                        seq_name := pg_get_serial_sequence('{table_name}', 'id');
+                                        IF seq_name IS NOT NULL THEN
+                                            EXECUTE 'SELECT coalesce(max(id), 0) FROM {table_name}' INTO max_id;
+                                            IF max_id > 0 THEN
+                                                PERFORM setval(seq_name, max_id, true);
+                                            END IF;
+                                        END IF;
+                                    END $$;
+                                """))
+                                conn.commit()
+                            except Exception:
+                                pass
+            elif "sqlite" in str(engine.url):
+                with engine.begin() as conn:
                     conn.execute(text("PRAGMA foreign_keys = ON;"))
                     
             yield rx.toast("✅ 数据全量导入恢复成功！正在重新加载数据...", level="success")
