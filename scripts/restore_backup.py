@@ -51,11 +51,14 @@ def restore_database(zip_path: str, database_url: str = None):
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             namelist = zf.namelist()
             print(f"📂 发现 {len(namelist)} 个文件")
-            for file_name, table_name, _ in TABLES_MAP:
+            for file_name, table_name, model_cls in TABLES_MAP:
                 if file_name in namelist:
                     with zf.open(file_name) as zf_file:
                         df_import = pd.read_csv(zf_file, encoding='utf-8-sig')
                         if not df_import.empty:
+                            if model_cls and hasattr(model_cls, "__table__"):
+                                valid_cols = [c.name for c in model_cls.__table__.columns]
+                                df_import = df_import[[col for col in df_import.columns if col in valid_cols]]
                             df_import.to_sql(table_name, conn, if_exists='append', index=False)
                             print(f"  ✅ 导入 {table_name}: {len(df_import)} 行")
                         else:
