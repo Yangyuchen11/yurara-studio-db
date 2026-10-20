@@ -9,15 +9,15 @@ services:
     container_name: yurara-web-reflex
     restart: always
     ports:
-      - "8080:8080"  # Reflex 统一生产端口（合并前后端）
+      - "8080:8080" # Reflex 统一生产端口（合并前后端）
     environment:
       - DATABASE_URL=${DATABASE_URL}
+      - API_URL=${API_URL}
       - APP_CREDENTIALS=${APP_CREDENTIALS}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
     networks:
       - yurara-net
-
 
   # ========================================
   # 服务 3: Discord Bot
