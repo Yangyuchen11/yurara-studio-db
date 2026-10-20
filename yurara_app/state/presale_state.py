@@ -548,11 +548,13 @@ class PresaleState(AppState):
                 elif o.status == OrderStatus.AFTER_SALES: status_display = "🔧 售后"
 
                 all_items_str = ", ".join([f"{i.product_name} {i.variant} {i.quantity}" for i in o.items])
+                clean_fno = str(o.final_order_no)[:-2] if o.final_order_no and str(o.final_order_no).endswith('.0') and str(o.final_order_no)[:-2].isdigit() else str(o.final_order_no or "")
+                clean_ono = str(o.order_no)[:-2] if o.order_no and str(o.order_no).endswith('.0') and str(o.order_no)[:-2].isdigit() else str(o.order_no or "")
                 rows.append(PresaleOrderRow(
                     勾选=o.id in self.selected_order_ids,
                     id=o.id,
-                    order_no=o.order_no,
-                    final_order_no=o.final_order_no or "-",
+                    order_no=clean_ono,
+                    final_order_no=clean_fno or "-",
                     status=status_display,
                     items_summary=items_summary,
                     deposit_amount=round(float(o.deposit_amount), 2),
@@ -1176,8 +1178,10 @@ class PresaleState(AppState):
                 self.show_detail_flag = False
                 return rx.toast("单据不存在！", level="error")
                 
-            self.detail_order_no = o.order_no
-            self.detail_final_order_no = o.final_order_no or "-"
+            clean_fno = str(o.final_order_no)[:-2] if o.final_order_no and str(o.final_order_no).endswith('.0') and str(o.final_order_no)[:-2].isdigit() else str(o.final_order_no or "")
+            clean_ono = str(o.order_no)[:-2] if o.order_no and str(o.order_no).endswith('.0') and str(o.order_no)[:-2].isdigit() else str(o.order_no or "")
+            self.detail_order_no = clean_ono
+            self.detail_final_order_no = clean_fno or "-"
             self.detail_status = o.status
             self.detail_platform = o.platform
             self.detail_currency = o.currency

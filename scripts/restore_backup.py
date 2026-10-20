@@ -3,7 +3,7 @@ import sys
 import io
 import zipfile
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, String, Text
 from dotenv import load_dotenv
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
@@ -66,11 +66,21 @@ def restore_database(zip_path: str, database_url: str = None):
         for file_name, table_name, model_cls in TABLES_MAP:
             if file_name in zip_files:
                 with zf.open(zip_files[file_name]) as zf_file:
-                    df_import = pd.read_csv(zf_file, encoding='utf-8-sig')
+                    dtype_map = {}
+                    if model_cls and hasattr(model_cls, "__table__"):
+                        for c in model_cls.__table__.columns:
+                            if isinstance(c.type, (String, Text)):
+                                dtype_map[c.name] = str
+                    df_import = pd.read_csv(zf_file, encoding='utf-8-sig', dtype=dtype_map)
                     if not df_import.empty:
                         if model_cls and hasattr(model_cls, "__table__"):
                             valid_cols = [c.name for c in model_cls.__table__.columns]
                             df_import = df_import[[col for col in df_import.columns if col in valid_cols]]
+                            for str_col in dtype_map.keys():
+                                if str_col in df_import.columns:
+                                    df_import[str_col] = df_import[str_col].apply(
+                                        lambda x: str(x)[:-2] if isinstance(x, str) and x.endswith('.0') and x[:-2].isdigit() else (None if pd.isna(x) else x)
+                                    )
                         
                         with engine.begin() as conn:
                             if "postgres" in str(engine.url):
@@ -125,6 +135,25 @@ def restore_database(zip_path: str, database_url: str = None):
     elif "sqlite" in str(engine.url):
         with engine.begin() as conn:
             conn.execute(text("PRAGMA foreign_keys = ON;"))
+
+    # 4. 彻底清洗数据库中可能存在的历史 .0 后缀
+    print("🧹 正在检查并校正订单号尾随 .0 异常...")
+    with engine.begin() as conn:
+        for tbl, col in [
+            ("sales_orders", "final_order_no"),
+            ("sales_orders", "order_no"),
+            ("cost_items", "order_no"),
+            ("presale_order_bindings", "final_order_no"),
+            ("presale_order_bindings", "deposit_order_no"),
+        ]:
+            try:
+                conn.execute(text(f"""
+                    UPDATE {tbl} 
+                    SET {col} = substr({col}, 1, length({col}) - 2) 
+                    WHERE {col} LIKE '%.0';
+                """))
+            except Exception:
+                pass
 
     print("\n🎉 全部数据导入成功并已持久化落盘！")
 

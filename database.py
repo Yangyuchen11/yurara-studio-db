@@ -97,3 +97,26 @@ def migrate_db(engine):
                 print(f"[Migration] Self-healed {healed_count} pending cost items to budget with amounts.")
     except Exception as e:
         print(f"[Migration] Self-healing pending cost items error: {e}")
+
+    # 自愈修复：清除由于 Pandas CSV 导入推断为浮点数而错误追加的 '.0' 后缀
+    try:
+        from sqlalchemy import text
+        with engine.begin() as conn:
+            for tbl, col in [
+                ("sales_orders", "final_order_no"),
+                ("sales_orders", "order_no"),
+                ("cost_items", "order_no"),
+                ("presale_order_bindings", "final_order_no"),
+                ("presale_order_bindings", "deposit_order_no"),
+            ]:
+                try:
+                    conn.execute(text(f"""
+                        UPDATE {tbl} 
+                        SET {col} = substr({col}, 1, length({col}) - 2) 
+                        WHERE {col} LIKE '%.0';
+                    """))
+                except Exception:
+                    pass
+            print("[Migration] Checked and cleaned any .0 suffixes in order numbers.")
+    except Exception as e:
+        print(f"[Migration] Clean .0 suffixes error: {e}")
