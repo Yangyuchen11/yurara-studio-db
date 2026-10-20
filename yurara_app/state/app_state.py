@@ -14,7 +14,8 @@ from models import (
     ConsumableItem, ConsumableLog, CompanyBalanceItem,
     SalesOrder, SalesOrderItem, OrderRefund,
     OfflineTemplate, OfflineTemplateItem,
-    ConsignmentItem
+    ConsignmentItem,
+    SystemSetting, PresaleOrderBinding, SalesPlatform, MemoNote, ScheduleNode
 )
 
 TABLES_MAP = [
@@ -34,9 +35,14 @@ TABLES_MAP = [
     ("sales_orders.csv", "sales_orders", SalesOrder),
     ("sales_order_items.csv", "sales_order_items", SalesOrderItem),
     ("order_refunds.csv", "order_refunds", OrderRefund),
+    ("presale_order_bindings.csv", "presale_order_bindings", PresaleOrderBinding),
     ("offline_templates.csv", "offline_templates", OfflineTemplate),
     ("offline_template_items.csv", "offline_template_items", OfflineTemplateItem),
+    ("sales_platforms.csv", "sales_platforms", SalesPlatform),
+    ("memo_notes.csv", "memo_notes", MemoNote),
+    ("schedule_nodes.csv", "schedule_nodes", ScheduleNode),
     ("consignments.csv", "consignment_items", ConsignmentItem),
+    ("system_settings.csv", "system_settings", SystemSetting),
 ]
 
 
