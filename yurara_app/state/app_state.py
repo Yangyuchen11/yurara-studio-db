@@ -568,8 +568,8 @@ class AppState(rx.State):
                 elif "sqlite" in str(engine.url):
                     conn.execute(text("PRAGMA foreign_keys = ON;"))
                     
-            yield rx.toast("✅ 数据全量导入恢复成功！", level="success")
-            yield rx.redirect(self.router.page.path)
+            yield rx.toast("✅ 数据全量导入恢复成功！正在重新加载数据...", level="success")
+            yield rx.call_script("window.location.reload()")
             
         except Exception as e:
             yield rx.toast(f"❌ 备份导入失败: {e}", level="error")
