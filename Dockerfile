@@ -33,6 +33,8 @@ RUN python -m reflex export --frontend-only --no-zip 2>/dev/null || true
 ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
 ENV REFLEX_ENV_MODE=prod
+ENV REFLEX_ENV=prod
+ENV ENV=prod
 
 EXPOSE 8080
 

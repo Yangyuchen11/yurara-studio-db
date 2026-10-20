@@ -12,6 +12,7 @@ from reflex.plugins.sitemap import SitemapPlugin
 is_prod = (
     os.getenv("ENV", "dev").lower() == "prod"
     or os.getenv("REFLEX_ENV", "dev").lower() == "prod"
+    or os.getenv("REFLEX_ENV_MODE", "dev").lower() == "prod"
 )
 
 if is_prod:
