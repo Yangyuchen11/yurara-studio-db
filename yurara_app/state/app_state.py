@@ -98,6 +98,9 @@ class AppState(rx.State):
     # --- 危险操作：清空数据口令确认 ---
     delete_confirm_code: str = ""
 
+    # --- 备份恢复加载状态 ---
+    is_restoring: bool = False
+
     # --- 导航栏折叠状态 ---
     sidebar_collapsed: bool = False
 
@@ -518,18 +521,20 @@ class AppState(rx.State):
             yield rx.toast("请先选择备份 ZIP 文件！", level="warning")
             return
             
+        self.is_restoring = True
+        yield
+        
         file = files[0]
-        data = await file.read()
-        
-        engine = get_cached_engine(self.test_mode)
-        
-        from sqlalchemy import text
-        import zipfile
-        import io
-        import pandas as pd
-        from database import Base
-        
         try:
+            data = await file.read()
+            engine = get_cached_engine(self.test_mode)
+            
+            from sqlalchemy import text
+            import zipfile
+            import io
+            import pandas as pd
+            from database import Base
+            
             with engine.begin() as conn:
                 # 临时关闭外键约束校验
                 if "postgres" in str(engine.url):
@@ -560,11 +565,13 @@ class AppState(rx.State):
                 elif "sqlite" in str(engine.url):
                     conn.execute(text("PRAGMA foreign_keys = ON;"))
                     
-            yield rx.toast("✅ 数据全量导入恢复成功！")
+            yield rx.toast("✅ 数据全量导入恢复成功！", level="success")
             yield rx.redirect(self.router.page.path)
             
         except Exception as e:
             yield rx.toast(f"❌ 备份导入失败: {e}", level="error")
+        finally:
+            self.is_restoring = False
 
     @rx.event
     def set_delete_confirm_code(self, val: str):

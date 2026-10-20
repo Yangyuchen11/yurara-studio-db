@@ -463,6 +463,22 @@ def _data_management_popover_content() -> rx.Component:
                 padding="0.75rem",
                 border_radius="6px",
                 width="100%",
+                accept={"application/zip": [".zip"]},
+                max_files=1,
+            ),
+
+            # 显示已选中的文件徽标反馈
+            rx.cond(
+                rx.selected_files("backup_upload"),
+                rx.vstack(
+                    rx.foreach(
+                        rx.selected_files("backup_upload"),
+                        lambda file: rx.badge(f"📦 已选: {file}", color_scheme="green", variant="soft", size="1")
+                    ),
+                    width="100%",
+                    align="center",
+                    margin_top="0.25rem",
+                )
             ),
 
             rx.button(
@@ -471,8 +487,10 @@ def _data_management_popover_content() -> rx.Component:
                     rx.upload_files(upload_id="backup_upload")
                 ),
                 color_scheme="red",
+                loading=AppState.is_restoring,
                 width="100%",
                 size="1",
+                margin_top="0.25rem",
             ),
 
             rx.divider(margin_y="0.25rem"),
