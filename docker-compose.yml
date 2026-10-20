@@ -20,6 +20,7 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
     networks:
       - yurara-net
+      - dokploy-network
 
   # ========================================
   # 服务 3: Discord Bot
@@ -35,6 +36,10 @@ services:
       - DISCORD_ALLOWED_CHANNEL_ID=${DISCORD_ALLOWED_CHANNEL_ID}
     networks:
       - yurara-net
+      - dokploy-network
+
 networks:
   yurara-net:
     driver: bridge
+  dokploy-network:
+    external: true

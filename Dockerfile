@@ -39,4 +39,4 @@ ENV ENV=prod
 EXPOSE 8080
 
 # 启动 Reflex 应用
-CMD ["python", "-m", "reflex", "run", "--env", "prod"]
+CMD ["python", "-m", "reflex", "run", "--env", "prod", "--backend-host", "0.0.0.0"]
