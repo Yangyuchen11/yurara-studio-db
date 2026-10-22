@@ -56,6 +56,7 @@ class FinanceCategory:
     DEBT_REPAY = "债务偿还"
     DEBT_OFFSET = "债务-资产核销"
     ASSET_ADJUST = "资产价值修正"
+    SUBSCRIPTION = "电子订阅"
     
     # 集合：用于判断是否属于系统自动生成的特殊流水
     SYSTEM_GENERATED = {
