@@ -167,11 +167,190 @@ input:-webkit-autofill:active {
 .timeline-scrollbar-container {
     --timeline-slot-width: 100px;
     --timeline-zoom: 1;
+    --timeline-left-col-width: 240px;
     will-change: scroll-position;
+    -webkit-overflow-scrolling: touch;
 }
 
 /* 时间轴表头区域鼠标样式与悬停提示 */
 .timeline-header-area {
     cursor: default;
     user-select: none;
+}
+
+/* =========================================================
+   全站手机 / 平板 / POS 响应式适配 (Responsive & Tablet POS)
+   ========================================================= */
+
+/* 桌面端默认隐藏移动端顶栏与抽屉关闭按钮 */
+.mobile-topbar {
+    display: none !important;
+}
+.mobile-only-close-btn {
+    display: none !important;
+}
+.mobile-sidebar-backdrop {
+    display: none;
+}
+
+/* POS 商品网格自适应列宽，保证平板横竖屏与手机端卡片饱满易点 */
+.pos-product-grid {
+    grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)) !important;
+}
+.pos-product-card:active {
+    transform: scale(0.96) !important;
+}
+.pos-checkout-card {
+    position: sticky;
+    top: 0.75rem;
+}
+
+/* 通用表格与选项卡触摸横向滚动保护 */
+.rt-TableRoot {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+}
+.rt-TabsList {
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    max-width: 100%;
+    flex-wrap: nowrap !important;
+    -webkit-overflow-scrolling: touch;
+}
+.rt-TabsTrigger {
+    flex-shrink: 0 !important;
+}
+
+/* ─── 平板横屏及以下 (≤ 1100px)：POS 黄金比例分栏 ─── */
+@media (max-width: 1100px) {
+    .pos-main-grid {
+        grid-template-columns: 7fr 5fr !important;
+    }
+}
+
+/* ─── 平板及手机端 (≤ 1024px)：导航栏转为侧滑抽屉 + 栅格与表格响应式 ─── */
+@media (max-width: 1024px) {
+    .mobile-topbar {
+        display: flex !important;
+        padding: 0.6rem 0.85rem;
+        margin-bottom: 0.85rem;
+        background: var(--slate-1);
+        border: 1px solid var(--slate-4);
+        border-radius: 10px;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    }
+    .desktop-env-bar {
+        display: none !important;
+    }
+    .mobile-only-close-btn {
+        display: inline-flex !important;
+    }
+    .mobile-sidebar-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.58);
+        backdrop-filter: blur(2px);
+        z-index: 1000;
+    }
+    .app-sidebar {
+        position: fixed !important;
+        left: 0 !important;
+        top: 0 !important;
+        bottom: 0 !important;
+        width: 250px !important;
+        min-width: 250px !important;
+        height: 100dvh !important;
+        z-index: 1001 !important;
+        transform: translateX(-100%);
+        box-shadow: 6px 0 28px rgba(0, 0, 0, 0.55);
+    }
+    .app-sidebar.mobile-open {
+        transform: translateX(0);
+    }
+    .app-main-content {
+        padding: 0.85rem 1rem !important;
+    }
+    .app-main-content.fullscreen-mode {
+        padding: 0.5rem !important;
+    }
+
+    /* 4 列及以上的多列统计卡片/表单在平板与手机端自动转为 2 列 */
+    .rt-Grid[class*="rt-r-gtc-4"]:not(.pos-product-grid),
+    .rt-Grid[class*="rt-r-gtc-5"],
+    .rt-Grid[class*="rt-r-gtc-6"],
+    .schedule-metrics-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    /* 表格单元格防挤压换行 */
+    .rt-TableCell,
+    .rt-TableColumnHeaderCell {
+        white-space: nowrap;
+    }
+
+    /* 甘特图左侧固定列在平板上适当缩窄 */
+    .timeline-scrollbar-container {
+        --timeline-left-col-width: 180px;
+    }
+    .desktop-only-hint,
+    .desktop-only-divider {
+        display: none !important;
+    }
+}
+
+/* ─── 平板竖屏及大屏手机 (≤ 820px)：所有 12 列主次分栏、POS 双栏及双表分栏自动上下堆叠 ─── */
+@media (max-width: 820px) {
+    .pos-main-grid,
+    .pos-template-grid,
+    .rt-Grid[class*="rt-r-gtc-12"] {
+        grid-template-columns: 1fr !important;
+    }
+    .rt-Grid[class*="rt-r-gtc-12"] > * {
+        grid-column: 1 / -1 !important;
+    }
+    .pos-checkout-card {
+        position: static;
+    }
+    /* 多组件并排录入行在平板竖屏/手机上自动均分换行 */
+    .responsive-form-row > * {
+        flex: 1 1 140px;
+    }
+}
+
+/* ─── 手机端 (≤ 640px)：紧凑内边距、单列表单与窄版甘特图冻结列 ─── */
+@media (max-width: 640px) {
+    .app-main-content {
+        padding: 0.6rem 0.65rem !important;
+    }
+    .app-data-card,
+    .pos-outer-card {
+        padding: 0.75rem !important;
+    }
+    .pos-product-grid {
+        grid-template-columns: repeat(auto-fill, minmax(115px, 1fr)) !important;
+    }
+    .pos-assign-grid,
+    .rt-Grid[class*="rt-r-gtc-3"],
+    .rt-Grid[class*="rt-r-gtc-2"]:not(.pos-keep-2col) {
+        grid-template-columns: 1fr !important;
+    }
+    .rt-DialogContent,
+    .rt-AlertDialogContent {
+        max-width: 95vw !important;
+        padding: 1rem !important;
+    }
+    /* 分段控制器允许横向滚动防撑破 */
+    .rt-SegmentedControlRoot {
+        max-width: 100%;
+        overflow-x: auto;
+    }
+    /* 手机端甘特图左侧列缩窄至 135px，把更多空间留给右侧时间轴 */
+    .timeline-scrollbar-container {
+        --timeline-left-col-width: 135px;
+    }
 }

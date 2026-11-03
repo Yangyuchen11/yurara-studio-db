@@ -271,7 +271,7 @@ def batch_expense_form() -> rx.Component:
             custom_form_field(
                 "收支细分类型",
                 rx.select.root(
-                    rx.select.trigger(width="400px"),
+                    rx.select.trigger(width="100%"),
                     rx.select.content(
                         rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
                     , position="popper", side="bottom"),
@@ -286,7 +286,7 @@ def batch_expense_form() -> rx.Component:
                 custom_form_field(
                     "归属商品",
                     rx.select.root(
-                        rx.select.trigger(width="400px"),
+                        rx.select.trigger(width="100%"),
                         rx.select.content(
                             rx.foreach(
                                 FinanceState.products_list,
@@ -325,7 +325,7 @@ def batch_expense_form() -> rx.Component:
                 custom_form_field(
                     "共同成本分类",
                     rx.select.root(
-                        rx.select.trigger(width="400px"),
+                        rx.select.trigger(width="100%"),
                         rx.select.content(
                             rx.foreach(PRODUCT_COST_CATEGORIES, lambda cat: rx.select.item(cat, value=cat))
                         , position="popper", side="bottom"),
@@ -348,7 +348,8 @@ def batch_expense_form() -> rx.Component:
                     rx.hstack(
                         rx.radio_group.item("新增项目 (新建物品并展开明细表)", value="new"),
                         rx.radio_group.item("补充现有项目库存", value="replenish"),
-                        spacing="5"
+                        spacing="5",
+                        flex_wrap="wrap",
                     ),
                     value=FinanceState.asset_purchase_mode,
                     on_change=FinanceState.set_asset_purchase_mode
@@ -363,7 +364,7 @@ def batch_expense_form() -> rx.Component:
             custom_form_field(
                 "🎯 预算项目匹配",
                 rx.select.root(
-                    rx.select.trigger(width="400px"),
+                    rx.select.trigger(width="100%"),
                     rx.select.content(
                         rx.foreach(
                             FinanceState.budgets_list,
@@ -387,7 +388,7 @@ def batch_expense_form() -> rx.Component:
             custom_form_field(
                 "付款现金账户",
                 rx.select.root(
-                    rx.select.trigger(width="400px"),
+                    rx.select.trigger(width="100%"),
                     rx.select.content(
                         rx.foreach(
                             FinanceState.cash_accounts,
@@ -405,7 +406,7 @@ def batch_expense_form() -> rx.Component:
                     placeholder="如：某工厂、淘宝商家",
                     value=FinanceState.f_shop,
                     on_change=FinanceState.set_f_shop,
-                    size="2", width="400px"
+                    size="2", width="100%"
                 )
             ),
             custom_form_field(
@@ -511,7 +512,7 @@ def pending_cost_form() -> rx.Component:
             custom_form_field(
                 "收支细分类型",
                 rx.select.root(
-                    rx.select.trigger(width="400px"),
+                    rx.select.trigger(width="100%"),
                     rx.select.content(
                         rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
                     , position="popper", side="bottom"),
@@ -523,7 +524,7 @@ def pending_cost_form() -> rx.Component:
             custom_form_field(
                 "归属商品",
                 rx.select.root(
-                    rx.select.trigger(width="400px"),
+                    rx.select.trigger(width="100%"),
                     rx.select.content(
                         rx.foreach(
                             FinanceState.products_list,
@@ -538,7 +539,7 @@ def pending_cost_form() -> rx.Component:
             custom_form_field(
                 "共同成本分类",
                 rx.select.root(
-                    rx.select.trigger(width="400px"),
+                    rx.select.trigger(width="100%"),
                     rx.select.content(
                         rx.foreach(PRODUCT_COST_CATEGORIES, lambda cat: rx.select.item(cat, value=cat))
                     , position="popper", side="bottom"),
@@ -579,7 +580,7 @@ def pending_cost_form() -> rx.Component:
                     placeholder="如：某工厂、淘宝商家",
                     value=FinanceState.f_shop,
                     on_change=FinanceState.set_f_shop,
-                    size="2", width="400px"
+                    size="2", width="100%"
                 )
             ),
             custom_form_field(
@@ -629,7 +630,7 @@ def pending_other_form() -> rx.Component:
             custom_form_field(
                 "收支细分类型",
                 rx.select.root(
-                    rx.select.trigger(width="400px"),
+                    rx.select.trigger(width="100%"),
                     rx.select.content(
                         rx.foreach(CATS_EXPENSE, lambda c: rx.select.item(c, value=c))
                     , position="popper", side="bottom"),
@@ -1044,6 +1045,7 @@ def add_transaction_accordion() -> rx.Component:
                     ),
                     spacing="3",
                     align="end",
+                    flex_wrap="wrap",
                     padding_bottom="0.5rem"
                 ),
                 rx.divider(),
@@ -1226,6 +1228,7 @@ def records_table_area() -> rx.Component:
             ),
             spacing="2",
             align="center",
+            flex_wrap="wrap",
             width="100%",
         ),
         rx.box(
@@ -1313,7 +1316,7 @@ def edit_transaction_accordion() -> rx.Component:
                 custom_form_field(
                     "选择要修改的当页记录",
                     rx.select.root(
-                        rx.select.trigger(width="400px"),
+                        rx.select.trigger(width="100%"),
                         rx.select.content(
                             rx.foreach(
                                 FinanceState.records,
@@ -1343,7 +1346,8 @@ def edit_transaction_accordion() -> rx.Component:
                                 value=FinanceState.edit_type, on_change=FinanceState.set_edit_type, size="2"
                             ), width="auto"),
                             spacing="3",
-                            align="end"
+                            align="end",
+                            flex_wrap="wrap",
                         ),
                         rx.hstack(
                             custom_form_field("金额", rx.input(type="number", value=FinanceState.edit_amount.to_string(), on_change=lambda v: FinanceState.set_edit_amount(rx.cond(v != "", v.to(float), 0.0)), size="2"), width="auto"),
@@ -1361,7 +1365,8 @@ def edit_transaction_accordion() -> rx.Component:
                                 size="2", width="100%"
                             ), width="auto"),
                             spacing="3",
-                            align="end"
+                            align="end",
+                            flex_wrap="wrap",
                         ),
                         custom_form_field("操作关联现金账户", rx.select.root(
                             rx.select.trigger(width="220px"),
@@ -1411,7 +1416,7 @@ def delete_transaction_accordion() -> rx.Component:
                 custom_form_field(
                     "选择要删除的流水记录",
                     rx.select.root(
-                        rx.select.trigger(width="400px"),
+                        rx.select.trigger(width="100%"),
                         rx.select.content(
                             rx.foreach(
                                 FinanceState.records,

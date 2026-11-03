@@ -94,7 +94,8 @@ def create_account_accordion() -> rx.Component:
                             value=BalanceState.new_acc_name,
                             on_change=BalanceState.set_new_acc_name,
                             size="2",
-                            width="250px"
+                            width="250px",
+                            max_width="100%",
                         ),
                         width="auto"
                     ),
@@ -111,11 +112,14 @@ def create_account_accordion() -> rx.Component:
                             rx.text("（直接输入货币代码）", size="1", color=rx.color("white", 9)),
                             align="center",
                             spacing="2",
+                            flex_wrap="wrap",
                         ),
                         width="auto"
                     ),
                     spacing="3",
-                    align="end"
+                    align="end",
+                    flex_wrap="wrap",
+                    width="100%",
                 ),
                 rx.button(
                     rx.icon("check", size=13),

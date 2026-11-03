@@ -446,6 +446,7 @@ def log_pagination_bar() -> rx.Component:
         ),
         spacing="3",
         align="center",
+        flex_wrap="wrap",
         width="100%",
         padding_y="0.5rem",
     )
@@ -983,6 +984,7 @@ def movement_entry_form() -> rx.Component:
                                     size="1"
                                 ),
                                 align="center",
+                                flex_wrap="wrap",
                                 width="100%",
                                 padding_y="0.25rem"
                             ),
@@ -1058,6 +1060,7 @@ def movement_entry_form() -> rx.Component:
                                     on_click=InventoryState.clear_batch_inputs
                                 ),
                                 align="center",
+                                flex_wrap="wrap",
                                 width="100%",
                                 padding_top="0.25rem"
                             ),
@@ -1416,6 +1419,7 @@ def consignment_management_view() -> rx.Component:
                 ),
                 spacing="3",
                 align="end",
+                flex_wrap="wrap",
                 width="100%",
             ),
             width="100%",
@@ -1700,6 +1704,7 @@ def inventory_page() -> rx.Component:
                                 ),
                                 spacing="3",
                                 align="center",
+                                flex_wrap="wrap",
                                 width="100%"
                             ),
                             width="100%",
@@ -1980,9 +1985,11 @@ def inventory_page() -> rx.Component:
                                     rx.fragment()
                                 ),
                                 spacing="2",
-                                align="center"
+                                align="center",
+                                flex_wrap="wrap",
                             ),
                             align="center",
+                            flex_wrap="wrap",
                             width="100%"
                         ),
                         

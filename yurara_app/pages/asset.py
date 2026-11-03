@@ -218,7 +218,8 @@ def asset_list_table() -> rx.Component:
                     value=AssetState.asset_search_query,
                     on_change=AssetState.set_asset_search_query,
                     size="2",
-                    width="280px",
+                    width="100%",
+                    max_width="280px",
                 ),
                 rx.cond(
                     AssetState.asset_search_query != "",
@@ -234,6 +235,7 @@ def asset_list_table() -> rx.Component:
                 ),
                 spacing="2",
                 align="center",
+                flex_wrap="wrap",
                 width="100%",
             ),
             rx.scroll_area(

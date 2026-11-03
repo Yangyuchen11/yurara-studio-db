@@ -26,8 +26,8 @@ SLOT_WIDTH = "var(--timeline-slot-width, 100px)"
 MONTH_WIDTH = "calc(var(--timeline-slot-width, 100px) * 3)"
 YEAR_WIDTH = "calc(var(--timeline-slot-width, 100px) * 36)"
 GRID_WIDTH = "calc(var(--timeline-slot-width, 100px) * 36 * var(--timeline-num-years, 5))"
-HEADER_LEFT_WIDTH = "240px"
-TOTAL_WIDTH = "calc(240px + var(--timeline-slot-width, 100px) * 36 * var(--timeline-num-years, 5))"
+HEADER_LEFT_WIDTH = "var(--timeline-left-col-width, 240px)"
+TOTAL_WIDTH = "calc(var(--timeline-left-col-width, 240px) + var(--timeline-slot-width, 100px) * 36 * var(--timeline-num-years, 5))"
 
 
 def metric_card(label: str, value: rx.Var, icon: str, color_scheme: str = "gray", badge_text: str = "") -> rx.Component:
@@ -339,7 +339,7 @@ def timeline_gantt_matrix() -> rx.Component:
                         align="center",
                         style={
                             "position": "sticky",
-                            "left": "256px",
+                            "left": "calc(var(--timeline-left-col-width, 240px) + 12px)",
                             "display": "inline-flex",
                         },
                     ),
@@ -1165,6 +1165,7 @@ def schedule_page() -> rx.Component:
                 columns="4",
                 spacing="3",
                 width="100%",
+                class_name="schedule-metrics-grid",
             ),
 
             # 2. 近期关键节点看板 (280px 宽度，固定 76px 高度)
@@ -1183,7 +1184,7 @@ def schedule_page() -> rx.Component:
                         on_change=ScheduleState.set_filter_type,
                         size="1",
                     ),
-                    rx.divider(orientation="vertical", size="2"),
+                    rx.divider(orientation="vertical", size="2", class_name="desktop-only-divider"),
                     # 缩放调节控制组
                     rx.hstack(
                         rx.text("缩放:", size="1", color=rx.color("slate", 9), weight="medium"),
@@ -1232,10 +1233,11 @@ def schedule_page() -> rx.Component:
                         ),
                         spacing="2",
                         align="center",
+                        flex_wrap="wrap",
                     ),
                     rx.spacer(),
-                    # 提示信息
-                    rx.text("💡 提示：按住 Ctrl/Alt + 滚轮 或在表头区域滚动即可平滑缩放；Shift + 滚轮横向平移", size="1", color=rx.color("slate", 9)),
+                    # 提示信息 (仅桌面端显示)
+                    rx.text("💡 提示：按住 Ctrl/Alt + 滚轮 或在表头区域滚动即可平滑缩放；Shift + 滚轮横向平移", size="1", color=rx.color("slate", 9), class_name="desktop-only-hint"),
                     # 右上角新增商品工期/日程按钮
                     rx.button(
                         rx.icon("folder_plus", size=14),
@@ -1246,6 +1248,7 @@ def schedule_page() -> rx.Component:
                     ),
                     spacing="3",
                     align="center",
+                    flex_wrap="wrap",
                     width="100%",
                 ),
                 variant="surface",

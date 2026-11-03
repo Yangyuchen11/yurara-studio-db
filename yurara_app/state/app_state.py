@@ -101,8 +101,9 @@ class AppState(rx.State):
     # --- 备份恢复加载状态 ---
     is_restoring: bool = False
 
-    # --- 导航栏折叠状态 ---
+    # --- 导航栏折叠状态 & 移动端抽屉菜单状态 ---
     sidebar_collapsed: bool = False
+    mobile_menu_open: bool = False
 
     # — 新增货币对话框输入字段 —
     new_currency_code: str = ""
@@ -712,3 +713,13 @@ class AppState(rx.State):
     @rx.event
     def toggle_sidebar(self):
         self.sidebar_collapsed = not self.sidebar_collapsed
+
+    @rx.event
+    def toggle_mobile_menu(self):
+        self.mobile_menu_open = not self.mobile_menu_open
+        if self.mobile_menu_open:
+            self.sidebar_collapsed = False
+
+    @rx.event
+    def close_mobile_menu(self):
+        self.mobile_menu_open = False

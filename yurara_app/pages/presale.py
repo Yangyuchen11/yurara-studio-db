@@ -238,7 +238,9 @@ def build_presale_create_form() -> rx.Component:
                     ),
                     spacing="3",
                     align_items="end",
+                    flex_wrap="wrap",
                     width="100%",
+                    class_name="responsive-form-row",
                 ),
                 rx.cond(
                     PresaleState.pre_cart,
@@ -464,6 +466,7 @@ def build_presale_create_form() -> rx.Component:
                                 ),
                                 spacing="3",
                                 align="center",
+                                flex_wrap="wrap",
                                 width="100%"
                             ),
                             custom_form_field(
@@ -608,6 +611,7 @@ def build_excel_presale_import() -> rx.Component:
                     ),
                     width="100%",
                     align="center",
+                    flex_wrap="wrap",
                 ),
                 rx.scroll_area(
                     rx.table.root(
@@ -777,6 +781,7 @@ def order_detail_modal() -> rx.Component:
                     rx.button("💾 保存修改", on_click=PresaleState.submit_update_notes, size="2", color_scheme="violet"),
                     width="100%",
                     align="center",
+                    flex_wrap="wrap",
                 ),
                 spacing="3",
                 width="100%",
@@ -1285,6 +1290,7 @@ def presale_page() -> rx.Component:
                         ),
                         spacing="3",
                         align="center",
+                        flex_wrap="wrap",
                         width="100%"
                     ),
                     
@@ -1399,6 +1405,7 @@ def presale_page() -> rx.Component:
                             color_scheme="gray"
                         ),
                         spacing="3",
+                        flex_wrap="wrap",
                         width="100%"
                     ),
                     spacing="3",

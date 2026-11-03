@@ -102,13 +102,18 @@ def cashier_product_card(item: POSTemplateItemModel) -> rx.Component:
             rx.fragment()
         ),
         padding="0",
+        class_name="pos-product-card",
         style={
             "minWidth": "110px",
             "aspectRatio": "1 / 1",
             "overflow": "hidden",
             "position": "relative",
             "cursor": rx.cond(is_out_of_stock, "default", "pointer"),
-            "transition": "transform 0.15s ease, box-shadow 0.15s ease"
+            "userSelect": "none",
+            "WebkitUserSelect": "none",
+            "touchAction": "manipulation",
+            "WebkitTapHighlightColor": "transparent",
+            "transition": "transform 0.12s ease, box-shadow 0.12s ease"
         },
         _hover={
             "transform": rx.cond(is_out_of_stock, "none", "translateY(-2px)"),
@@ -121,41 +126,55 @@ def cashier_product_card(item: POSTemplateItemModel) -> rx.Component:
 
 
 def cashier_cart_item(ci: CartItemModel) -> rx.Component:
-    """渲染购物车中的单项清单"""
+    """渲染购物车中的单项清单（针对平板 POS 触控优化，支持直接 + / - 调节数量）"""
     return rx.hstack(
         rx.cond(
             ci.image_data != "",
-            rx.image(src=ci.image_data, width="32px", height="32px", object_fit="cover", border_radius="3px"),
+            rx.image(src=ci.image_data, width="38px", height="38px", object_fit="cover", border_radius="6px", flex_shrink="0"),
             rx.center(
-                rx.icon("shopping_bag", size=14, color=rx.color("violet", 8)),
-                width="32px",
-                height="32px",
+                rx.icon("shopping_bag", size=16, color=rx.color("violet", 8)),
+                width="38px",
+                height="38px",
                 background=rx.color("slate", 3),
-                border_radius="3px"
+                border_radius="6px",
+                flex_shrink="0",
             )
         ),
         rx.vstack(
-            rx.text(ci.product_name, size="1", weight="bold", line_clamp=1, width="100%"),
+            rx.text(ci.product_name, size="2", weight="bold", line_clamp=1, width="100%"),
             rx.text(ci.variant, size="1", color=rx.color("slate", 10), line_clamp=1, width="100%"),
             spacing="0",
             align_items="start",
             flex="1",
             min_width="0"
         ),
-        rx.text("x", ci.qty.to_string(), size="1", weight="bold"),
-        rx.text(rx.fragment("¥", (ci.unit_price * ci.qty).to_string()), size="1", weight="bold", color="var(--violet-11)", style={"marginLeft": "0.75rem"}),
-        rx.icon_button(
-            rx.icon("minus", size=14),
-            on_click=lambda: OfflineSalesState.remove_from_cart(ci.product_name, ci.variant),
-            size="2",
-            variant="solid",
-            color_scheme="red",
-            style={"borderRadius": "4px", "marginLeft": "0.75rem"}
+        rx.text(rx.fragment("¥", (ci.unit_price * ci.qty).to_string()), size="2", weight="bold", color="var(--violet-11)", style={"whiteSpace": "nowrap"}),
+        rx.hstack(
+            rx.icon_button(
+                rx.icon("minus", size=15),
+                on_click=lambda: OfflineSalesState.remove_from_cart(ci.product_name, ci.variant),
+                size="2",
+                variant="solid",
+                color_scheme="red",
+                style={"borderRadius": "6px", "minWidth": "34px", "height": "34px", "touchAction": "manipulation"}
+            ),
+            rx.text(ci.qty.to_string(), size="2", weight="bold", style={"minWidth": "22px", "textAlign": "center"}),
+            rx.icon_button(
+                rx.icon("plus", size=15),
+                on_click=lambda: OfflineSalesState.add_to_cart(ci.product_name, ci.variant),
+                size="2",
+                variant="soft",
+                color_scheme="violet",
+                style={"borderRadius": "6px", "minWidth": "34px", "height": "34px", "touchAction": "manipulation"}
+            ),
+            spacing="1",
+            align_items="center",
+            flex_shrink="0",
         ),
         spacing="2",
         align_items="center",
         width="100%",
-        padding="0.25rem 0",
+        padding="0.4rem 0",
         border_bottom="1px dashed var(--slate-4)"
     )
 
@@ -239,7 +258,8 @@ def tpl_assign_product_card(r: dict) -> rx.Component:
                     ),
                     columns="2",
                     spacing="2",
-                    width="100%"
+                    width="100%",
+                    class_name="pos-keep-2col",
                 ),
                 rx.fragment()
             ),
@@ -258,41 +278,65 @@ def cashier_pos_tab() -> rx.Component:
         
         # 收银场景主显示
         rx.vstack(
-            # 顶部操作栏
+            # 顶部操作栏 (支持平板/手机端自适应换行，全屏模式下同样保留多语言切换)
             rx.hstack(
-                rx.text(OfflineSalesState.tr["active_template"], size="2", weight="medium", margin_top="0.5rem"),
-                rx.select.root(
-                    rx.select.trigger(),
-                    rx.select.content(
-                        rx.foreach(
-                            OfflineSalesState.template_options,
-                            lambda opt: rx.select.item(opt, value=opt)
-                        )
-                    , position="popper", side="bottom"),
-                    value=OfflineSalesState.template_selected_value,
-                    on_change=OfflineSalesState.change_template_by_option,
-                    disabled=OfflineSalesState.is_fullscreen,
-                    size="2",
-                    style={"maxWidth": "250px"},
+                rx.hstack(
+                    rx.text(OfflineSalesState.tr["active_template"], size="2", weight="medium"),
+                    rx.select.root(
+                        rx.select.trigger(),
+                        rx.select.content(
+                            rx.foreach(
+                                OfflineSalesState.template_options,
+                                lambda opt: rx.select.item(opt, value=opt)
+                            ),
+                            position="popper",
+                            side="bottom",
+                        ),
+                        value=OfflineSalesState.template_selected_value,
+                        on_change=OfflineSalesState.change_template_by_option,
+                        disabled=OfflineSalesState.is_fullscreen,
+                        size="2",
+                        style={"maxWidth": "240px"},
+                    ),
+                    spacing="2",
+                    align="center",
+                    flex_wrap="wrap",
                 ),
                 rx.spacer(),
-                rx.button(
-                    rx.cond(OfflineSalesState.show_history_only, OfflineSalesState.tr["back_to_cashier"], OfflineSalesState.tr["history_orders"]),
-                    on_click=OfflineSalesState.toggle_history_only,
-                    size="2",
-                    variant="soft",
-                    color_scheme="violet"
-                ),
-                rx.button(
-                    rx.cond(OfflineSalesState.is_fullscreen, OfflineSalesState.tr["exit_fullscreen"], OfflineSalesState.tr["open_fullscreen"]),
-                    on_click=OfflineSalesState.toggle_fullscreen,
-                    size="2",
-                    variant="soft",
-                    color_scheme=rx.cond(OfflineSalesState.is_fullscreen, "orange", "blue")
+                rx.hstack(
+                    rx.segmented_control.root(
+                        rx.segmented_control.item("EN", value="en"),
+                        rx.segmented_control.item("日本語", value="ja"),
+                        rx.segmented_control.item("中文", value="zh"),
+                        value=OfflineSalesState.pos_lang,
+                        on_change=OfflineSalesState.set_pos_lang,
+                        size="2",
+                    ),
+                    rx.button(
+                        rx.cond(OfflineSalesState.show_history_only, OfflineSalesState.tr["back_to_cashier"], OfflineSalesState.tr["history_orders"]),
+                        on_click=OfflineSalesState.toggle_history_only,
+                        size="2",
+                        variant="soft",
+                        color_scheme="violet",
+                        style={"touchAction": "manipulation"},
+                    ),
+                    rx.button(
+                        rx.cond(OfflineSalesState.is_fullscreen, OfflineSalesState.tr["exit_fullscreen"], OfflineSalesState.tr["open_fullscreen"]),
+                        on_click=OfflineSalesState.toggle_fullscreen,
+                        size="2",
+                        variant="soft",
+                        color_scheme=rx.cond(OfflineSalesState.is_fullscreen, "orange", "blue"),
+                        style={"touchAction": "manipulation"},
+                    ),
+                    spacing="2",
+                    align="center",
+                    flex_wrap="wrap",
                 ),
                 spacing="2",
                 align="center",
-                width="100%"
+                flex_wrap="wrap",
+                width="100%",
+                class_name="pos-topbar",
             ),
             
             rx.divider(),
@@ -324,7 +368,7 @@ def cashier_pos_tab() -> rx.Component:
                     width="100%"
                 ),
                 
-                # 分支 B：核心双列收银大屏
+                # 分支 B：核心双列收银大屏 (针对平板横竖屏及手机 POS 专项适配)
                 rx.grid(
                     # 左侧：商品选购区 (矩阵)
                     rx.vstack(
@@ -335,6 +379,8 @@ def cashier_pos_tab() -> rx.Component:
                                 color_scheme="orange", 
                                 size="1"
                             ),
+                            flex_wrap="wrap",
+                            align="center",
                         ),
                         rx.grid(
                             rx.foreach(
@@ -343,7 +389,8 @@ def cashier_pos_tab() -> rx.Component:
                             ),
                             columns="4",
                             spacing="3",
-                            width="100%"
+                            width="100%",
+                            class_name="pos-product-grid",
                         ),
                         
                         # 非全屏模式下：原版底部交易记录
@@ -421,7 +468,7 @@ def cashier_pos_tab() -> rx.Component:
                             
                             rx.divider(),
                             
-                            # 支付方式选择
+                            # 支付方式选择 (加大触控高度，适合平板手指点按)
                             rx.vstack(
                                 rx.text(OfflineSalesState.tr["select_payment"], size="1", weight="bold"),
                                 rx.grid(
@@ -430,18 +477,21 @@ def cashier_pos_tab() -> rx.Component:
                                         on_click=lambda: OfflineSalesState.set_pay_method("现金"),
                                         color_scheme="violet",
                                         variant=rx.cond(OfflineSalesState.pay_method == "现金", "solid", "soft"),
-                                        size="2"
+                                        size="3",
+                                        style={"height": "46px", "fontWeight": "bold", "touchAction": "manipulation"},
                                     ),
                                     rx.button(
                                         OfflineSalesState.tr["pay_paypay"],
                                         on_click=lambda: OfflineSalesState.set_pay_method("PayPay"),
                                         color_scheme="violet",
                                         variant=rx.cond(OfflineSalesState.pay_method == "PayPay", "solid", "soft"),
-                                        size="2"
+                                        size="3",
+                                        style={"height": "46px", "fontWeight": "bold", "touchAction": "manipulation"},
                                     ),
                                     columns="2",
                                     spacing="2",
-                                    width="100%"
+                                    width="100%",
+                                    class_name="pos-keep-2col",
                                 ),
                                 spacing="2",
                                 width="100%"
@@ -505,18 +555,20 @@ def cashier_pos_tab() -> rx.Component:
                                 size="3",
                                 color_scheme="green",
                                 width="100%",
-                                style={"height": "65px", "borderRadius": "8px", "marginTop": "0.5rem"}
+                                style={"height": "68px", "borderRadius": "10px", "marginTop": "0.5rem", "fontSize": "1.2rem", "fontWeight": "bold", "touchAction": "manipulation"}
                             ),
                             spacing="3",
                             width="100%"
                         ),
                         padding="1rem",
-                        width="100%"
+                        width="100%",
+                        class_name="pos-checkout-card",
                     ),
                     columns="12",
                     spacing="4",
                     width="100%",
-                    style={"gridTemplateColumns": "8fr 4fr"}
+                    class_name="pos-main-grid",
+                    style={"gridTemplateColumns": "8fr 4fr", "alignItems": "start"}
                 )
             ),
             spacing="4",
@@ -679,7 +731,8 @@ def template_config_tab() -> rx.Component:
                     ),
                     columns="2",
                     spacing="3",
-                    width="100%"
+                    width="100%",
+                    class_name="pos-assign-grid",
                 ),
                 max_height="620px",
                 width="100%"
@@ -690,6 +743,7 @@ def template_config_tab() -> rx.Component:
         columns="12",
         spacing="4",
         width="100%",
+        class_name="pos-template-grid",
         style={"gridTemplateColumns": "4fr 8fr"}
     )
 
@@ -741,28 +795,7 @@ def offline_sales_page() -> rx.Component:
                 ),
                 width="100%",
                 padding="1rem",
-            ),
-            
-            # 语言切换器：仅在非全屏且活动Tab为收银台时在左下角（大卡片外部）显示
-            rx.cond(
-                (~OfflineSalesState.is_fullscreen) & (OfflineSalesState.active_tab == "pos"),
-                rx.hstack(
-                    rx.icon("languages", size=16, color=rx.color("slate", 9)),
-                    rx.segmented_control.root(
-                        rx.segmented_control.item("English", value="en"),
-                        rx.segmented_control.item("日本語", value="ja"),
-                        rx.segmented_control.item("中文", value="zh"),
-                        value=OfflineSalesState.pos_lang,
-                        on_change=OfflineSalesState.set_pos_lang,
-                        size="1",
-                    ),
-                    align="center",
-                    spacing="2",
-                    justify="start",
-                    width="100%",
-                    padding_left="0.5rem",
-                ),
-                rx.fragment()
+                class_name="pos-outer-card",
             ),
             
             spacing="4",

@@ -65,6 +65,7 @@ def nav_item(label: str, icon: str, href: str) -> rx.Component:
         href=href,
         width="100%",
         class_name="nav-item",
+        on_click=AppState.close_mobile_menu,
         _hover={},  # 通过 CSS 处理 hover
     )
     
@@ -79,6 +80,7 @@ def nav_item(label: str, icon: str, href: str) -> rx.Component:
             width="100%",
             class_name="nav-item",
             padding="6px 0",
+            on_click=AppState.close_mobile_menu,
             _hover={},
         ),
         content=label,
@@ -919,58 +921,76 @@ def sidebar_bottom_toolbar() -> rx.Component:
 
 
 def sidebar() -> rx.Component:
-    """主侧边栏组件。"""
-    return rx.box(
-        # === 顶部 Logo 区域 ===
+    """主侧边栏组件（桌面端常驻，手机/平板端为侧滑抽屉）。"""
+    return rx.fragment(
         rx.cond(
-            AppState.sidebar_collapsed,
-            rx.vstack(
-                rx.center(
-                    rx.box(
-                        rx.text("Y", weight="bold", size="5", color="white"),
-                        width="32px",
-                        height="32px",
-                        background="linear-gradient(135deg, #6366f1, #8b5cf6)",
-                        border_radius="8px",
-                        display="flex",
-                        align_items="center",
-                        justify_content="center",
-                    ),
-                    width="100%",
-                    padding="1rem 0",
-                ),
-                rx.divider(margin="0"),
-                spacing="0",
-                width="100%",
+            AppState.mobile_menu_open,
+            rx.box(
+                class_name="mobile-sidebar-backdrop",
+                on_click=AppState.close_mobile_menu,
             ),
-            rx.vstack(
-                rx.hstack(
-                    rx.box(
-                        rx.text("Y", weight="bold", size="5", color="white"),
-                        width="32px",
-                        height="32px",
-                        background="linear-gradient(135deg, #6366f1, #8b5cf6)",
-                        border_radius="8px",
-                        display="flex",
-                        align_items="center",
-                        justify_content="center",
-                    ),
-                    rx.vstack(
-                        rx.text("Yurara Studio", weight="bold", size="3"),
-                        rx.text("综合管理系统", size="1", color=rx.color("slate", 10)),
-                        spacing="0",
-                        align_items="start",
-                    ),
-                    spacing="2",
-                    align="center",
-                    width="100%",
-                    padding="1rem 1.25rem",
-                ),
-                rx.divider(margin="0"),
-                spacing="0",
-                width="100%",
-            )
+            rx.fragment(),
         ),
+        rx.box(
+            # === 顶部 Logo 区域 ===
+            rx.cond(
+                AppState.sidebar_collapsed,
+                rx.vstack(
+                    rx.center(
+                        rx.box(
+                            rx.text("Y", weight="bold", size="5", color="white"),
+                            width="32px",
+                            height="32px",
+                            background="linear-gradient(135deg, #6366f1, #8b5cf6)",
+                            border_radius="8px",
+                            display="flex",
+                            align_items="center",
+                            justify_content="center",
+                        ),
+                        width="100%",
+                        padding="1rem 0",
+                    ),
+                    rx.divider(margin="0"),
+                    spacing="0",
+                    width="100%",
+                ),
+                rx.vstack(
+                    rx.hstack(
+                        rx.box(
+                            rx.text("Y", weight="bold", size="5", color="white"),
+                            width="32px",
+                            height="32px",
+                            background="linear-gradient(135deg, #6366f1, #8b5cf6)",
+                            border_radius="8px",
+                            display="flex",
+                            align_items="center",
+                            justify_content="center",
+                        ),
+                        rx.vstack(
+                            rx.text("Yurara Studio", weight="bold", size="3"),
+                            rx.text("综合管理系统", size="1", color=rx.color("slate", 10)),
+                            spacing="0",
+                            align_items="start",
+                        ),
+                        rx.spacer(),
+                        rx.icon_button(
+                            rx.icon("x", size=18),
+                            variant="ghost",
+                            color_scheme="gray",
+                            size="1",
+                            class_name="mobile-only-close-btn",
+                            on_click=AppState.close_mobile_menu,
+                        ),
+                        spacing="2",
+                        align="center",
+                        width="100%",
+                        padding="1rem 1.25rem",
+                    ),
+                    rx.divider(margin="0"),
+                    spacing="0",
+                    width="100%",
+                )
+            ),
 
         # === 用户信息栏 ===
         rx.cond(
@@ -1124,6 +1144,7 @@ def sidebar() -> rx.Component:
         ),
 
         # === 侧边栏容器样式 ===
+        class_name=rx.cond(AppState.mobile_menu_open, "app-sidebar mobile-open", "app-sidebar"),
         display="flex",
         flex_direction="column",
         height="100vh",
@@ -1134,5 +1155,6 @@ def sidebar() -> rx.Component:
         position="sticky",
         top="0",
         overflow="hidden",
-        style={"transition": "width 0.2s ease, min-width 0.2s ease"},
+        style={"transition": "width 0.2s ease, min-width 0.2s ease, transform 0.25s ease"},
+        ),
     )

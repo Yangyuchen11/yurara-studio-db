@@ -304,7 +304,8 @@ def sales_detail_panel() -> rx.Component:
                         style={"maxWidth": "220px"}
                     ),
                     width="100%",
-                    align="center"
+                    align="center",
+                    flex_wrap="wrap",
                 ),
                 
                 # 选中商品的 3 个轻量高彩指标卡

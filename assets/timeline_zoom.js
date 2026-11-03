@@ -38,7 +38,8 @@
         if (Math.abs(newSlotWidth - currentSlotWidth) < 0.1) return;
 
         const rect = container.getBoundingClientRect();
-        const headerWidth = 240; // 左侧「业务主体 / 商品项目」固定 Sticky 列宽度
+        const rawLeftCol = getComputedStyle(container).getPropertyValue('--timeline-left-col-width');
+        const headerWidth = parseFloat(rawLeftCol) || 240; // 左侧固定 Sticky 列宽度
         let effectiveCursorX = 0;
 
         if (focalClientX !== undefined && focalClientX !== null) {
@@ -120,6 +121,30 @@
                 }
             });
         }
+
+        // 移动端 / 平板双指捏合缩放 (Pinch-to-zoom)
+        let pinchStartDist = 0;
+        let pinchStartSlotWidth = DEFAULT_SLOT_WIDTH;
+        container.addEventListener('touchstart', function (e) {
+            if (e.touches && e.touches.length === 2) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                pinchStartDist = Math.hypot(dx, dy);
+                pinchStartSlotWidth = getCurrentSlotWidth();
+            }
+        }, { passive: true });
+
+        container.addEventListener('touchmove', function (e) {
+            if (e.touches && e.touches.length === 2 && pinchStartDist > 10) {
+                e.preventDefault();
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const dist = Math.hypot(dx, dy);
+                const centerClientX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                const scale = dist / pinchStartDist;
+                applyZoom(pinchStartSlotWidth * scale, centerClientX);
+            }
+        }, { passive: false });
 
         updateZoomUI(getCurrentSlotWidth());
         return true;

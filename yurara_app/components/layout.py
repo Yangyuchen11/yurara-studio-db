@@ -44,7 +44,55 @@ def page_layout(*content, title: str = "", subtitle: str = "", hide_sidebar: rx.
 
         # 右侧主内容区
         rx.box(
-            # 顶部面包屑 / 环境徽章
+            # 手机/平板端顶部导航条 (≤ 1024px 显示，全屏收银模式隐藏)
+            rx.cond(
+                hide_sidebar,
+                rx.fragment(),
+                rx.hstack(
+                    rx.icon_button(
+                        rx.icon("menu", size=20),
+                        variant="surface",
+                        color_scheme="violet",
+                        size="2",
+                        on_click=AppState.toggle_mobile_menu,
+                    ),
+                    rx.hstack(
+                        rx.box(
+                            rx.text("Y", weight="bold", size="3", color="white"),
+                            width="26px",
+                            height="26px",
+                            background="linear-gradient(135deg, #6366f1, #8b5cf6)",
+                            border_radius="6px",
+                            display="flex",
+                            align_items="center",
+                            justify_content="center",
+                            flex_shrink="0",
+                        ),
+                        rx.text(
+                            title if title != "" else "Yurara Studio",
+                            weight="bold",
+                            size="3",
+                            line_clamp=1,
+                        ),
+                        spacing="2",
+                        align="center",
+                        min_width="0",
+                    ),
+                    rx.spacer(),
+                    rx.badge(
+                        AppState.env_label,
+                        color_scheme=rx.cond(AppState.test_mode, "orange", "green"),
+                        variant="soft",
+                        size="1",
+                    ),
+                    spacing="2",
+                    align="center",
+                    width="100%",
+                    class_name="mobile-topbar",
+                ),
+            ),
+
+            # 顶部面包屑 / 环境徽章 (桌面端显示)
             rx.cond(
                 hide_header,
                 rx.fragment(),
@@ -58,6 +106,7 @@ def page_layout(*content, title: str = "", subtitle: str = "", hide_sidebar: rx.
                     ),
                     width="100%",
                     padding_bottom="0.5rem",
+                    class_name="desktop-env-bar",
                 ),
             ),
 
@@ -73,9 +122,14 @@ def page_layout(*content, title: str = "", subtitle: str = "", hide_sidebar: rx.
 
             padding=rx.cond(hide_sidebar, "0.5rem", padding),
             flex="1",
+            min_width="0",
+            max_width="100%",
+            width="100%",
             overflow_y="auto",
+            overflow_x="hidden",
             min_height="100vh",
             background=rx.color("slate", 2),
+            class_name=rx.cond(hide_sidebar, "app-main-content fullscreen-mode", "app-main-content"),
         ),
 
         width="100%",

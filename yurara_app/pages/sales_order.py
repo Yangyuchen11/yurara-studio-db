@@ -220,7 +220,9 @@ def build_manual_order_form() -> rx.Component:
             ),
             spacing="3",
             align_items="end",
+            flex_wrap="wrap",
             width="100%",
+            class_name="responsive-form-row",
         ),
         
         # 购物车暂存内容展示
@@ -320,7 +322,8 @@ def build_manual_order_form() -> rx.Component:
                             weight="bold", 
                             color="green"
                         ),
-                        width="100%"
+                        width="100%",
+                        flex_wrap="wrap",
                     ),
                     rx.text(
                         rx.fragment(
@@ -433,6 +436,7 @@ def build_excel_import_form() -> rx.Component:
                     ),
                     width="100%",
                     align="center",
+                    flex_wrap="wrap",
                 ),
                 rx.cond(
                     SalesOrderState.any_out_of_stock,
@@ -599,6 +603,7 @@ def order_detail_modal() -> rx.Component:
                     ),
                     width="100%",
                     align="center",
+                    flex_wrap="wrap",
                 ),
                 spacing="3",
                 width="100%",
@@ -684,7 +689,8 @@ def refund_dialog_modal() -> rx.Component:
                         value=SalesOrderState.ref_amount_input.to_string(),
                         on_change=SalesOrderState.set_ref_amount_input,
                         size="2",
-                        width="100%"
+                        width="100%",
+                        flex_wrap="wrap",
                     ),
                     helper="若仅补发货物且无退款，请填 0。"
                 ),
@@ -922,6 +928,7 @@ def sales_order_page() -> rx.Component:
                         rx.text(rx.fragment("折合合计金额: ¥ ", SalesOrderState.selected_amount_sum.to_string()), size="2", weight="bold", color="red"),
                         spacing="3",
                         align="center",
+                        flex_wrap="wrap",
                         width="100%",
                     ),
                     
@@ -1017,6 +1024,7 @@ def sales_order_page() -> rx.Component:
                             color_scheme="gray",
                         ),
                         spacing="3",
+                        flex_wrap="wrap",
                         width="100%",
                     ),
                     spacing="3",

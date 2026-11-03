@@ -66,7 +66,8 @@ def operation_panel() -> rx.Component:
                             rx.hstack(
                                 rx.radio_group.item("内部消耗 (计入成本)", value="内部消耗"),
                                 rx.radio_group.item("对外销售 (计入收入)", value="对外销售"),
-                                spacing="5"
+                                spacing="5",
+                                flex_wrap="wrap",
                             ),
                             value=ConsumableState.out_mode,
                             on_change=ConsumableState.set_out_mode
@@ -368,7 +369,8 @@ def consumable_list_table() -> rx.Component:
                     value=ConsumableState.search_query,
                     on_change=ConsumableState.set_search_query,
                     size="2",
-                    width="260px",
+                    width="100%",
+                    max_width="260px",
                 ),
                 rx.select.root(
                     rx.select.trigger(placeholder="筛选币种"),

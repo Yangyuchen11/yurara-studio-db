@@ -28,6 +28,8 @@ def data_card(
                 action_button or rx.fragment(),
                 width="100%",
                 align="center",
+                flex_wrap="wrap",
+                spacing="2",
             ),
             rx.divider(),
             *content,
@@ -36,6 +38,7 @@ def data_card(
         ),
         width="100%",
         padding="1.25rem",
+        class_name="app-data-card",
     )
 
 
@@ -169,20 +172,24 @@ def inline_list_table(
     return rx.cond(
         rx.Var.create(len(rows) == 0),  # 空状态判断
         empty_state(empty_message),
-        rx.table.root(
-            rx.table.header(
-                rx.table.row(
-                    *[
-                        rx.table.column_header_cell(h, weight="medium", size="1")
-                        for h in headers
-                    ]
-                )
-            ),
-            rx.table.body(
-                rx.foreach(rows, render_row),
+        rx.box(
+            rx.table.root(
+                rx.table.header(
+                    rx.table.row(
+                        *[
+                            rx.table.column_header_cell(h, weight="medium", size="1")
+                            for h in headers
+                        ]
+                    )
+                ),
+                rx.table.body(
+                    rx.foreach(rows, render_row),
+                ),
+                width="100%",
+                size="1",
             ),
             width="100%",
-            size="1",
+            overflow_x="auto",
         ),
     )
 

@@ -531,6 +531,7 @@ def report_page() -> rx.Component:
                             ),
                             spacing="3",
                             align="center",
+                            flex_wrap="wrap",
                             width="100%"
                         ),
                         width="100%",
