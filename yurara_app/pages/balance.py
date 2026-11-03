@@ -165,29 +165,35 @@ def balance_table_multi(rows: rx.Var, currencies: rx.Var, empty_msg: str = "暂�
     return rx.cond(
         rx.Var.create(rows).length() == 0,
         empty_state(empty_msg),
-        rx.table.root(
-            rx.table.header(
-                rx.table.row(
-                    rx.table.column_header_cell("项目", size="1"),
-                    rx.foreach(currencies, header_cell),
-                    rx.table.column_header_cell("折合CNY合计", size="1"),
-                )
-            ),
-            rx.table.body(
-                rx.foreach(
-                    rows,
-                    lambda r: rx.table.row(
-                        rx.table.cell(rx.text(r.item_name, size="1", weight="medium")),
-                        rx.foreach(currencies, lambda c: amount_cell_for(r, c)),
-                        rx.table.cell(
-                            rx.text(r.total_cny_str, size="1", weight="medium",
-                                    color=rx.color("violet", 11))
-                        ),
+        rx.box(
+            rx.table.root(
+                rx.table.header(
+                    rx.table.row(
+                        rx.table.column_header_cell("项目", size="1"),
+                        rx.foreach(currencies, header_cell),
+                        rx.table.column_header_cell("折合CNY合计", size="1"),
                     )
-                )
+                ),
+                rx.table.body(
+                    rx.foreach(
+                        rows,
+                        lambda r: rx.table.row(
+                            rx.table.cell(rx.text(r.item_name, size="1", weight="medium")),
+                            rx.foreach(currencies, lambda c: amount_cell_for(r, c)),
+                            rx.table.cell(
+                                rx.text(r.total_cny_str, size="1", weight="medium",
+                                        color=rx.color("violet", 11))
+                            ),
+                        )
+                    )
+                ),
+                size="1",
+                width="100%",
             ),
-            size="1",
             width="100%",
+            min_width="0",
+            max_width="100%",
+            overflow_x="auto",
         )
     )
 
@@ -235,6 +241,7 @@ def balance_page() -> rx.Component:
                                         rx.fragment(),
                                     ),
                                     width="100%",
+                                    flex_wrap="wrap",
                                 )
                             ),
                             rx.divider(margin="0"),
@@ -242,7 +249,7 @@ def balance_page() -> rx.Component:
                                 rx.text("综合总计(CNY):", size="1", weight="bold", color=rx.color("purple", 11)),
                                 rx.spacer(),
                                 rx.text(BalanceState.total_asset_total_str, size="3", weight="bold", color=rx.color("purple", 11)),
-                                width="100%", align="center",
+                                width="100%", align="center", flex_wrap="wrap",
                             ),
                             spacing="1", width="100%",
                         ),
@@ -265,6 +272,7 @@ def balance_page() -> rx.Component:
                                         rx.fragment(),
                                     ),
                                     width="100%",
+                                    flex_wrap="wrap",
                                 )
                             ),
                             rx.divider(margin="0"),
@@ -272,7 +280,7 @@ def balance_page() -> rx.Component:
                                 rx.text("综合总计(CNY):", size="1", weight="bold", color=rx.color("orange", 11)),
                                 rx.spacer(),
                                 rx.text(BalanceState.net_total_str, size="3", weight="bold", color=rx.color("orange", 11)),
-                                width="100%", align="center",
+                                width="100%", align="center", flex_wrap="wrap",
                             ),
                             spacing="1", width="100%",
                         ),
@@ -281,7 +289,8 @@ def balance_page() -> rx.Component:
                     ),
 
                     spacing="3",
-                    width="100%"
+                    width="100%",
+                    min_width="0",
                 ),
 
                 # ==== 右栏：负债与资本端 ====
@@ -306,6 +315,7 @@ def balance_page() -> rx.Component:
                                         rx.fragment(),
                                     ),
                                     width="100%",
+                                    flex_wrap="wrap",
                                 )
                             ),
                             rx.divider(margin="0"),
@@ -313,7 +323,7 @@ def balance_page() -> rx.Component:
                                 rx.text("综合总计(CNY):", size="1", weight="bold", color=rx.color("red", 11)),
                                 rx.spacer(),
                                 rx.text(BalanceState.liability_total_str, size="3", weight="bold", color=rx.color("red", 11)),
-                                width="100%", align="center",
+                                width="100%", align="center", flex_wrap="wrap",
                             ),
                             spacing="1", width="100%",
                         ),
@@ -342,6 +352,7 @@ def balance_page() -> rx.Component:
                                         rx.fragment(),
                                     ),
                                     width="100%",
+                                    flex_wrap="wrap",
                                 )
                             ),
                             rx.divider(margin="0"),
@@ -349,7 +360,7 @@ def balance_page() -> rx.Component:
                                 rx.text("综合总计(CNY):", size="1", weight="bold", color=rx.color("green", 11)),
                                 rx.spacer(),
                                 rx.text(BalanceState.equity_total_str, size="3", weight="bold", color=rx.color("green", 11)),
-                                width="100%", align="center",
+                                width="100%", align="center", flex_wrap="wrap",
                             ),
                             spacing="1", width="100%",
                         ),
@@ -358,15 +369,18 @@ def balance_page() -> rx.Component:
                     ),
 
                     spacing="3",
-                    width="100%"
+                    width="100%",
+                    min_width="0",
                 ),
                 columns="2",
                 spacing="5",
                 width="100%",
-                align_items="start"
+                align_items="start",
+                class_name="balance-main-grid",
             ),
             spacing="4",
-            width="100%"
+            width="100%",
+            min_width="0",
         ),
         title="公司账面概览 (资产负债表)",
     )

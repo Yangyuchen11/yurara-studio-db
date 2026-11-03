@@ -45,22 +45,18 @@ def cashier_product_card(item: POSTemplateItemModel) -> rx.Component:
             max_width="calc(100% - 1rem)"
         ),
         
-        # 3. 余量和价格卡片悬浮于底部
+        # 3. 余量和价格卡片悬浮于底部（左边显示余量/售罄，右边固定显示价格）
         rx.hstack(
-            # 余量
+            # 余量（或售罄状态）
             rx.cond(
                 is_out_of_stock,
-                rx.badge(OfflineSalesState.tr["out_of_stock"], color_scheme="red", variant="solid", size="2"),
+                rx.badge(OfflineSalesState.tr["out_of_stock"], color_scheme="gray", variant="solid", size="2"),
                 rx.badge(rx.fragment("📦 ", item.remaining_quantity.to_string()), color_scheme="green", variant="solid", size="2")
             ),
-            # 价格
+            # 价格（固定显示）
             rx.badge(
-                rx.cond(
-                    is_out_of_stock,
-                    OfflineSalesState.tr["no_stock"],
-                    rx.fragment("¥", item.preset_price.to_string())
-                ),
-                color_scheme=rx.cond(is_out_of_stock, "red", "violet"),
+                rx.fragment("¥", item.preset_price.to_string()),
+                color_scheme=rx.cond(is_out_of_stock, "gray", "violet"),
                 variant="solid",
                 size="2"
             ),
@@ -108,7 +104,10 @@ def cashier_product_card(item: POSTemplateItemModel) -> rx.Component:
             "aspectRatio": "1 / 1",
             "overflow": "hidden",
             "position": "relative",
-            "cursor": rx.cond(is_out_of_stock, "default", "pointer"),
+            "cursor": rx.cond(is_out_of_stock, "not-allowed", "pointer"),
+            "filter": rx.cond(is_out_of_stock, "grayscale(100%)", "none"),
+            "opacity": rx.cond(is_out_of_stock, "0.55", "1"),
+            "pointerEvents": rx.cond(is_out_of_stock, "none", "auto"),
             "userSelect": "none",
             "WebkitUserSelect": "none",
             "touchAction": "manipulation",

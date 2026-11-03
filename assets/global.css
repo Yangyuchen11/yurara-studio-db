@@ -205,11 +205,24 @@ input:-webkit-autofill:active {
     top: 0.75rem;
 }
 
-/* 通用表格与选项卡触摸横向滚动保护 */
+/* 通用表格与选项卡触摸横向滚动保护（防止子元素 min-width:auto 撑破栅格与卡片导致手机竖屏右侧被截断） */
+.rt-Grid > *,
+.app-data-card,
+.rt-Card {
+    min-width: 0;
+    max-width: 100%;
+}
 .rt-TableRoot {
     overflow-x: auto !important;
     -webkit-overflow-scrolling: touch;
     max-width: 100%;
+    width: 100%;
+    display: block;
+}
+.rt-TableRoot > .rt-ScrollAreaRoot,
+.rt-TableRoot > table,
+.rt-TableTable {
+    min-width: 100%;
 }
 .rt-TabsList {
     overflow-x: auto !important;
@@ -307,8 +320,9 @@ input:-webkit-autofill:active {
 @media (max-width: 820px) {
     .pos-main-grid,
     .pos-template-grid,
+    .balance-main-grid,
     .rt-Grid[class*="rt-r-gtc-12"] {
-        grid-template-columns: 1fr !important;
+        grid-template-columns: minmax(0, 1fr) !important;
     }
     .rt-Grid[class*="rt-r-gtc-12"] > * {
         grid-column: 1 / -1 !important;
@@ -337,7 +351,7 @@ input:-webkit-autofill:active {
     .pos-assign-grid,
     .rt-Grid[class*="rt-r-gtc-3"],
     .rt-Grid[class*="rt-r-gtc-2"]:not(.pos-keep-2col) {
-        grid-template-columns: 1fr !important;
+        grid-template-columns: minmax(0, 1fr) !important;
     }
     .rt-DialogContent,
     .rt-AlertDialogContent {

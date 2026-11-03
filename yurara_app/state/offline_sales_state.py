@@ -632,8 +632,11 @@ class OfflineSalesState(AppState):
         if not target_item:
             return rx.toast("未找到对应商品模板项目！", level="error")
             
+        if target_item.remaining_quantity <= 0:
+            return rx.toast("该商品已售罄！", level="warning")
+
         price = target_item.preset_price
-        max_qty = target_item.max_limit
+        max_qty = min(target_item.remaining_quantity, target_item.max_limit)
         image_data = target_item.image_data
 
         # 寻找购物车现有

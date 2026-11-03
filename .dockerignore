@@ -1,0 +1,11 @@
+.git
+.web
+.states
+__pycache__
+*.pyc
+*.pyo
+*.db
+.env
+frontend.zip
+temp*.json
+out.txt

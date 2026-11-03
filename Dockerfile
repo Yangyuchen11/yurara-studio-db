@@ -23,18 +23,18 @@ COPY . .
 # 安装 Python 依赖
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 初始化 Reflex 应用
-RUN python -m reflex init --loglevel debug || true
-
-# 构建前端
-RUN python -m reflex export --frontend-only --no-zip 2>/dev/null || true
-
-# 设置环境变量
+# 设置环境变量（必须在 reflex init / export 之前设置，确保构建阶段识别为 prod 模式）
 ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
 ENV REFLEX_ENV_MODE=prod
 ENV REFLEX_ENV=prod
 ENV ENV=prod
+
+# 初始化 Reflex 应用
+RUN python -m reflex init --loglevel debug || true
+
+# 构建前端
+RUN python -m reflex export --frontend-only --no-zip 2>/dev/null || true
 
 EXPOSE 8080
 
