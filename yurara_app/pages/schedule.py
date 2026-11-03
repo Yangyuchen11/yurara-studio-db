@@ -11,7 +11,11 @@
 7. 阶段节点弹窗支持独立勾选「不设置具体开始日期」与「不设置具体结束日期」，4 个旬度下拉框 2x2 严格等宽对齐
 """
 import reflex as rx
-from ..state.schedule_state import ScheduleState, ScheduleNodeItem, ScheduleLaneItem
+from ..state.schedule_state import (
+    ScheduleState,
+    ScheduleNodeItem,
+    ScheduleLaneItem,
+)
 from ..components.layout import page_layout
 from ..components.editable_table import data_card, custom_form_field
 
@@ -20,9 +24,10 @@ PERIOD_NAMES = ["上", "中", "下"]
 
 SLOT_WIDTH = "var(--timeline-slot-width, 100px)"
 MONTH_WIDTH = "calc(var(--timeline-slot-width, 100px) * 3)"
-GRID_WIDTH = "calc(var(--timeline-slot-width, 100px) * 36)"
+YEAR_WIDTH = "calc(var(--timeline-slot-width, 100px) * 36)"
+GRID_WIDTH = "calc(var(--timeline-slot-width, 100px) * 36 * var(--timeline-num-years, 5))"
 HEADER_LEFT_WIDTH = "240px"
-TOTAL_WIDTH = "calc(240px + var(--timeline-slot-width, 100px) * 36)"
+TOTAL_WIDTH = "calc(240px + var(--timeline-slot-width, 100px) * 36 * var(--timeline-num-years, 5))"
 
 
 def metric_card(label: str, value: rx.Var, icon: str, color_scheme: str = "gray", badge_text: str = "") -> rx.Component:
@@ -201,31 +206,57 @@ def node_gantt_bar(node: ScheduleNodeItem, is_compact: bool = False) -> rx.Compo
 
 
 def timeline_clickable_grid_bg(lane_type: str, product_id: int, lane_title: str) -> rx.Component:
-    """生成 36 列可点击背景格子 (点击任意格子直接打开节点创建弹窗)"""
-    return rx.box(
-        *[
+    """生成多年度动态可点击背景格子 (点击任意格子直接打开节点创建弹窗)"""
+    return rx.hstack(
+        rx.foreach(
+            ScheduleState.timeline_years,
+            lambda y: rx.box(
+                *[
+                    rx.box(
+                        width=SLOT_WIDTH,
+                        height="100%",
+                        border_right=(
+                            f"2px solid {rx.color('slate', 5)}"
+                            if ci == 35
+                            else f"1px dashed {rx.color('slate', 4)}"
+                        ),
+                        background="transparent",
+                        _hover={
+                            "background": "rgba(139, 92, 246, 0.05)",
+                            "cursor": "cell",
+                        },
+                        position="absolute",
+                        left=f"calc(var(--timeline-slot-width, 100px) * {ci})",
+                        top="0",
+                        z_index="1",
+                        on_click=ScheduleState.open_add_dialog_for_year_slot(
+                            lane_type, product_id, y, ci + 1, lane_title
+                        ),
+                        title=f"点击创建阶段节点 ({y}年{(ci // 3) + 1}月{PERIOD_NAMES[ci % 3]}旬)",
+                    )
+                    for ci in range(36)
+                ],
+                position="relative",
+                width=YEAR_WIDTH,
+                min_width=YEAR_WIDTH,
+                height="100%",
+            ),
+        ),
+        rx.cond(
+            ScheduleState.curr_col_index > 0,
             rx.box(
                 width=SLOT_WIDTH,
                 height="100%",
-                border_right=f"1px dashed {rx.color('slate', 4)}",
-                background=rx.cond(
-                    ci + 1 == ScheduleState.curr_col_index,
-                    "rgba(236, 72, 153, 0.06)",
-                    "transparent"
-                ),
-                _hover={
-                    "background": "rgba(139, 92, 246, 0.05)",
-                    "cursor": "cell",
-                },
+                background="rgba(236, 72, 153, 0.06)",
                 position="absolute",
-                left=f"calc(var(--timeline-slot-width, 100px) * {ci})",
+                left=f"calc(var(--timeline-slot-width, 100px) * ({ScheduleState.curr_col_index} - 1))",
                 top="0",
-                z_index="1",
-                on_click=ScheduleState.open_add_dialog_for_slot(lane_type, product_id, ci + 1, lane_title),
-                title=f"点击创建阶段节点 ({((ci)//3)+1}月{PERIOD_NAMES[ci%3]}旬)",
-            )
-            for ci in range(36)
-        ],
+                pointer_events="none",
+                z_index="0",
+            ),
+            rx.fragment(),
+        ),
+        spacing="0",
         position="absolute",
         left="0",
         top="0",
@@ -235,11 +266,10 @@ def timeline_clickable_grid_bg(lane_type: str, product_id: int, lane_title: str)
 
 
 def timeline_gantt_matrix() -> rx.Component:
-    """36 旬度全景甘特图时间轴矩阵视图 (左侧列完全固定 Sticky，按实际天数像素定位)"""
-    
-    # 顶部月份表头 (1-12 月，每月中跨 3 旬，各 300px)
-    month_header = rx.hstack(
-        # 左侧固定标题占位 (Sticky 绝对固定在最左侧)
+    """多年度连续全景甘特图时间轴矩阵视图 (左侧列完全固定 Sticky，支持直接左右滑动跨年查看与动态扩展年份)"""
+
+    # 顶层年份表头 (每个年份跨 36 旬 = 3600px，在月份上方显示一行年份，首尾支持一键无限扩展前后年份)
+    year_header = rx.hstack(
         rx.hstack(
             rx.text("业务主体 / 商品项目", size="1", weight="bold", color=rx.color("slate", 10)),
             rx.spacer(),
@@ -255,7 +285,7 @@ def timeline_gantt_matrix() -> rx.Component:
             ),
             width=HEADER_LEFT_WIDTH,
             min_width=HEADER_LEFT_WIDTH,
-            padding="0.6rem 0.85rem",
+            padding="0.45rem 0.85rem",
             border_right=f"1px solid {rx.color('slate', 6)}",
             align="center",
             style={
@@ -266,19 +296,109 @@ def timeline_gantt_matrix() -> rx.Component:
                 "boxShadow": "2px 0 5px rgba(0,0,0,0.06)",
             },
         ),
-        # 右侧 12 个月份表头
         rx.hstack(
-            *[
-                rx.center(
-                    rx.text(f"{m} 月", size="2", weight="bold", color=rx.color("slate", 11)),
-                    width=MONTH_WIDTH,
-                    min_width=MONTH_WIDTH,
-                    padding="0.45rem 0",
-                    border_right=f"1px solid {rx.color('slate', 5)}",
+            rx.foreach(
+                ScheduleState.timeline_years,
+                lambda y: rx.box(
+                    rx.hstack(
+                        rx.cond(
+                            y == ScheduleState.base_year,
+                            rx.tooltip(
+                                rx.button(
+                                    ScheduleState.prev_year_label,
+                                    size="1",
+                                    variant="soft",
+                                    color_scheme="violet",
+                                    height="20px",
+                                    padding="0 6px",
+                                    on_click=ScheduleState.prepend_year,
+                                ),
+                                content="向左侧扩展更早一年时间轴",
+                            ),
+                            rx.fragment(),
+                        ),
+                        rx.icon("calendar", size=13, color=rx.color("violet", 9)),
+                        rx.text(f"{y} 年", size="2", weight="bold", color=rx.color("slate", 12)),
+                        rx.cond(
+                            y == ScheduleState.end_year,
+                            rx.tooltip(
+                                rx.button(
+                                    ScheduleState.next_year_label,
+                                    size="1",
+                                    variant="soft",
+                                    color_scheme="violet",
+                                    height="20px",
+                                    padding="0 6px",
+                                    on_click=ScheduleState.append_year,
+                                ),
+                                content="向右侧扩展更晚一年时间轴",
+                            ),
+                            rx.fragment(),
+                        ),
+                        spacing="2",
+                        align="center",
+                        style={
+                            "position": "sticky",
+                            "left": "256px",
+                            "display": "inline-flex",
+                        },
+                    ),
+                    width=YEAR_WIDTH,
+                    min_width=YEAR_WIDTH,
+                    padding="0.45rem 0.75rem",
+                    border_right=f"2px solid {rx.color('slate', 6)}",
                     background=rx.color("slate", 3),
-                )
-                for m in range(1, 13)
-            ],
+                ),
+            ),
+            spacing="0",
+        ),
+        spacing="0",
+        align="center",
+        border_bottom=f"1px solid {rx.color('slate', 5)}",
+        background=rx.color("slate", 3),
+        width=TOTAL_WIDTH,
+    )
+
+    # 次级月份表头 (每年 1-12 月，每月中跨 3 旬，各 300px)
+    month_header = rx.hstack(
+        rx.box(
+            rx.text("月份标尺", size="1", color=rx.color("slate", 9), weight="medium"),
+            width=HEADER_LEFT_WIDTH,
+            min_width=HEADER_LEFT_WIDTH,
+            padding="0.45rem 0.85rem",
+            border_right=f"1px solid {rx.color('slate', 6)}",
+            style={
+                "position": "sticky",
+                "left": "0",
+                "zIndex": "20",
+                "background": rx.color("slate", 3),
+                "boxShadow": "2px 0 5px rgba(0,0,0,0.06)",
+            },
+        ),
+        rx.hstack(
+            rx.foreach(
+                ScheduleState.timeline_years,
+                lambda _y: rx.hstack(
+                    *[
+                        rx.center(
+                            rx.text(f"{m} 月", size="2", weight="bold", color=rx.color("slate", 11)),
+                            width=MONTH_WIDTH,
+                            min_width=MONTH_WIDTH,
+                            padding="0.45rem 0",
+                            border_right=(
+                                f"2px solid {rx.color('slate', 6)}"
+                                if m == 12
+                                else f"1px solid {rx.color('slate', 5)}"
+                            ),
+                            background=rx.color("slate", 3),
+                        )
+                        for m in range(1, 13)
+                    ],
+                    spacing="0",
+                    width=YEAR_WIDTH,
+                    min_width=YEAR_WIDTH,
+                ),
+            ),
             spacing="0",
         ),
         spacing="0",
@@ -288,7 +408,7 @@ def timeline_gantt_matrix() -> rx.Component:
         width=TOTAL_WIDTH,
     )
 
-    # 次级旬度表头 (36 旬: 上 / 中 / 下，各 100px)
+    # 三级旬度表头 (多年度全部旬: 上 / 中 / 下，各 100px)
     sub_period_header = rx.hstack(
         rx.box(
             rx.text("工期阶段泳道", size="1", color=rx.color("slate", 8)),
@@ -305,30 +425,42 @@ def timeline_gantt_matrix() -> rx.Component:
             },
         ),
         rx.hstack(
-            *[
-                rx.center(
-                    rx.hstack(
-                        rx.text(PERIOD_NAMES[col_i % 3], size="1", color=rx.color("slate", 9), weight="medium"),
-                        rx.cond(
-                            col_i + 1 == ScheduleState.curr_col_index,
-                            rx.badge("今", size="1", color_scheme="pink", variant="solid", style={"padding": "0 2px", "fontSize": "9px"}),
-                            rx.fragment()
-                        ),
-                        spacing="1",
-                        align="center",
-                    ),
-                    width=SLOT_WIDTH,
-                    min_width=SLOT_WIDTH,
-                    padding="0.3rem 0",
-                    border_right=f"1px solid {rx.color('slate', 4)}",
-                    background=rx.cond(
-                        col_i + 1 == ScheduleState.curr_col_index,
-                        "rgba(236, 72, 153, 0.12)",
-                        "transparent"
-                    ),
-                )
-                for col_i in range(36)
-            ],
+            rx.foreach(
+                ScheduleState.timeline_years,
+                lambda y: rx.hstack(
+                    *[
+                        rx.center(
+                            rx.hstack(
+                                rx.text(PERIOD_NAMES[col_i % 3], size="1", color=rx.color("slate", 9), weight="medium"),
+                                rx.cond(
+                                    (y == ScheduleState.curr_year) & (col_i + 1 == ScheduleState.curr_year_col_index),
+                                    rx.badge("今", size="1", color_scheme="pink", variant="solid", style={"padding": "0 2px", "fontSize": "9px"}),
+                                    rx.fragment()
+                                ),
+                                spacing="1",
+                                align="center",
+                            ),
+                            width=SLOT_WIDTH,
+                            min_width=SLOT_WIDTH,
+                            padding="0.3rem 0",
+                            border_right=(
+                                f"2px solid {rx.color('slate', 6)}"
+                                if col_i == 35
+                                else f"1px solid {rx.color('slate', 4)}"
+                            ),
+                            background=rx.cond(
+                                (y == ScheduleState.curr_year) & (col_i + 1 == ScheduleState.curr_year_col_index),
+                                "rgba(236, 72, 153, 0.12)",
+                                "transparent"
+                            ),
+                        )
+                        for col_i in range(36)
+                    ],
+                    spacing="0",
+                    width=YEAR_WIDTH,
+                    min_width=YEAR_WIDTH,
+                ),
+            ),
             spacing="0",
         ),
         spacing="0",
@@ -500,6 +632,7 @@ def timeline_gantt_matrix() -> rx.Component:
         rx.box(
             rx.vstack(
                 rx.box(
+                    year_header,
                     month_header,
                     sub_period_header,
                     id="timeline-header-area",
@@ -530,9 +663,11 @@ def timeline_gantt_matrix() -> rx.Component:
                 width=TOTAL_WIDTH,
             ),
             id="timeline-scroll-container",
+            custom_attrs={"data-base-year": ScheduleState.base_year.to_string()},
             style={
                 "--timeline-slot-width": "100px",
                 "--timeline-zoom": "1",
+                "--timeline-num-years": ScheduleState.num_years.to_string(),
                 "overflowX": "auto",
                 "width": "100%",
                 "scrollbarWidth": "auto",
@@ -1038,22 +1173,6 @@ def schedule_page() -> rx.Component:
             # 3. 过滤控制、缩放调节与动作栏
             rx.card(
                 rx.hstack(
-                    # 年份切换
-                    rx.hstack(
-                        rx.text("年份:", size="1", color=rx.color("slate", 9), weight="medium"),
-                        rx.select.root(
-                            rx.select.trigger(),
-                            rx.select.content(
-                                rx.foreach(ScheduleState.year_options, lambda y: rx.select.item(f"{y} 年", value=y.to_string()))
-                            ),
-                            value=ScheduleState.selected_year.to_string(),
-                            on_change=ScheduleState.set_selected_year,
-                            size="1",
-                        ),
-                        spacing="2",
-                        align="center",
-                    ),
-                    rx.divider(orientation="vertical", size="2"),
                     # 分类切换 (全部类型)
                     rx.segmented_control.root(
                         rx.segmented_control.item("全部类型", value="all"),

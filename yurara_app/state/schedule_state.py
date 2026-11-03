@@ -54,6 +54,10 @@ STATUS_CHOICES = [
 ]
 
 YEAR_OPTIONS = [2024, 2025, 2026, 2027, 2028]
+BASE_YEAR = YEAR_OPTIONS[0]
+END_YEAR = YEAR_OPTIONS[-1]
+TOTAL_TIMELINE_SLOTS = len(YEAR_OPTIONS) * 36
+TOTAL_TIMELINE_PX = float(TOTAL_TIMELINE_SLOTS * 100)
 
 
 class ScheduleNodeItem(BaseModel):
@@ -118,11 +122,15 @@ class ScheduleState(AppState):
     # 用户手动添加的项目列表记录
     custom_active_lanes: list[str] = []
     
-    # 当前系统时间旬度
+    # 当前系统时间旬度与动态多年度范围
     curr_year: int = 2026
     curr_month: int = 8
     curr_period: str = "late"
-    curr_col_index: int = 24  # 1-36
+    curr_year_col_index: int = 24  # 1-36 (当年内旬索引)
+    curr_col_index: int = 24  # 全局列索引 (1 - num_years*36)
+    custom_min_year: int = 2024
+    custom_max_year: int = 2028
+    timeline_years: list[int] = [2024, 2025, 2026, 2027, 2028]
     
     # 页面渲染数据
     has_initial_scrolled: bool = False
@@ -219,7 +227,27 @@ class ScheduleState(AppState):
 
     @rx.var
     def year_options(self) -> list[int]:
-        return YEAR_OPTIONS
+        return self.timeline_years
+
+    @rx.var
+    def base_year(self) -> int:
+        return self.timeline_years[0] if self.timeline_years else 2024
+
+    @rx.var
+    def end_year(self) -> int:
+        return self.timeline_years[-1] if self.timeline_years else 2028
+
+    @rx.var
+    def prev_year_label(self) -> str:
+        return f"◀ {self.base_year - 1} 年"
+
+    @rx.var
+    def next_year_label(self) -> str:
+        return f"{self.end_year + 1} 年 ▶"
+
+    @rx.var
+    def num_years(self) -> int:
+        return max(1, len(self.timeline_years))
 
     @rx.var
     def current_period_display(self) -> str:
@@ -241,12 +269,7 @@ class ScheduleState(AppState):
         # 更新今天所属时间
         c_y, c_m, c_p = get_current_period()
         self.curr_year, self.curr_month, self.curr_period = c_y, c_m, c_p
-        
-        # 计算当前选中年份中高亮线所在的列 (1-36)
-        if self.selected_year == c_y:
-            self.curr_col_index = (c_m - 1) * 3 + PERIOD_MAP.get(c_p, 0) + 1
-        else:
-            self.curr_col_index = 0
+        self.curr_year_col_index = (c_m - 1) * 3 + PERIOD_MAP.get(c_p, 0) + 1
 
         db = self.get_db()
         try:
@@ -266,8 +289,31 @@ class ScheduleState(AppState):
             if plats:
                 self.platform_options = [p.name for p in plats]
 
-            # 3. 加载节点
-            raw_nodes = service.get_nodes(year=self.selected_year, item_type=self.filter_type)
+            # 3. 加载全部年份节点，并根据当前年份 + 节点年份 + 用户手动扩展范围自动计算时间轴年份跨度
+            all_nodes_for_years = service.get_nodes(year=None, item_type="all")
+            min_y = min(self.custom_min_year, c_y - 2)
+            max_y = max(self.custom_max_year, c_y + 2)
+            for an in all_nodes_for_years:
+                if an.start_year and an.start_year < min_y:
+                    min_y = an.start_year
+                if an.end_year and an.end_year > max_y:
+                    max_y = an.end_year
+
+            self.custom_min_year = min_y
+            self.custom_max_year = max_y
+            self.timeline_years = list(range(min_y, max_y + 1))
+            total_timeline_px = float(len(self.timeline_years) * 3600)
+
+            if min_y <= c_y <= max_y:
+                self.curr_col_index = (c_y - min_y) * 36 + self.curr_year_col_index
+            else:
+                self.curr_col_index = 0
+
+            raw_nodes = (
+                all_nodes_for_years
+                if self.filter_type == "all"
+                else [n for n in all_nodes_for_years if n.item_type == self.filter_type]
+            )
             
             node_items = []
             status_map = dict(STATUS_CHOICES)
@@ -320,26 +366,26 @@ class ScheduleState(AppState):
                     days_in_m = calendar.monthrange(e_y, e_m)[1]
                     e_d = 10 if n.end_period == "early" else (20 if n.end_period == "mid" else days_in_m)
 
-                # 计算在当前 selected_year 的起止像素
-                if s_y < self.selected_year:
+                # 计算在动态多年度时间轴 (min_y ~ max_y) 中的起止像素
+                if s_y < min_y:
                     start_x = 0.0
-                elif s_y == self.selected_year:
-                    start_x = date_to_pixel_offset(s_y, s_m, s_d, is_end=False)
+                elif s_y <= max_y:
+                    start_x = (s_y - min_y) * 3600.0 + date_to_pixel_offset(s_y, s_m, s_d, is_end=False)
                 else:
-                    start_x = 3600.0
+                    start_x = total_timeline_px
 
-                if e_y > self.selected_year:
-                    end_x = 3600.0
-                elif e_y == self.selected_year:
-                    end_x = date_to_pixel_offset(e_y, e_m, e_d, is_end=True)
+                if e_y > max_y:
+                    end_x = total_timeline_px
+                elif e_y >= min_y:
+                    end_x = (e_y - min_y) * 3600.0 + date_to_pixel_offset(e_y, e_m, e_d, is_end=True)
                 else:
                     end_x = 0.0
 
                 # 裁剪并计算可见性
-                is_vis = not (e_y < self.selected_year or s_y > self.selected_year or end_x <= start_x)
+                is_vis = not (e_y < min_y or s_y > max_y or end_x <= start_x)
                 if is_vis:
-                    left_px = round(max(0.0, min(3600.0, start_x)), 1)
-                    right_px = round(max(0.0, min(3600.0, end_x)), 1)
+                    left_px = round(max(0.0, min(total_timeline_px, start_x)), 1)
+                    right_px = round(max(0.0, min(total_timeline_px, end_x)), 1)
                     width_px = round(max(52.0, right_px - left_px), 1)
                 else:
                     left_px = 0.0
@@ -520,7 +566,7 @@ class ScheduleState(AppState):
 
     @rx.event
     def on_page_load(self):
-        """页面每次加载/进入时调用：拉取数据并自动平滑居左滚动到当前月份"""
+        """页面每次加载/进入时调用：拉取数据并自动平滑居左滚动到当前年份与月份"""
         c_y, c_m, c_p = get_current_period()
         self.curr_year, self.curr_month, self.curr_period = c_y, c_m, c_p
         yield ScheduleState.load_schedule_data()
@@ -532,7 +578,9 @@ class ScheduleState(AppState):
                 if (el) {{
                     const rawSlot = getComputedStyle(el).getPropertyValue('--timeline-slot-width');
                     const slotWidth = parseFloat(rawSlot) || 100;
-                    const targetLeft = Math.max(0, ({c_m} - 1) * slotWidth * 3);
+                    const baseYear = parseInt(el.getAttribute('data-base-year')) || 2024;
+                    const monthsFromStart = Math.max(0, ({c_y} - baseYear) * 12 + ({c_m} - 1));
+                    const targetLeft = Math.max(0, monthsFromStart * slotWidth * 3);
                     el.scrollTo({{ left: targetLeft, behavior: 'smooth' }});
                 }}
             }}
@@ -540,6 +588,34 @@ class ScheduleState(AppState):
             setTimeout(scrollGanttTimeline, 450);
             """
         )
+
+    @rx.event
+    def prepend_year(self):
+        """向左侧扩展前一年时间轴，并保持当前可视滚动位置不跳动"""
+        new_min = (self.timeline_years[0] if self.timeline_years else self.curr_year) - 1
+        self.custom_min_year = min(self.custom_min_year, new_min)
+        yield ScheduleState.load_schedule_data()
+        yield rx.call_script(
+            """
+            setTimeout(function() {
+                const el = document.getElementById('timeline-scroll-container');
+                if (el) {
+                    const rawSlot = getComputedStyle(el).getPropertyValue('--timeline-slot-width');
+                    const slotWidth = parseFloat(rawSlot) || 100;
+                    el.scrollLeft += 36 * slotWidth;
+                }
+            }, 50);
+            """
+        )
+        yield rx.toast(f"已向前扩展 {new_min} 年时间轴！")
+
+    @rx.event
+    def append_year(self):
+        """向右侧扩展后一年时间轴"""
+        new_max = (self.timeline_years[-1] if self.timeline_years else self.curr_year) + 1
+        self.custom_max_year = max(self.custom_max_year, new_max)
+        yield ScheduleState.load_schedule_data()
+        yield rx.toast(f"已向后扩展 {new_max} 年时间轴！")
 
     # ===================== 缩放控制事件 =====================
 
@@ -741,26 +817,26 @@ class ScheduleState(AppState):
     # ===================== 弹窗 2: 单个阶段节点添加与编辑 =====================
 
     @rx.event
-    def open_add_dialog_for_slot(self, lane_type: str, product_id: int, col_index: int, lane_title: str = ""):
-        """🎯 点击时间轴任意时间格时调出节点弹窗，并自动预填该时间点与商品"""
+    def open_add_dialog_for_year_slot(self, lane_type: str, product_id: int, year: int, slot_in_year: int, lane_title: str = ""):
+        """🎯 点击指定年份与年内旬度格 (1-36) 时调出节点弹窗，并自动预填该时间点与商品"""
         self.is_editing = False
         self.f_node_id = 0
         self.f_item_type = lane_type
         self.f_product_id = product_id or 0
         self.current_lane_title = lane_title or ("商品工期" if lane_type == "product" else ("展会活动" if lane_type == "event" else "其他日程"))
-        
-        # 解析所点击的网格列 (1-36)
-        month = ((col_index - 1) // 3) + 1
+
+        rem_in_year = max(0, min(35, int(slot_in_year) - 1))
+        year = int(year)
+        month = (rem_in_year // 3) + 1
         period_arr = ["early", "mid", "late"]
-        period = period_arr[(col_index - 1) % 3]
-        year = self.selected_year
+        period = period_arr[rem_in_year % 3]
         def_date = period_default_date(year, month, period, False)
-        
+
         self.f_start_date = def_date
         self.f_end_date = def_date
         self.f_no_start_date = False
         self.f_no_end_date = False
-        
+
         self.f_start_year = year
         self.f_start_month = month
         self.f_start_period = period
@@ -782,6 +858,15 @@ class ScheduleState(AppState):
         self.f_color = "violet"
         self.f_remarks = ""
         self.is_node_dialog_open = True
+
+    @rx.event
+    def open_add_dialog_for_slot(self, lane_type: str, product_id: int, col_index: int, lane_title: str = ""):
+        """🎯 点击时间轴任意时间格时调出节点弹窗，并自动预填该时间点与商品"""
+        zero_idx = max(0, col_index - 1)
+        year_offset = zero_idx // 36
+        rem_in_year = (zero_idx % 36) + 1
+        year = self.base_year + year_offset
+        return self.open_add_dialog_for_year_slot(lane_type, product_id, year, rem_in_year, lane_title)
 
     @rx.event
     def open_edit_dialog(self, node: dict):
