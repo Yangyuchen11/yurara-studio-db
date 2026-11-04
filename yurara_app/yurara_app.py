@@ -205,6 +205,10 @@ html {
 .rt-AccordionContent .rt-TableCell * {
     color: #ffffff !important;
 }
+.rt-AccordionContent .rt-TableCell .rt-TextFieldRoot,
+.rt-AccordionContent .rt-TableCell .rt-TextFieldInput {
+    color: #000000 !important;
+}
 .rt-AccordionContent .rt-TableColumnHeaderCell,
 .rt-AccordionContent .rt-TableCell {
     text-align: left !important;

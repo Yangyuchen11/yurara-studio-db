@@ -103,7 +103,7 @@ def node_gantt_bar(node: ScheduleNodeItem, is_compact: bool = False) -> rx.Compo
                     rx.hstack(
                         rx.icon(status_icon, size=12),
                         rx.text(
-                            node.display_title,
+                            node.bar_title,
                             size="1",
                             weight="bold",
                             white_space="nowrap",

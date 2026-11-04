@@ -100,7 +100,7 @@ def build_manual_order_form() -> rx.Component:
             custom_form_field(
                 "销售平台",
                 rx.select.root(
-                    rx.select.trigger(),
+                    rx.select.trigger(width="100%"),
                     rx.select.content(
                         rx.foreach(
                             SalesOrderState.platform_options,
@@ -116,7 +116,7 @@ def build_manual_order_form() -> rx.Component:
             custom_form_field(
                 "币种",
                 rx.select.root(
-                    rx.select.trigger(),
+                    rx.select.trigger(width="100%"),
                     rx.select.content(
                         rx.foreach(
                             SalesOrderState.all_currencies,
@@ -132,7 +132,7 @@ def build_manual_order_form() -> rx.Component:
             custom_form_field(
                 "收款现金账户",
                 rx.select.root(
-                    rx.select.trigger(),
+                    rx.select.trigger(width="100%"),
                     rx.select.content(
                         rx.foreach(
                             SalesOrderState.cash_account_options,
@@ -155,7 +155,7 @@ def build_manual_order_form() -> rx.Component:
             custom_form_field(
                 "选择商品",
                 rx.select.root(
-                    rx.select.trigger(),
+                    rx.select.trigger(width="100%"),
                     rx.select.content(
                         rx.foreach(
                             SalesOrderState.product_options,
@@ -167,11 +167,14 @@ def build_manual_order_form() -> rx.Component:
                     size="2",
                     width="100%",
                 ),
+                width="auto",
+                flex="2",
+                min_width="180px",
             ),
             custom_form_field(
                 "选择款式",
                 rx.select.root(
-                    rx.select.trigger(),
+                    rx.select.trigger(width="100%"),
                     rx.select.content(
                         rx.foreach(
                             SalesOrderState.active_variants,
@@ -183,6 +186,9 @@ def build_manual_order_form() -> rx.Component:
                     size="2",
                     width="100%",
                 ),
+                width="auto",
+                flex="1.5",
+                min_width="140px",
             ),
             custom_form_field(
                 "数量",
@@ -193,11 +199,15 @@ def build_manual_order_form() -> rx.Component:
                     size="2",
                     width="100%",
                 ),
+                width="auto",
+                flex="0.8",
+                min_width="90px",
+                max_width="130px",
             ),
             custom_form_field(
                 "出货仓库",
                 rx.select.root(
-                    rx.select.trigger(placeholder="选择出货仓库"),
+                    rx.select.trigger(placeholder="选择出货仓库", width="100%"),
                     rx.select.content(
                         rx.foreach(
                             SalesOrderState.warehouse_options,
@@ -209,6 +219,9 @@ def build_manual_order_form() -> rx.Component:
                     size="2",
                     width="100%",
                 ),
+                width="auto",
+                flex="1.5",
+                min_width="140px",
             ),
             rx.button(
                 rx.icon("plus", size=14),
@@ -217,6 +230,7 @@ def build_manual_order_form() -> rx.Component:
                 size="2",
                 color_scheme="violet",
                 margin_top="auto",
+                flex_shrink="0",
             ),
             spacing="3",
             align_items="end",

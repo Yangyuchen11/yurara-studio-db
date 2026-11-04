@@ -313,6 +313,7 @@ class FinanceState(AppState):
     temp_qty: float = 1.0
     temp_desc: str = ""
     temp_url: str = ""
+    batch_item_seq: int = 0
     batch_items: list[TempBatchItem] = []
     
     # === 其他资产购入补充库存专属 ===
@@ -620,7 +621,7 @@ class FinanceState(AppState):
     @rx.event
     def set_temp_url(self, val: str): self.temp_url = val
 
-    # 批量列表追加与移除
+    # 批量列表追加、修改与移除
     @rx.event
     def add_batch_item(self):
         if not self.temp_name.strip():
@@ -628,8 +629,9 @@ class FinanceState(AppState):
         if self.temp_amount <= 0:
             return rx.toast("明细金额必须大于0！", level="warning")
             
+        self.batch_item_seq += 1
         new_item = TempBatchItem(
-            key=f"item_{len(self.batch_items)}",
+            key=f"item_{self.batch_item_seq}",
             name=self.temp_name.strip(),
             amount=round(float(self.temp_amount), 2),
             qty=round(float(self.temp_qty), 2),
@@ -643,6 +645,39 @@ class FinanceState(AppState):
         self.temp_desc = ""
         self.temp_url = ""
         self.batch_items = list(self.batch_items)
+
+    @rx.event
+    def update_batch_item(self, key: str, field: str, val: str):
+        updated = []
+        for item in self.batch_items:
+            if item.key == key:
+                item_copy = item.copy()
+                if field == "name":
+                    v = val.strip()
+                    if v:
+                        item_copy.name = v
+                elif field == "amount":
+                    try:
+                        amt = round(float(val), 2) if str(val).strip() != "" else 0.0
+                        if amt >= 0:
+                            item_copy.amount = amt
+                    except ValueError:
+                        pass
+                elif field == "qty":
+                    try:
+                        q = round(float(val), 2) if str(val).strip() != "" else 1.0
+                        if q > 0:
+                            item_copy.qty = q
+                    except ValueError:
+                        pass
+                elif field == "desc":
+                    item_copy.desc = val.strip()
+                elif field == "url":
+                    item_copy.url = val.strip()
+                updated.append(item_copy)
+            else:
+                updated.append(item)
+        self.batch_items = updated
 
     @rx.event
     def remove_batch_item(self, key: str):

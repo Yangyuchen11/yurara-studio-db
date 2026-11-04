@@ -70,6 +70,7 @@ class ScheduleNodeItem(BaseModel):
     stage_name: str = ""
     custom_stage: str = ""
     display_title: str = ""
+    bar_title: str = ""
     
     # 具体日期
     start_date: str = ""
@@ -339,8 +340,10 @@ class ScheduleState(AppState):
                     else:
                         stage_disp = n.stage_name or "工期"
                     display_title = f"{n.title or p_name} - {stage_disp}"
+                    bar_title = stage_disp
                 else:
                     display_title = n.title
+                    bar_title = display_title
 
                 # 计算在当前 selected_year (0 - 3600px) 中的具体日期像素位置与宽度
                 # 解析开始日
@@ -419,6 +422,7 @@ class ScheduleState(AppState):
                     stage_name=n.stage_name or "",
                     custom_stage=n.custom_stage or "",
                     display_title=display_title,
+                    bar_title=bar_title,
                     start_date=n.start_date or "",
                     end_date=n.end_date or "",
                     start_year=n.start_year,

@@ -164,11 +164,65 @@ def batch_editor_table() -> rx.Component:
                 rx.foreach(
                     FinanceState.batch_items,
                     lambda item: rx.table.row(
-                        rx.table.cell(rx.text(item.name, size="1", color="white"), style={"width": "16.66%"}),
-                        rx.table.cell(rx.text(item.amount.to_string(), size="1", color="white"), style={"width": "16.66%"}),
-                        rx.table.cell(rx.text(item.qty.to_string(), size="1", color="white"), style={"width": "16.66%"}),
-                        rx.table.cell(rx.text(item.desc, size="1", color="white"), style={"width": "16.66%"}),
-                        rx.table.cell(rx.text(item.url, size="1", line_clamp=1, color="white"), style={"width": "16.66%"}),
+                        rx.table.cell(
+                            rx.input(
+                                default_value=item.name,
+                                placeholder="物品名称 (必填)",
+                                on_blur=lambda v: FinanceState.update_batch_item(item.key, "name", v),
+                                size="1",
+                                width="100%",
+                                key=item.key + "_name",
+                            ),
+                            style={"width": "16.66%"},
+                        ),
+                        rx.table.cell(
+                            rx.input(
+                                type="number",
+                                default_value=item.amount.to_string(),
+                                placeholder="金额",
+                                on_change=lambda v: FinanceState.update_batch_item(item.key, "amount", v),
+                                on_blur=lambda v: FinanceState.update_batch_item(item.key, "amount", v),
+                                size="1",
+                                width="100%",
+                                key=item.key + "_amount",
+                            ),
+                            style={"width": "16.66%"},
+                        ),
+                        rx.table.cell(
+                            rx.input(
+                                type="number",
+                                default_value=item.qty.to_string(),
+                                placeholder="数量",
+                                on_change=lambda v: FinanceState.update_batch_item(item.key, "qty", v),
+                                on_blur=lambda v: FinanceState.update_batch_item(item.key, "qty", v),
+                                size="1",
+                                width="100%",
+                                key=item.key + "_qty",
+                            ),
+                            style={"width": "16.66%"},
+                        ),
+                        rx.table.cell(
+                            rx.input(
+                                default_value=item.desc,
+                                placeholder="如：款式规格",
+                                on_blur=lambda v: FinanceState.update_batch_item(item.key, "desc", v),
+                                size="1",
+                                width="100%",
+                                key=item.key + "_desc",
+                            ),
+                            style={"width": "16.66%"},
+                        ),
+                        rx.table.cell(
+                            rx.input(
+                                default_value=item.url,
+                                placeholder="商品链接",
+                                on_blur=lambda v: FinanceState.update_batch_item(item.key, "url", v),
+                                size="1",
+                                width="100%",
+                                key=item.key + "_url",
+                            ),
+                            style={"width": "16.66%"},
+                        ),
                         rx.table.cell(
                             rx.icon_button(
                                 rx.icon("trash_2", size=12),
@@ -176,7 +230,8 @@ def batch_editor_table() -> rx.Component:
                                 size="1", variant="ghost", color_scheme="red"
                             ),
                             style={"width": "16.66%"}
-                        )
+                        ),
+                        key=item.key,
                     )
                 )
             ),
