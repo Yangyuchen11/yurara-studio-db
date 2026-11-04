@@ -200,6 +200,39 @@ def get_finance_page(
         batch_cost_cat=batch_cost_cat,
     )
     
+    indicators = data.get("indicators", [])
+    cash_bd = []
+    for ind in indicators:
+        curr = getattr(ind, "currency", None) or (ind.get("currency") if isinstance(ind, dict) else "CNY")
+        amt_s = getattr(ind, "amount_str", None) or (ind.get("amount_str") if isinstance(ind, dict) else "")
+        cash_bd.append({"currency": str(curr), "amount_str": str(amt_s)})
+    
+    # Parse cash_accounts to {id, name, currency, amount}
+    parsed_accounts = []
+    acc_map = {}
+    for ca in data.get("cash_accounts", []):
+        ca_id = getattr(ca, "id", None) or (ca.get("id") if isinstance(ca, dict) else 0)
+        lbl = getattr(ca, "label", None) or (ca.get("label") if isinstance(ca, dict) else "")
+        curr = getattr(ca, "currency", None) or (ca.get("currency") if isinstance(ca, dict) else "CNY")
+        amt_match = re.search(r'余额:\s*([0-9,\.\-]+)', lbl)
+        amt_val = float(amt_match.group(1).replace(",", "")) if amt_match else 0.0
+        name_clean = re.sub(r'\[.*?\]\s*', '', lbl)
+        name_clean = re.sub(r'\s*\(余额:.*?\)', '', name_clean).strip()
+        acc_dict = {
+            "id": int(ca_id),
+            "name": name_clean or lbl,
+            "currency": curr,
+            "amount": amt_val,
+        }
+        parsed_accounts.append(acc_dict)
+        acc_map[str(ca_id)] = acc_dict
+        acc_map[name_clean] = acc_dict
+        acc_map[lbl] = acc_dict
+        if "流动资金-" in name_clean:
+            acc_map[name_clean.replace("流动资金-", "")] = acc_dict
+        else:
+            acc_map[f"流动资金-{name_clean}"] = acc_dict
+
     # Transform raw data to match Android FinancePageResponse contract
     records_list = []
     raw_recs = data.get("processed_records", [])
@@ -211,50 +244,49 @@ def get_finance_page(
         amt_prefix = "+" if r_type == "收入" else "-"
         amt_formatted = f"{amt_prefix}{format_currency(r_amt, r_curr)}"
         cny_equiv = to_cny(r_amt, r_curr, rates_map)
-        cny_eq_str = f"折合 ¥{cny_equiv:,.2f}" if r_curr != "CNY" else ""
+        cny_eq_str = f"¥ {cny_equiv:,.2f}" if r_curr != "CNY" and cny_equiv > 0 else ""
         
         # Extract account name from desc if present
         raw_desc = str(r_dict.get("desc", ""))
         acc_match = re.search(r'\[账户:\s*(.*?)\]', raw_desc)
         extracted_acc = acc_match.group(1).strip() if acc_match else ""
 
+        # Match account object
+        matched_acc = None
+        if extracted_acc:
+            matched_acc = acc_map.get(extracted_acc)
+            if not matched_acc:
+                for k, v in acc_map.items():
+                    if k and (k in extracted_acc or extracted_acc in k):
+                        matched_acc = v
+                        break
+
+        matched_acc_id = matched_acc["id"] if matched_acc else int(r_dict.get("account_id") or 0)
+        acc_bal_str = format_currency(matched_acc["amount"], matched_acc["currency"]) if matched_acc else ""
+
+        # Running balance calculation for this currency after transaction
+        bal_after = float(r_dict.get("cny_bal", 0.0)) if r_curr == "CNY" else float(r_dict.get("jpy_bal", 0.0))
+        bal_after_str = format_currency(bal_after, r_curr) if bal_after != 0.0 else ""
+
+        # Clean description without redundant [账户: xxx] and [cost_item:xxx]
+        clean_desc = re.sub(r'\s*\[账户:\s*.*?\]', '', raw_desc)
+        clean_desc = re.sub(r'\s*\[cost_item:\d+\]', '', clean_desc).strip()
+
         records_list.append({
             "id": int(r_dict.get("id", 0)),
             "date_str": str(r_dict.get("date", "")),
             "type": r_type,
             "category": str(r_dict.get("category", "")),
-            "description": raw_desc,
+            "description": clean_desc or raw_desc,
             "amount_str": amt_formatted,
             "cny_equiv_str": cny_eq_str,
-            "account_name": extracted_acc,
+            "account_name": extracted_acc or (matched_acc["name"] if matched_acc else ""),
             "url": str(r_dict.get("url", "") or ""),
             "amount_raw": r_amt,
             "currency": r_curr,
-            "account_id": 0,
-        })
-    
-    indicators = data.get("indicators", [])
-    cash_bd = []
-    for ind in indicators:
-        curr = getattr(ind, "currency", None) or (ind.get("currency") if isinstance(ind, dict) else "CNY")
-        amt_s = getattr(ind, "amount_str", None) or (ind.get("amount_str") if isinstance(ind, dict) else "")
-        cash_bd.append({"currency": str(curr), "amount_str": str(amt_s)})
-    
-    # Parse cash_accounts to {id, name, currency, amount}
-    parsed_accounts = []
-    for ca in data.get("cash_accounts", []):
-        ca_id = getattr(ca, "id", None) or (ca.get("id") if isinstance(ca, dict) else 0)
-        lbl = getattr(ca, "label", None) or (ca.get("label") if isinstance(ca, dict) else "")
-        curr = getattr(ca, "currency", None) or (ca.get("currency") if isinstance(ca, dict) else "CNY")
-        amt_match = re.search(r'余额:\s*([0-9,\.\-]+)', lbl)
-        amt_val = float(amt_match.group(1).replace(",", "")) if amt_match else 0.0
-        name_clean = re.sub(r'\[.*?\]\s*', '', lbl)
-        name_clean = re.sub(r'\s*\(余额:.*?\)', '', name_clean).strip()
-        parsed_accounts.append({
-            "id": int(ca_id),
-            "name": name_clean or lbl,
-            "currency": curr,
-            "amount": amt_val,
+            "account_id": matched_acc_id,
+            "account_balance_str": acc_bal_str,
+            "running_balance_str": bal_after_str,
         })
 
     # Parse unsettled_debts
