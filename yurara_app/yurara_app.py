@@ -368,11 +368,36 @@ def serve_color_image(request):
 app._api.add_route("/color-image/{color_id}", serve_color_image, methods=["GET"])
 
 # === 挂载 Android 移动端 REST API 网关 (/api/v1) ===
+_mobile_api_error = None
 try:
     from api import create_mobile_api_app
+    from api.system_routes import router as system_router
+    from api.finance_routes import router as finance_router
+    from api.product_cost_routes import router as product_cost_router
+    from api.sales_routes import router as sales_router
+    from api.inventory_asset_schedule_routes import router as inv_asset_sched_router
+
+    # 1. 挂载子应用
     app._api.mount("/api/v1", create_mobile_api_app())
+    # 2. 将路由直接加入主应用，确保在生产环境（Reflex StaticFiles 静态代理）下优先作为精确路由匹配
+    app._api.include_router(system_router, prefix="/api/v1")
+    app._api.include_router(finance_router, prefix="/api/v1")
+    app._api.include_router(product_cost_router, prefix="/api/v1")
+    app._api.include_router(sales_router, prefix="/api/v1")
+    app._api.include_router(inv_asset_sched_router, prefix="/api/v1")
+    print("[Mobile API] Successfully mounted /api/v1 routes to Reflex FastAPI.")
 except Exception as api_mount_err:
-    print(f"[Mobile API] Failed to mount /api/v1: {api_mount_err}")
+    import traceback
+    _mobile_api_error = traceback.format_exc()
+    print(f"[Mobile API] Failed to mount /api/v1: {_mobile_api_error}")
+
+@app._api.get("/api-debug")
+def api_debug_endpoint():
+    return {
+        "status": "online",
+        "mobile_api_error": _mobile_api_error,
+        "routes": [getattr(r, "path", str(r)) for r in app._api.routes],
+    }
 
 
 # ==========================================
