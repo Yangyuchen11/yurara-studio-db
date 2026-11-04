@@ -367,6 +367,13 @@ def serve_color_image(request):
 
 app._api.add_route("/color-image/{color_id}", serve_color_image, methods=["GET"])
 
+# === 挂载 Android 移动端 REST API 网关 (/api/v1) ===
+try:
+    from api import create_mobile_api_app
+    app._api.mount("/api/v1", create_mobile_api_app())
+except Exception as api_mount_err:
+    print(f"[Mobile API] Failed to mount /api/v1: {api_mount_err}")
+
 
 # ==========================================
 # 自动数据库结构建立与迁移 (正式环境 / SQLite)
