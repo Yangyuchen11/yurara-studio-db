@@ -686,30 +686,66 @@ class OfflineSalesState(AppState):
         self.auto_match_cash_account()
 
     def auto_match_cash_account(self):
-        """根据当前支付方式和币种，自动推荐/匹配最适合的收款资产钱包。"""
+        """根据当前支付方式和币种，自动推荐/匹配最适合的收款资产钱包。
+        - 日元(JPY):
+            - 现金支付: 默认物理入账账户为日元临时现金账户
+            - PayPay: 默认现金进入 paypay 账户
+        - 非日元:
+            - 现金支付: 默认当前币种的现金账户
+        """
         if not self.active_template:
             return
         db = self.get_db()
         try:
-            curr = self.active_template.currency
+            curr = (self.active_template.currency or "").upper()
             accs = db.query(CompanyBalanceItem).filter(
                 CompanyBalanceItem.category == 'asset',
                 CompanyBalanceItem.asset_type == '现金',
-                CompanyBalanceItem.currency == curr
+                CompanyBalanceItem.currency == self.active_template.currency
             ).all()
             
             if not accs:
                 return
                 
-            target_acc = accs[0]
-            # 逻辑匹配：PayPay 匹配 paypay 账户，现金匹配 Cash/现金
-            for a in accs:
-                if self.pay_method == "PayPay" and "paypay" in a.name.lower():
-                    target_acc = a
-                    break
-                elif self.pay_method == "现金" and ("现金" in a.name or "cash" in a.name.lower()):
-                    target_acc = a
-                    break
+            target_acc = None
+            is_jpy = curr in ["JPY", "日元"]
+            
+            if is_jpy:
+                if self.pay_method == "PayPay":
+                    # 日元下选 PayPay，默认匹配 paypay 账户
+                    for a in accs:
+                        if "paypay" in a.name.lower():
+                            target_acc = a
+                            break
+                else:
+                    # 日元下选现金支付，默认匹配日元临时现金账户
+                    for a in accs:
+                        if "日元临时现金" in a.name or "临时现金" in a.name:
+                            target_acc = a
+                            break
+                    if not target_acc:
+                        for a in accs:
+                            if "现金" in a.name or "cash" in a.name.lower():
+                                target_acc = a
+                                break
+            else:
+                # 非日元下
+                if self.pay_method == "PayPay":
+                    for a in accs:
+                        if "paypay" in a.name.lower():
+                            target_acc = a
+                            break
+                if not target_acc:
+                    # 现金支付默认当前币种的现金账户
+                    for a in accs:
+                        if "现金" in a.name or "cash" in a.name.lower():
+                            target_acc = a
+                            break
+            
+            # 若仍未匹配到特定账户，则兜底为当前币种第一个现金账户
+            if not target_acc:
+                target_acc = accs[0]
+                
             self.selected_account_id = target_acc.id
             self.selected_account_name = target_acc.name
         except Exception:

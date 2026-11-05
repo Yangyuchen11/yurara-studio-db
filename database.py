@@ -120,3 +120,24 @@ def migrate_db(engine):
             print("[Migration] Checked and cleaned any .0 suffixes in order numbers.")
     except Exception as e:
         print(f"[Migration] Clean .0 suffixes error: {e}")
+    # 自愈修复：确保基础流动资金现金账户存在（如日元临时现金账户）
+    try:
+        from models import CompanyBalanceItem
+        from sqlalchemy.orm import Session
+        with Session(engine) as session:
+            jpy_cash_acc = session.query(CompanyBalanceItem).filter(
+                CompanyBalanceItem.category == "asset",
+                CompanyBalanceItem.name == "流动资金-日元临时现金账户"
+            ).first()
+            if not jpy_cash_acc:
+                session.add(CompanyBalanceItem(
+                    name="流动资金-日元临时现金账户",
+                    category="asset",
+                    amount=0.0,
+                    currency="JPY",
+                    asset_type="现金"
+                ))
+                session.commit()
+                print("[Migration] Added missing '流动资金-日元临时现金账户' to company_balance_items.")
+    except Exception as e:
+        print(f"[Migration] Check/add JPY temporary cash account error: {e}")

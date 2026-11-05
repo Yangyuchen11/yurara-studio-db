@@ -947,6 +947,8 @@ def get_balance_summary(
 
     asset_rows = []
     for acc in summary.get("cash_items", []):
+        if abs(acc.amount or 0.0) < 0.01:
+            continue
         c = acc.currency
         cny_eq = to_cny(acc.amount, c, rates_map)
         asset_rows.append({

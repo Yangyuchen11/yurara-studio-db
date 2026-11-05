@@ -8,7 +8,7 @@ from datetime import date, datetime
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 import pandas as pd
 
 from api.deps import verify_auth_token, get_db_session, is_test_mode_header, load_rates_map, format_currency
@@ -1255,8 +1255,15 @@ def get_offline_pos_init(
             "items": t_items,
         })
 
-    active_code = template_code or (tpl_list[0]["code"] if tpl_list else "")
-    orders = service.get_orders_by_template(active_code) if active_code else []
+    if template_code and template_code != "ALL":
+        orders = service.get_orders_by_template(template_code)
+    else:
+        # Load all offline sales orders across events
+        orders = db.query(SalesOrder).options(joinedload(SalesOrder.items)).filter(
+            SalesOrder.order_type == "线下"
+        ).order_by(SalesOrder.id.desc()).limit(200).all()
+        if not orders and tpl_list:
+            orders = service.get_orders_by_template(tpl_list[0]["code"])
     ord_list = []
     for o in orders:
         parts = [f"{i.product_name}[{i.variant}] x{i.quantity}" for i in o.items]

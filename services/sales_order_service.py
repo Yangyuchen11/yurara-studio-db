@@ -56,7 +56,7 @@ class SalesOrderService:
             if item.amount < 0 and name.startswith(AssetPrefix.PENDING_SETTLE):
                 item.amount = 0
                 
-            if abs(item.amount) <= 0.01 and not item.finance_record_id:
+            if abs(item.amount) <= 0.01 and not item.finance_record_id and not name.startswith(AssetPrefix.CASH):
                 self.db.delete(item)
         else:
             if delta < 0 and name.startswith(AssetPrefix.PENDING_SETTLE):

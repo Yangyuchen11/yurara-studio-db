@@ -162,6 +162,20 @@ def get_system_init(
     }
 
 
+@router.get("/system/rates")
+def get_exchange_rates(
+    username: str = Depends(verify_auth_token),
+    db: Session = Depends(get_db_session),
+):
+    rates_map = load_rates_map(db)
+    extra = [k for k in rates_map.keys() if k not in COMMON_CURRENCIES]
+    return {
+        "rates_map": rates_map,
+        "sorted_rates": _build_sorted_rates(rates_map),
+        "all_currencies": COMMON_CURRENCIES + sorted(extra),
+    }
+
+
 @router.post("/system/rates")
 def upsert_exchange_rate(
     req: RateUpdateRequest,
