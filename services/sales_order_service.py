@@ -399,6 +399,66 @@ class SalesOrderService:
         self.db.commit()
         return success_count, errors
 
+    def close_unpaid_presale_orders(self, order_ids: list[int], complete_date=None):
+        """超时未补款结单：直接完成定金订单，不绑定尾款，不发货（不扣减库存），不计入销售数和销售额"""
+        if not order_ids:
+            return 0, []
+        complete_date = complete_date or date.today()
+        orders = self.db.query(SalesOrder).filter(SalesOrder.id.in_(order_ids)).all()
+        order_map = {o.id: o for o in orders}
+
+        success_count = 0
+        errors = []
+
+        for o_id in order_ids:
+            order = order_map.get(o_id)
+            if not order:
+                errors.append(f"订单 ID {o_id} 不存在")
+                continue
+
+            if order.order_type != "预售":
+                errors.append(f"订单 {order.order_no} 不是预售订单")
+                continue
+
+            if order.final_order_no and str(order.final_order_no).strip() not in ("", "-"):
+                errors.append(f"定金单 {order.order_no} 已绑定尾款 ({order.final_order_no})，无法作为超时未补款结单")
+                continue
+
+            if order.status not in [OrderStatus.PRESALE_PENDING_FINAL, OrderStatus.PRESALE_PENDING_DEPOSIT]:
+                errors.append(f"定金单 {order.order_no} 当前状态为【{order.status}】，仅支持【待完成定金】或【待付尾款】状态执行超时未补款结单")
+                continue
+
+            # 若仍处于【待完成定金】，先执行定金收款入账
+            if order.status == OrderStatus.PRESALE_PENDING_DEPOSIT:
+                actual_income = order.deposit_amount
+                asset_name = order.target_account_name or self._get_default_target_account(order.platform, order.currency)
+                target_acc = self.db.query(CompanyBalanceItem).filter(CompanyBalanceItem.name == asset_name).first()
+                self._update_asset_by_name(asset_name, actual_income, category="asset", currency=order.currency)
+                self.db.add(FinanceRecord(
+                    date=complete_date, amount=actual_income, currency=order.currency,
+                    category=FinanceCategory.SALES_INCOME,
+                    description=f"定金收款: {order.order_no} (预售) [账户: {asset_name}]",
+                    order_id=order.id, account_id=target_acc.id if target_acc else None
+                ))
+
+            order.final_order_no = None
+            order.final_amount = 0.0
+            order.total_amount = round(float(order.deposit_amount or 0.0), 2)
+            order.shipped_date = None
+            order.completed_date = complete_date
+            order.status = OrderStatus.COMPLETED
+
+            tag = "[超时未补款结单]"
+            if not order.notes or order.notes.strip() in ("", "-", "无"):
+                order.notes = tag
+            elif "超时未补款结单" not in order.notes:
+                order.notes = f"{order.notes} {tag}"
+
+            success_count += 1
+
+        self.db.commit()
+        return success_count, errors
+
     def batch_ship_orders(self, order_ids: list[int], ship_date=None):
         """🚀 高性能批量发货：批量检查库存、去重预售关联单、延迟单次重算大货资产并单事务提交"""
         if not order_ids:

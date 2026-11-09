@@ -21,6 +21,9 @@ class SalesService:
         ).all()
 
         for o in orders:
+            # 预售超时未补款结单（未绑尾款/未发货）不计入销售数和销售额
+            if o.order_type == "预售" and (not o.final_order_no or str(o.final_order_no).strip() in ("", "-") or not o.shipped_date):
+                continue
             for item in o.items:
                 data_list.append({
                     "id": f"O_{item.id}", "date": o.created_date, "product": item.product_name,
@@ -33,6 +36,8 @@ class SalesService:
         for r in refunds:
             o = r.order
             if not o: continue
+            if o.order_type == "预售" and (not o.final_order_no or str(o.final_order_no).strip() in ("", "-") or not o.shipped_date):
+                continue
             order_items_total = sum(i.subtotal for i in o.items)
             for item in o.items:
                 allocated_refund = (item.subtotal / order_items_total * r.refund_amount) if order_items_total > 0 else 0

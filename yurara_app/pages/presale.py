@@ -792,6 +792,11 @@ def order_detail_modal() -> rx.Component:
                         rx.button("✂️ 拆分定金订单 (部分补款)", on_click=PresaleState.open_split_modal, size="2", color_scheme="blue"),
                         rx.fragment()
                     ),
+                    rx.cond(
+                        PresaleState.can_close_detail_unpaid_final,
+                        rx.button("🚫 超时未补款结单", on_click=PresaleState.close_detail_unpaid_order, size="2", color_scheme="amber"),
+                        rx.fragment()
+                    ),
                     rx.button("💾 保存修改", on_click=PresaleState.submit_update_notes, size="2", color_scheme="violet"),
                     width="100%",
                     align="center",
@@ -1376,6 +1381,14 @@ def presale_page() -> rx.Component:
                             disabled=~PresaleState.can_complete_deposit,
                             size="2",
                             color_scheme="violet"
+                        ),
+                        rx.button(
+                            rx.icon("file_check", size=14),
+                            rx.fragment("🚫 超时未补款结单 (", PresaleState.selected_count.to_string(), ")"),
+                            on_click=PresaleState.close_selected_unpaid_orders,
+                            disabled=~PresaleState.can_close_unpaid_final,
+                            size="2",
+                            color_scheme="amber"
                         ),
                         rx.button(
                             rx.icon("package", size=14),

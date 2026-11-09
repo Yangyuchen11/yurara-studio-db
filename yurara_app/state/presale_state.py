@@ -199,6 +199,18 @@ class PresaleState(AppState):
         return all(s == "🕒 待完成定金" for s in statuses)
 
     @rx.var
+    def can_close_unpaid_final(self) -> bool:
+        if not self.selected_order_ids:
+            return False
+        selected_rows = [o for o in self.orders if o.id in self.selected_order_ids]
+        if not selected_rows:
+            return False
+        return all(
+            o.status in ["⏳ 待付尾款", "🕒 待完成定金"] and (o.final_order_no == "-" or not o.final_order_no)
+            for o in selected_rows
+        )
+
+    @rx.var
     def can_ship(self) -> bool:
         statuses = self.selected_orders_statuses
         if not statuses:
@@ -469,6 +481,14 @@ class PresaleState(AppState):
         return str(self.existing_final_info.get("msg", ""))
 
     # --- 拆分订单计算属性 ---
+    @rx.var
+    def can_close_detail_unpaid_final(self) -> bool:
+        """检查当前详情订单是否可以执行超时未补款结单：待付尾款或待完成定金，且未绑尾款"""
+        return (
+            self.detail_status in [OrderStatus.PRESALE_PENDING_FINAL, OrderStatus.PRESALE_PENDING_DEPOSIT]
+            and (self.detail_final_order_no == "-" or not self.detail_final_order_no)
+        )
+
     @rx.var
     def can_split_order(self) -> bool:
         """检查当前详情订单是否可以拆分：待付尾款且未绑尾款"""
@@ -1107,6 +1127,58 @@ class PresaleState(AppState):
             if success > 0:
                 yield rx.toast(f"✅ 批量预售结清完成！已结清 {success} 个单据")
             yield PresaleState.load_presale_page()
+        finally:
+            db.close()
+
+    @rx.event
+    def close_selected_unpaid_orders(self):
+        """批量将超时未补款（不退定金）的预售定金单直接结单完成。"""
+        if not self.selected_order_ids:
+            yield rx.toast("未勾选任何订单！", level="error")
+            return
+
+        db = self.get_db()
+        try:
+            service = SalesOrderService(db)
+            success, errors = service.close_unpaid_presale_orders(self.selected_order_ids)
+
+            from cache_manager import sync_all_caches
+            sync_all_caches()
+
+            self.selected_order_ids = []
+            if errors:
+                for err in errors[:5]:
+                    yield rx.toast(err, level="error")
+                if len(errors) > 5:
+                    yield rx.toast(f"另有 {len(errors) - 5} 个单据处理失败", level="warning")
+            if success > 0:
+                yield rx.toast(f"🚫 超时未补款结单完成！已直接完成 {success} 个定金单（不计销量/销售额、不发货）")
+            yield PresaleState.load_presale_page()
+        finally:
+            db.close()
+
+    @rx.event
+    def close_detail_unpaid_order(self):
+        """在详情弹窗中将当前预售定金单执行超时未补款结单。"""
+        if not self.active_detail_order_id:
+            return
+        db = self.get_db()
+        try:
+            service = SalesOrderService(db)
+            success, errors = service.close_unpaid_presale_orders([self.active_detail_order_id])
+
+            from cache_manager import sync_all_caches
+            sync_all_caches()
+
+            if errors:
+                for err in errors:
+                    yield rx.toast(err, level="error")
+                return
+            if success > 0:
+                self.show_detail_flag = False
+                self.selected_order_ids = []
+                yield rx.toast("🚫 已按【超时未补款结单】直接完成定金订单！")
+                yield PresaleState.load_presale_page()
         finally:
             db.close()
 

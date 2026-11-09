@@ -162,6 +162,11 @@ def _build_order_detail_and_refund_payload(db: Session, order: SalesOrder) -> Di
             "resend_quantity": int(getattr(r, "resend_quantity", 0) or 0),
         })
 
+    can_close_unpaid = (
+        order.order_type == "预售"
+        and order.status in [OrderStatus.PRESALE_PENDING_FINAL, OrderStatus.PRESALE_PENDING_DEPOSIT]
+        and not order.final_order_no
+    )
     can_split = (
         order.order_type == "预售"
         and order.status == OrderStatus.PRESALE_PENDING_FINAL
@@ -214,6 +219,7 @@ def _build_order_detail_and_refund_payload(db: Session, order: SalesOrder) -> Di
         "refunds": refunds_list,
         "refund_return_candidates": ret_items,
         "refund_resend_candidates": res_items,
+        "can_close_unpaid": can_close_unpaid,
         "can_split": can_split,
         "split_next_order_no": split_next_no,
         "split_items": split_items,
@@ -1063,6 +1069,32 @@ def batch_complete_presale_deposit(
     }
 
 
+@router.post("/presale/batch-close-unpaid")
+def batch_close_unpaid_presale(
+    req: BatchCompleteRequest,
+    username: str = Depends(verify_auth_token),
+    db: Session = Depends(get_db_session),
+):
+    if not req.order_ids:
+        raise HTTPException(status_code=400, detail="请先勾选需要超时未补款结单的预售订单")
+
+    try:
+        comp_dt = datetime.strptime(req.complete_date, "%Y-%m-%d").date() if req.complete_date else date.today()
+    except Exception:
+        comp_dt = date.today()
+
+    service = SalesOrderService(db)
+    success, errors = service.close_unpaid_presale_orders(req.order_ids, complete_date=comp_dt)
+    if success == 0 and errors:
+        raise HTTPException(status_code=400, detail=errors[0])
+    sync_all_caches()
+    return {
+        "message": f"超时未补款结单：成功直接完成 {success} 单" + (f"，失败 {len(errors)} 单 ({errors[0]})" if errors else ""),
+        "success": success,
+        "errors": errors,
+    }
+
+
 @router.get("/presale/search-deposit")
 def search_presale_deposit(
     query: str = Query(""),
@@ -1222,17 +1254,36 @@ def get_offline_pos_init(
 
     # Color image map for fast product card display
     prods = db.query(Product).all()
+    prod_map = {p.name: p for p in prods}
     color_id_map: Dict[tuple, int] = {}
     for p in prods:
         for c in p.colors:
             color_id_map[(p.name, c.color_name)] = c.id
+
+    # Precompute warehouse inventory details ONCE to avoid N*M redundant DB queries
+    from services.inventory_service import InventoryService
+    wh_details = InventoryService(db).get_warehouse_inventory_details()
+
+    def calc_available_sets(wh_id: int, product_name: str, variant_name: str) -> int:
+        stock_in_wh = wh_details.get(wh_id, {}).get("stock", {})
+        pt_dict = stock_in_wh.get(product_name, {}).get(variant_name, {})
+        prod = prod_map.get(product_name)
+        if not prod:
+            return 0
+        target_c = next((c for c in prod.colors if c.color_name == variant_name), None)
+        if not target_c:
+            return 0
+        reqs = {p.part_name: p.quantity for p in target_c.parts} if target_c.parts else {"整套": 1}
+        if reqs:
+            return max(0, min((pt_dict.get(pt, 0) // req) for pt, req in reqs.items()))
+        return 0
 
     tpl_list = []
     for t in templates:
         t_items = []
         for it in t.items:
             cid = color_id_map.get((it.product_name, it.variant), 0)
-            wh_stock = service._get_available_sets(t.warehouse_id, it.product_name, it.variant)
+            wh_stock = calc_available_sets(t.warehouse_id, it.product_name, it.variant)
             t_items.append({
                 "id": it.id,
                 "product_name": it.product_name,

@@ -86,11 +86,13 @@ class ClearDataRequest(BaseModel):
 class MemoCreateRequest(BaseModel):
     date: str = ""
     content: str = ""
+    title: str = ""
 
 
 class MemoUpdateRequest(BaseModel):
     date: str = ""
     content: str = ""
+    title: str = ""
 
 
 # ==================== Auth ====================
@@ -437,11 +439,17 @@ def clear_all_data(
 # ==================== Memos ====================
 
 def _serialize_memo(m) -> Dict[str, Any]:
+    d_str = m.date or ""
+    c_str = m.content or ""
+    first_line = c_str.strip().split("\n")[0] if c_str.strip() else ""
     return {
         "id": m.id,
-        "date": m.date or "",
-        "content": m.content or "",
+        "date": d_str,
+        "content": c_str,
         "created_at": m.created_at or "",
+        "title": d_str or first_line or "备忘录",
+        "created_by": "Admin",
+        "updated_at": m.created_at or "",
     }
 
 
@@ -458,7 +466,7 @@ def list_memos(
         if kw and kw not in (m.date or "").lower() and kw not in (m.content or "").lower():
             continue
         items.append(_serialize_memo(m))
-    return {"items": items, "total": len(items)}
+    return {"items": items, "memos": items, "total": len(items)}
 
 
 @router.post("/memos")
@@ -467,9 +475,14 @@ def create_memo(
     username: str = Depends(verify_auth_token),
     db: Session = Depends(get_db_session),
 ):
-    date_str = req.date.strip() or datetime.date.today().strftime("%Y-%m-%d")
+    date_str = req.date.strip()
+    if not date_str and req.title.strip():
+        date_str = req.title.strip()
+    if not date_str:
+        date_str = datetime.date.today().strftime("%Y-%m-%d")
     m = memo_service.create_memo(db, date_str=date_str, content=req.content)
-    return {"message": "备忘录已添加", "item": _serialize_memo(m)}
+    serialized = _serialize_memo(m)
+    return {"message": "备忘录已添加", "item": serialized, "memo": serialized}
 
 
 @router.put("/memos/{memo_id}")
@@ -479,11 +492,16 @@ def update_memo(
     username: str = Depends(verify_auth_token),
     db: Session = Depends(get_db_session),
 ):
-    date_str = req.date.strip() or datetime.date.today().strftime("%Y-%m-%d")
+    date_str = req.date.strip()
+    if not date_str and req.title.strip():
+        date_str = req.title.strip()
+    if not date_str:
+        date_str = datetime.date.today().strftime("%Y-%m-%d")
     m = memo_service.update_memo(db, memo_id=memo_id, date_str=date_str, content=req.content)
     if not m:
         raise HTTPException(status_code=404, detail="备忘录不存在")
-    return {"message": "备忘录已保存", "item": _serialize_memo(m)}
+    serialized = _serialize_memo(m)
+    return {"message": "备忘录已保存", "item": serialized, "memo": serialized}
 
 
 @router.delete("/memos/{memo_id}")

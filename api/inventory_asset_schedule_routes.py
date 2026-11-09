@@ -122,6 +122,7 @@ class FixedAssetUpdateRequest(BaseModel):
     unit_price: float
     remaining_qty: int
     note: str = ""
+    url: str = ""
 
 
 class FixedAssetWriteOffRequest(BaseModel):
@@ -758,6 +759,7 @@ def list_fixed_assets(
             "total_val": round(rem_orig, 2),
             "cny_val": round(rem_cny, 2),
             "note": note_str,
+            "url": getattr(a, "url", "") or "",
         })
 
     all_logs = AssetService.get_asset_logs(db, limit=500)
@@ -813,6 +815,7 @@ def update_fixed_asset(
             "unit_price": req.unit_price,
             "remaining_qty": req.remaining_qty,
             "remarks": req.note.strip(),
+            "url": req.url.strip(),
         },
     )
     if not ok:
