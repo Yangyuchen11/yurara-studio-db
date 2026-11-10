@@ -49,11 +49,18 @@ TABLES_MAP = [
 def _build_engine(is_test: bool):
     """根据 is_test 参数构建 SQLAlchemy Engine。"""
     if is_test:
-        return create_engine(
-            "sqlite:///yurara_test_env.db",
+        from database import Base
+        test_db_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "yurara_test_env.db",
+        )
+        eng = create_engine(
+            f"sqlite:///{test_db_path}",
             pool_pre_ping=True,
             connect_args={"check_same_thread": False},
         )
+        Base.metadata.create_all(bind=eng)
+        return eng
     else:
         from dotenv import load_dotenv
         load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"))
@@ -474,7 +481,7 @@ class AppState(rx.State):
 
             real_db = sessionmaker(bind=real_engine)()
             try:
-                for table_name, model_cls in TABLES:
+                for _, table_name, model_cls in TABLES_MAP:
                     try:
                         df = pd.read_sql(real_db.query(model_cls).statement, real_db.bind)
                         if not df.empty:

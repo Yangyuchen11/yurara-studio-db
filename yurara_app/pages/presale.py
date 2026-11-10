@@ -1376,7 +1376,7 @@ def presale_page() -> rx.Component:
                     rx.hstack(
                         rx.button(
                             rx.icon("check", size=14),
-                            rx.fragment("📥 完成定金收款 (", PresaleState.selected_count.to_string(), ")"),
+                            rx.fragment("📥 完成定金入账 (", PresaleState.selected_count.to_string(), ")"),
                             on_click=PresaleState.complete_selected_deposits,
                             disabled=~PresaleState.can_complete_deposit,
                             size="2",
@@ -1392,11 +1392,19 @@ def presale_page() -> rx.Component:
                         ),
                         rx.button(
                             rx.icon("package", size=14),
-                            rx.fragment("📦 发货 (", PresaleState.selected_count.to_string(), ")"),
+                            rx.fragment("📦 确认发货 (", PresaleState.selected_count.to_string(), ")"),
                             on_click=PresaleState.ship_selected_orders,
                             disabled=~PresaleState.can_ship,
                             size="2",
                             color_scheme="orange"
+                        ),
+                        rx.button(
+                            rx.icon("badge_check", size=14),
+                            rx.fragment("✅ 完成订单 (", PresaleState.selected_count.to_string(), ")"),
+                            on_click=PresaleState.complete_selected_orders,
+                            disabled=~PresaleState.can_complete,
+                            size="2",
+                            color_scheme="green"
                         ),
                         rx.button(
                             rx.icon("store", size=14),
@@ -1405,14 +1413,6 @@ def presale_page() -> rx.Component:
                             disabled=~PresaleState.can_batch_edit_wh,
                             size="2",
                             color_scheme="violet"
-                        ),
-                        rx.button(
-                            rx.icon("badge_check", size=14),
-                            rx.fragment("✅ 收尾款完成对账 (", PresaleState.selected_count.to_string(), ")"),
-                            on_click=PresaleState.complete_selected_orders,
-                            disabled=~PresaleState.can_complete,
-                            size="2",
-                            color_scheme="green"
                         ),
                         rx.button(
                             rx.icon("wrench", size=14),
@@ -1424,7 +1424,7 @@ def presale_page() -> rx.Component:
                         ),
                         rx.button(
                             rx.icon("eye", size=14),
-                            "✏️ 编辑/详细/删除",
+                            "✏️ 订单编辑",
                             on_click=lambda: PresaleState.open_order_detail(PresaleState.single_selected_id),
                             disabled=~PresaleState.is_single_selected,
                             size="2",

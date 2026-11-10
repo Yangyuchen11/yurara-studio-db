@@ -665,9 +665,11 @@ def batch_ship_orders(
 
     service = SalesOrderService(db)
     success, errors = service.batch_ship_orders(req.order_ids, ship_date=ship_dt)
+    if success == 0 and errors:
+        raise HTTPException(status_code=400, detail=errors[0])
     sync_all_caches()
     return {
-        "message": f"批量发货完成：成功 {success} 单" + (f"，失败 {len(errors)} 单" if errors else ""),
+        "message": f"📦 确认发货出库完成：成功 {success} 单" + (f"，失败 {len(errors)} 单 ({errors[0]})" if errors else ""),
         "success": success,
         "errors": errors,
     }
@@ -689,9 +691,11 @@ def batch_complete_orders(
 
     service = SalesOrderService(db)
     success, errors = service.batch_complete_orders(req.order_ids, complete_date=comp_dt)
+    if success == 0 and errors:
+        raise HTTPException(status_code=400, detail=errors[0])
     sync_all_caches()
     return {
-        "message": f"批量结清入账完成：成功 {success} 单" + (f"，失败 {len(errors)} 单" if errors else ""),
+        "message": f"✅ 确认收货完成入账：成功 {success} 单" + (f"，失败 {len(errors)} 单 ({errors[0]})" if errors else ""),
         "success": success,
         "errors": errors,
     }
@@ -1061,9 +1065,11 @@ def batch_complete_presale_deposit(
 
     service = SalesOrderService(db)
     success, errors = service.batch_complete_deposit_orders(req.order_ids, complete_date=comp_dt)
+    if success == 0 and errors:
+        raise HTTPException(status_code=400, detail=errors[0])
     sync_all_caches()
     return {
-        "message": f"定金完成入账：成功 {success} 单" + (f"，失败 {len(errors)} 单" if errors else ""),
+        "message": f"📥 定金收款入账完成：成功 {success} 单已转为【待付尾款】" + (f"，失败 {len(errors)} 单 ({errors[0]})" if errors else ""),
         "success": success,
         "errors": errors,
     }

@@ -377,7 +377,7 @@ class SalesOrderService:
         
         for order in orders:
             if order.status != OrderStatus.PRESALE_PENDING_DEPOSIT:
-                errors.append(f"定金单 {order.order_no} 当前状态为【{order.status}】，非待完成定金状态")
+                errors.append(f"定金单 {order.order_no} 当前状态为【{order.status}】（仅【待完成定金】状态可执行第1步定金收款入账）")
                 continue
             
             actual_income = order.deposit_amount
@@ -487,7 +487,10 @@ class SalesOrderService:
             if order.status != OrderStatus.PENDING:
                 if order.status == OrderStatus.SHIPPED and o_id in processed_order_ids:
                     continue
-                errors.append(f"订单 {order.order_no} 当前状态为【{order.status}】，无法发货")
+                if order.order_type == "预售":
+                    errors.append(f"预售单 {order.order_no} 当前状态为【{order.status}】（需先完成【2.绑定尾款】变为【待发货】后才能执行第3步发货）")
+                else:
+                    errors.append(f"订单 {order.order_no} 当前状态为【{order.status}】（仅【待发货】状态可发货）")
                 continue
                 
             orders_to_ship = [order]
@@ -582,7 +585,10 @@ class SalesOrderService:
                 continue
                 
             if order.status not in [OrderStatus.SHIPPED, OrderStatus.AFTER_SALES]:
-                errors.append(f"订单 {order.order_no} 当前状态为【{order.status}】，不能结清")
+                if order.order_type == "预售":
+                    errors.append(f"预售单 {order.order_no} 当前状态为【{order.status}】（若处于【待付尾款】请点【2.绑定尾款】；仅【已发货/售后中】可执行第4步尾款到账完成订单）")
+                else:
+                    errors.append(f"订单 {order.order_no} 当前状态为【{order.status}】（仅【已发货/售后中】状态可完成结清）")
                 continue
                 
             asset_name = order.target_account_name or self._get_default_target_account(order.platform, order.currency)

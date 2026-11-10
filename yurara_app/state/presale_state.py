@@ -210,6 +210,7 @@ class PresaleState(AppState):
             for o in selected_rows
         )
 
+
     @rx.var
     def can_ship(self) -> bool:
         statuses = self.selected_orders_statuses
