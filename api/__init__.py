@@ -9,6 +9,7 @@ from api.system_routes import router as system_router
 from api.finance_routes import router as finance_router
 from api.product_cost_routes import router as product_cost_router
 from api.sales_routes import router as sales_router
+from api.consignment_routes import router as consignment_router
 from api.inventory_asset_schedule_routes import router as inv_asset_sched_router
 
 
@@ -29,5 +30,6 @@ def create_mobile_api_app() -> FastAPI:
     mobile_api.include_router(finance_router)
     mobile_api.include_router(product_cost_router)
     mobile_api.include_router(sales_router)
+    mobile_api.include_router(consignment_router)
     mobile_api.include_router(inv_asset_sched_router)
     return mobile_api

@@ -82,6 +82,11 @@ class InventoryMovementRequest(BaseModel):
     to_warehouse_id: Optional[int] = None
     date: str
     note: str = ""
+    out_type: str = "消耗"
+    cons_cat: str = ""
+    cons_content: str = ""
+    consignment_shop: str = ""
+    consignment_shop_id: Optional[int] = None
     force_confirm_overprod: bool = False
     cells: List[MovementMatrixCellPayload] = []
 
@@ -441,10 +446,18 @@ def get_inventory_page(
         p_idx = 1
         paginated_logs = []
 
+    from models import ConsignmentShop
+    cons_shops = [
+        {"id": s.id, "name": s.name, "currency": s.currency or "CNY"}
+        for s in db.query(ConsignmentShop).order_by(ConsignmentShop.id.asc()).all()
+    ]
+
     return {
         "product_cards": product_cards,
         "warehouses": wh_cards,
         "consignments": cons_list,
+        "consignment_shops": cons_shops,
+        "cost_categories": PRODUCT_COST_CATEGORIES,
         "logs": paginated_logs,
         "log_total_items": total_logs,
         "log_total_pages": total_pages,
@@ -513,6 +526,21 @@ def submit_inventory_movement(
                         "message": "",
                     }
 
+        resolved_shop_name = req.consignment_shop.strip()
+        if req.movement_type == StockLogReason.OUT_STOCK and req.out_type == "寄售":
+            if req.consignment_shop_id:
+                from models import ConsignmentShop
+                s_obj = db.query(ConsignmentShop).filter(ConsignmentShop.id == req.consignment_shop_id).first()
+                if s_obj:
+                    resolved_shop_name = s_obj.name
+            if not resolved_shop_name:
+                raise HTTPException(status_code=400, detail="寄售出库必须选择或填写寄售店铺")
+        if req.movement_type == StockLogReason.OUT_STOCK and req.out_type == "消耗" and not req.cons_content.strip():
+            # 若旧版客户端未传 cons_content，用 note 兜底或默认文本
+            resolved_cons_content = req.note.strip() or "内部消耗"
+        else:
+            resolved_cons_content = req.cons_content.strip()
+
         msg = service.add_batch_inventory_movements(
             product_id=prod.id,
             product_name=prod.name,
@@ -522,6 +550,10 @@ def submit_inventory_movement(
             batch_remark=req.note.strip(),
             warehouse_id=wh_id,
             to_warehouse_id=to_wh_id,
+            out_type=req.out_type if req.movement_type == StockLogReason.OUT_STOCK else None,
+            cons_cat=req.cons_cat or PRODUCT_COST_CATEGORIES[0],
+            cons_content=resolved_cons_content,
+            consignment_shop=resolved_shop_name,
         )
         service.commit()
         sync_all_caches()

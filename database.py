@@ -141,3 +141,87 @@ def migrate_db(engine):
                 print("[Migration] Added missing '流动资金-日元临时现金账户' to company_balance_items.")
     except Exception as e:
         print(f"[Migration] Check/add JPY temporary cash account error: {e}")
+
+    # 寄售管理全面升级迁移：补充 consignment_items 新列并自动将历史店铺名称建档
+    try:
+        from models import ConsignmentShop, ConsignmentItem, InventoryLog
+        from sqlalchemy.orm import Session
+
+        # 先确保新表存在（兼容单独调用 migrate_db 的场景）
+        Base.metadata.create_all(bind=engine)
+        inspector = inspect(engine)
+        if "consignment_items" in inspector.get_table_names():
+            cons_cols = [c["name"] for c in inspector.get_columns("consignment_items")]
+            alter_stmts = [
+                ("shop_id", "INTEGER"),
+                ("warehouse_id", "INTEGER"),
+                ("part_name", "VARCHAR"),
+                ("sold_qty", "INTEGER DEFAULT 0"),
+                ("returned_qty", "INTEGER DEFAULT 0"),
+                ("unit_price", "FLOAT DEFAULT 0.0"),
+                ("currency", "VARCHAR DEFAULT 'CNY'"),
+                ("status", "VARCHAR DEFAULT '寄售中'"),
+            ]
+            with engine.begin() as conn:
+                for col_name, col_def in alter_stmts:
+                    if col_name not in cons_cols:
+                        try:
+                            conn.execute(text(f"ALTER TABLE consignment_items ADD COLUMN {col_name} {col_def};"))
+                            print(f"[Migration] Added column {col_name} to consignment_items")
+                        except Exception as col_err:
+                            print(f"[Migration] Failed to add {col_name} to consignment_items: {col_err}")
+
+        with Session(engine) as session:
+            items = session.query(ConsignmentItem).all()
+            shop_cache = {s.name: s for s in session.query(ConsignmentShop).all()}
+            updated_cnt = 0
+            for ci in items:
+                changed = False
+                s_name = (ci.shop_name or "").strip() or "默认寄售店"
+                if ci.shop_name != s_name:
+                    ci.shop_name = s_name
+                    changed = True
+                if not ci.shop_id:
+                    shop_obj = shop_cache.get(s_name)
+                    if not shop_obj:
+                        shop_obj = ConsignmentShop(name=s_name, currency=ci.currency or "CNY")
+                        session.add(shop_obj)
+                        session.flush()
+                        shop_cache[s_name] = shop_obj
+                    ci.shop_id = shop_obj.id
+                    changed = True
+                if not ci.warehouse_id and ci.inventory_log_id:
+                    inv_log = session.query(InventoryLog).filter(InventoryLog.id == ci.inventory_log_id).first()
+                    if inv_log and inv_log.warehouse_id:
+                        ci.warehouse_id = inv_log.warehouse_id
+                        changed = True
+                    if inv_log and inv_log.part_name and not ci.part_name:
+                        ci.part_name = inv_log.part_name
+                        changed = True
+                if ci.sold_qty is None:
+                    ci.sold_qty = max(0, (ci.quantity or 0) - (ci.remaining_qty or 0))
+                    changed = True
+                if ci.returned_qty is None:
+                    ci.returned_qty = 0
+                    changed = True
+                # 对历史手动调整过 remaining_qty 的记录同步 sold_qty（仅在 sold+returned=0 且 remaining < quantity 时补齐）
+                if ci.sold_qty == 0 and ci.returned_qty == 0 and (ci.remaining_qty or 0) < (ci.quantity or 0):
+                    ci.sold_qty = max(0, (ci.quantity or 0) - (ci.remaining_qty or 0))
+                    changed = True
+                expected_status = (
+                    "已结清" if (ci.remaining_qty or 0) <= 0
+                    else ("部分结算" if ((ci.sold_qty or 0) > 0 or (ci.returned_qty or 0) > 0) else "寄售中")
+                )
+                if not ci.status or ci.status != expected_status:
+                    ci.status = expected_status
+                    changed = True
+                if not ci.currency:
+                    ci.currency = "CNY"
+                    changed = True
+                if changed:
+                    updated_cnt += 1
+            if updated_cnt > 0:
+                session.commit()
+                print(f"[Migration] Backfilled {updated_cnt} consignment items and shops.")
+    except Exception as e:
+        print(f"[Migration] Consignment upgrade migration error: {e}")

@@ -29,7 +29,8 @@ from models import (
     ConsumableItem, ConsumableLog, CompanyBalanceItem,
     SalesOrder, SalesOrderItem, OrderRefund,
     OfflineTemplate, OfflineTemplateItem,
-    ConsignmentItem, PresaleOrderBinding, SalesPlatform, MemoNote, ScheduleNode,
+    ConsignmentShop, ConsignmentItem, ConsignmentSettlement, ConsignmentSettlementItem, ConsignmentReturn,
+    PresaleOrderBinding, SalesPlatform, MemoNote, ScheduleNode,
 )
 from database import engine as prod_engine
 from services import memo_service
@@ -58,7 +59,11 @@ TABLES_MAP = [
     ("sales_platforms.csv", "sales_platforms", SalesPlatform),
     ("memo_notes.csv", "memo_notes", MemoNote),
     ("schedule_nodes.csv", "schedule_nodes", ScheduleNode),
+    ("consignment_shops.csv", "consignment_shops", ConsignmentShop),
     ("consignments.csv", "consignment_items", ConsignmentItem),
+    ("consignment_settlements.csv", "consignment_settlements", ConsignmentSettlement),
+    ("consignment_settlement_items.csv", "consignment_settlement_items", ConsignmentSettlementItem),
+    ("consignment_returns.csv", "consignment_returns", ConsignmentReturn),
     ("system_settings.csv", "system_settings", SystemSetting),
 ]
 

@@ -339,16 +339,108 @@ class ScheduleNode(Base):
 
 
 # --- P. 寄售管理 ---
+class ConsignmentShop(Base):
+    """寄售店铺档案表"""
+    __tablename__ = "consignment_shops"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True, nullable=False)
+    currency = Column(String, default="CNY")
+    default_fee_rate = Column(Float, default=0.0)   # 抽成比例，如 0.30 代表 30%
+    default_fee_fixed = Column(Float, default=0.0)  # 默认固定手续费（可选）
+    default_account_name = Column(String, nullable=True)  # 默认入账现金账户名
+    contact_info = Column(String, default="", nullable=True)
+    remarks = Column(String, default="", nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    items = relationship("ConsignmentItem", back_populates="shop")
+    settlements = relationship("ConsignmentSettlement", back_populates="shop")
+
+
 class ConsignmentItem(Base):
     __tablename__ = "consignment_items"
     id = Column(Integer, primary_key=True, index=True)
-    shop_name = Column(String, index=True)            # 寄售店铺
+    shop_id = Column(Integer, ForeignKey("consignment_shops.id", ondelete="SET NULL"), nullable=True, index=True)
+    shop_name = Column(String, index=True)            # 寄售店铺名称（冗余快照）
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True)
     product_name = Column(String, index=True)         # 商品名
     variant = Column(String)                          # 款式
-    quantity = Column(Integer, default=0)             # 寄售数量
-    remaining_qty = Column(Integer, default=0)        # 剩余数量 (手动记录)
+    part_name = Column(String, nullable=True)         # 散件部件名（None 表示整套）
+    quantity = Column(Integer, default=0)             # 初始寄售数量
+    sold_qty = Column(Integer, default=0)             # 累计已结算售出数量
+    returned_qty = Column(Integer, default=0)         # 累计已退回仓库数量
+    remaining_qty = Column(Integer, default=0)        # 当前在店剩余数量
+    unit_price = Column(Float, default=0.0)           # 参考寄售单价
+    currency = Column(String, default="CNY")          # 币种
+    status = Column(String, default="寄售中")         # 寄售中 / 部分结算 / 已结清
     remarks = Column(String, default="", nullable=True) # 备注
     date = Column(Date, default=datetime.now)         # 寄售日期
     inventory_log_id = Column(Integer, ForeignKey("inventory_logs.id", ondelete="SET NULL"), nullable=True)
 
+    shop = relationship("ConsignmentShop", back_populates="items")
+    warehouse = relationship("Warehouse")
+    inventory_log = relationship("InventoryLog")
+    returns = relationship("ConsignmentReturn", back_populates="consignment_item", cascade="all, delete-orphan")
+
+
+class ConsignmentSettlement(Base):
+    """寄售结算单表"""
+    __tablename__ = "consignment_settlements"
+    id = Column(Integer, primary_key=True, index=True)
+    settlement_no = Column(String, unique=True, index=True)
+    shop_id = Column(Integer, ForeignKey("consignment_shops.id", ondelete="SET NULL"), nullable=True, index=True)
+    shop_name = Column(String, index=True)
+    settlement_date = Column(Date, default=datetime.now)
+    currency = Column(String, default="CNY")
+    gross_amount = Column(Float, default=0.0)   # 商品销售毛总额
+    fee_rate = Column(Float, default=0.0)       # 本次结算手续费率
+    fee_amount = Column(Float, default=0.0)     # 寄售店手续费/抽成
+    net_amount = Column(Float, default=0.0)     # 实际入账金额
+    account_id = Column(Integer, ForeignKey("company_balance_items.id", ondelete="SET NULL"), nullable=True)
+    account_name = Column(String, nullable=True)
+    sales_order_id = Column(Integer, ForeignKey("sales_orders.id", ondelete="SET NULL"), nullable=True)
+    finance_record_id = Column(Integer, ForeignKey("finance_records.id", ondelete="SET NULL"), nullable=True)
+    notes = Column(String, default="", nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    shop = relationship("ConsignmentShop", back_populates="settlements")
+    items = relationship("ConsignmentSettlementItem", back_populates="settlement", cascade="all, delete-orphan")
+
+
+class ConsignmentSettlementItem(Base):
+    """寄售结算单明细表"""
+    __tablename__ = "consignment_settlement_items"
+    id = Column(Integer, primary_key=True, index=True)
+    settlement_id = Column(Integer, ForeignKey("consignment_settlements.id", ondelete="CASCADE"), index=True)
+    consignment_item_id = Column(Integer, ForeignKey("consignment_items.id", ondelete="SET NULL"), nullable=True, index=True)
+    product_name = Column(String)
+    variant = Column(String)
+    part_name = Column(String, nullable=True)
+    sold_qty = Column(Integer, default=0)
+    unit_price = Column(Float, default=0.0)
+    gross_subtotal = Column(Float, default=0.0)
+    net_subtotal = Column(Float, default=0.0)
+
+    settlement = relationship("ConsignmentSettlement", back_populates="items")
+    consignment_item = relationship("ConsignmentItem")
+
+
+class ConsignmentReturn(Base):
+    """寄售退回仓库记录表"""
+    __tablename__ = "consignment_returns"
+    id = Column(Integer, primary_key=True, index=True)
+    consignment_item_id = Column(Integer, ForeignKey("consignment_items.id", ondelete="CASCADE"), index=True)
+    shop_name = Column(String, index=True)
+    product_name = Column(String)
+    variant = Column(String)
+    part_name = Column(String, nullable=True)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True)
+    warehouse_name = Column(String, default="")
+    return_qty = Column(Integer, default=0)
+    return_date = Column(Date, default=datetime.now)
+    inventory_log_id = Column(Integer, ForeignKey("inventory_logs.id", ondelete="SET NULL"), nullable=True)
+    notes = Column(String, default="", nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    consignment_item = relationship("ConsignmentItem", back_populates="returns")
+    warehouse = relationship("Warehouse")
     inventory_log = relationship("InventoryLog")

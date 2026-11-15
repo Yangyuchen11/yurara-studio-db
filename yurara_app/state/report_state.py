@@ -623,6 +623,7 @@ def _sync_recalculate_report(
                     StockLogReason.OUT_STOCK, 
                     StockLogReason.IN_STOCK, 
                     StockLogReason.RETURN_IN, 
+                    StockLogReason.CONSIGNMENT_RETURN,
                     StockLogReason.TRANSFER,
                     "成品入库", "打样入库", "销售出库"  # 兼容极早期数据
                 ]

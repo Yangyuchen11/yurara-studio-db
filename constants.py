@@ -93,6 +93,7 @@ class StockLogReason:
     EXTRA_PROD_WAIT = "额外生产待产"    # 对应额外生产入库
 
     RETURN_IN = "退货入库"
+    CONSIGNMENT_RETURN = "寄售退回"
     UNDO_SHIP = "发货撤销"
 
 class OrderStatus:

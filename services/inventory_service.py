@@ -2,7 +2,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from datetime import date
-from models import Product, InventoryLog, ProductColor, CompanyBalanceItem, CostItem, FinanceRecord, Warehouse, ConsignmentItem
+from models import Product, InventoryLog, ProductColor, CompanyBalanceItem, CostItem, FinanceRecord, Warehouse, ConsignmentItem, ConsignmentShop
 from constants import PRODUCT_COST_CATEGORIES, AssetPrefix, BalanceCategory, Currency, StockLogReason, FinanceCategory
 
 class InventoryService:
@@ -168,7 +168,12 @@ class InventoryService:
             w_id = l.warehouse_id
             if w_id not in wh_dict: continue
 
-            if l.reason not in [StockLogReason.INSPECT_COMPLETED, StockLogReason.INSPECT_REVERSAL, StockLogReason.OTHER_IN, StockLogReason.OUT_STOCK, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.TRANSFER, StockLogReason.REPAIR_IN]:
+            if l.reason not in [
+                StockLogReason.INSPECT_COMPLETED, StockLogReason.INSPECT_REVERSAL,
+                StockLogReason.OTHER_IN, StockLogReason.OUT_STOCK, StockLogReason.IN_STOCK,
+                StockLogReason.RETURN_IN, StockLogReason.CONSIGNMENT_RETURN,
+                StockLogReason.TRANSFER, StockLogReason.REPAIR_IN
+            ]:
                 continue
 
             delta = l.change_amount
@@ -241,7 +246,7 @@ class InventoryService:
                         if consumption_only and not (l.note and "消耗" in l.note):
                             continue
                         part_actual[p] += d
-                    elif l.reason in [StockLogReason.OTHER_IN, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.TRANSFER]:
+                    elif l.reason in [StockLogReason.OTHER_IN, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.CONSIGNMENT_RETURN, StockLogReason.TRANSFER]:
                         part_actual[p] += d
                         if l.reason == StockLogReason.IN_STOCK:
                             part_produced[p] += d
@@ -465,13 +470,36 @@ class InventoryService:
             self.db.flush()
 
             if out_type == "寄售":
-                shop_label = consignment_shop.strip() if consignment_shop else "默认寄售点"
+                shop_label = consignment_shop.strip() if consignment_shop else "默认寄售店"
+                shop_obj = self.db.query(ConsignmentShop).filter(ConsignmentShop.name == shop_label).first()
+                if not shop_obj:
+                    shop_obj = ConsignmentShop(name=shop_label, currency=Currency.CNY)
+                    self.db.add(shop_obj)
+                    self.db.flush()
+
+                shop_curr = shop_obj.currency or Currency.CNY
+                preset_unit_price = 0.0
+                if is_set and target_prod_obj:
+                    target_c = next((c for c in target_prod_obj.colors if c.color_name == variant), None)
+                    if target_c and target_c.prices:
+                        matched_p = next((pr.price for pr in target_c.prices if (pr.currency or "").upper() == shop_curr.upper() and (pr.price or 0) > 0), None)
+                        if matched_p is not None:
+                            preset_unit_price = float(matched_p)
+
                 cons_item = ConsignmentItem(
-                    shop_name=shop_label,
+                    shop_id=shop_obj.id,
+                    shop_name=shop_obj.name,
+                    warehouse_id=warehouse_id,
                     product_name=product_name,
                     variant=variant,
+                    part_name=None if is_set else part_name,
                     quantity=quantity,
+                    sold_qty=0,
+                    returned_qty=0,
                     remaining_qty=quantity,
+                    unit_price=preset_unit_price,
+                    currency=shop_curr,
+                    status="寄售中",
                     remarks=remark or "",
                     date=date_obj,
                     inventory_log_id=new_log.id
@@ -647,13 +675,16 @@ class InventoryService:
         if getattr(log_to_del, 'order_id', None):
             raise ValueError("拒绝操作：此库存变动由【销售订单】自动生成。为了保证数据一致性，请前往【线上销售管理】模块撤销发货或删除该订单。")
 
+        if log_to_del.reason == StockLogReason.CONSIGNMENT_RETURN:
+            raise ValueError("拒绝操作：此库存变动由【寄售退回】自动生成。为了保证寄售余量一致，请前往【销售管理 -> 寄售管理 -> 退回记录】撤销该笔退回。")
+
         target_prod = self.db.query(Product).filter(Product.name == log_to_del.product_name).first()
 
         # ✨ 防负数预检：模拟删除该记录后，验证是否会导致验收中或仓储实物变为负数
         if target_prod and log_to_del.reason in [
             StockLogReason.IN_INSPECT, StockLogReason.INSPECT_COMPLETED, StockLogReason.INSPECT_REVERSAL,
             StockLogReason.REPAIR_OUT, StockLogReason.REPAIR_IN,
-            StockLogReason.OTHER_IN, StockLogReason.IN_STOCK
+            StockLogReason.OTHER_IN, StockLogReason.IN_STOCK, StockLogReason.CONSIGNMENT_RETURN
         ]:
             all_logs = self.db.query(InventoryLog).filter(
                 InventoryLog.product_name == target_prod.name,
@@ -684,7 +715,7 @@ class InventoryService:
                             sim_actual[p] += abs(d)
                         elif l.reason == StockLogReason.OUT_STOCK:
                             sim_actual[p] += d
-                        elif l.reason in [StockLogReason.OTHER_IN, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.TRANSFER]:
+                        elif l.reason in [StockLogReason.OTHER_IN, StockLogReason.IN_STOCK, StockLogReason.RETURN_IN, StockLogReason.CONSIGNMENT_RETURN, StockLogReason.TRANSFER]:
                             sim_actual[p] += d
 
                 for p in parts_req:
@@ -719,11 +750,16 @@ class InventoryService:
                         msg_list.append("关联消耗成本记录已删除(按向后兼容模式)")
                 except: pass
 
-        # 如果是寄售出库，清理关联的寄售记录
+        # 如果是寄售出库，校验关联寄售记录是否已结算或退回，未发生后续流转则同步清理
         is_consignment_out = (log_to_del.reason == StockLogReason.OUT_STOCK and "寄售" in (log_to_del.note or ""))
         if is_consignment_out:
             cons_item = self.db.query(ConsignmentItem).filter(ConsignmentItem.inventory_log_id == log_to_del.id).first()
             if cons_item:
+                if (cons_item.sold_qty or 0) > 0 or (cons_item.returned_qty or 0) > 0:
+                    raise ValueError(
+                        f"拒绝操作：该寄售出库记录已发生销售结算({cons_item.sold_qty}件)或退回({cons_item.returned_qty}件)，"
+                        "请先前往【销售管理 -> 寄售管理】撤销关联结算或退回后再删除出库日志。"
+                    )
                 self.db.delete(cons_item)
                 msg_list.append("关联寄售记录已同步删除")
 
@@ -768,7 +804,7 @@ class InventoryService:
         cost_service = CostService(self.db)
         cost_service.perform_wip_fix(product_id)
 
-    # ================= 8. 寄售管理 =================
+    # ================= 8. 寄售管理 (向后兼容包装) =================
     def get_all_consignments(self):
         """获取所有寄售记录，按日期倒序"""
         return self.db.query(ConsignmentItem).order_by(ConsignmentItem.date.desc(), ConsignmentItem.id.desc()).all()
@@ -780,10 +816,23 @@ class InventoryService:
             raise ValueError(f"未找到 ID 为 {item_id} 的寄售记录")
         if remaining_qty is not None:
             item.remaining_qty = max(0, int(remaining_qty))
+            if item.remaining_qty <= 0:
+                item.status = "已结清"
+            elif (item.sold_qty or 0) > 0 or (item.returned_qty or 0) > 0:
+                item.status = "部分结算"
+            else:
+                item.status = "寄售中"
         if remarks is not None:
             item.remarks = str(remarks).strip()
         if shop_name is not None and shop_name.strip():
-            item.shop_name = str(shop_name).strip()
+            s_label = str(shop_name).strip()
+            shop_obj = self.db.query(ConsignmentShop).filter(ConsignmentShop.name == s_label).first()
+            if not shop_obj:
+                shop_obj = ConsignmentShop(name=s_label, currency=item.currency or Currency.CNY)
+                self.db.add(shop_obj)
+                self.db.flush()
+            item.shop_id = shop_obj.id
+            item.shop_name = shop_obj.name
         self.db.flush()
         return item
 
@@ -792,10 +841,12 @@ class InventoryService:
         item = self.db.query(ConsignmentItem).filter(ConsignmentItem.id == item_id).first()
         if not item:
             raise ValueError(f"未找到 ID 为 {item_id} 的寄售记录")
+        if (item.sold_qty or 0) > 0 or (item.returned_qty or 0) > 0:
+            raise ValueError("该寄售条目已存在结算或退回记录，请先撤销相关结算/退回后再删除！")
         self.db.delete(item)
         self.db.flush()
 
-    def add_consignment_item(self, shop_name: str, product_name: str, variant: str, quantity: int, remaining_qty: int = None, remarks: str = "", date_obj = None):
+    def add_consignment_item(self, shop_name: str, product_name: str, variant: str, quantity: int, remaining_qty: int = None, remarks: str = "", date_obj = None, unit_price: float = 0.0, currency: str = "CNY", part_name: str = None):
         """手动新增寄售条目"""
         if not shop_name or not shop_name.strip():
             raise ValueError("寄售店铺名称不能为空")
@@ -807,12 +858,27 @@ class InventoryService:
             remaining_qty = quantity
         if date_obj is None:
             date_obj = date.today()
+        s_label = shop_name.strip()
+        shop_obj = self.db.query(ConsignmentShop).filter(ConsignmentShop.name == s_label).first()
+        if not shop_obj:
+            shop_obj = ConsignmentShop(name=s_label, currency=currency or Currency.CNY)
+            self.db.add(shop_obj)
+            self.db.flush()
+        rem_val = max(0, int(remaining_qty))
+        sold_val = max(0, int(quantity) - rem_val)
         new_item = ConsignmentItem(
-            shop_name=shop_name.strip(),
+            shop_id=shop_obj.id,
+            shop_name=shop_obj.name,
             product_name=product_name.strip(),
             variant=variant.strip() if variant else "通用",
+            part_name=part_name if (part_name and part_name != "整套") else None,
             quantity=int(quantity),
-            remaining_qty=max(0, int(remaining_qty)),
+            sold_qty=sold_val,
+            returned_qty=0,
+            remaining_qty=rem_val,
+            unit_price=float(unit_price or 0.0),
+            currency=currency or shop_obj.currency or Currency.CNY,
+            status="已结清" if rem_val <= 0 else ("部分结算" if sold_val > 0 else "寄售中"),
             remarks=remarks.strip() if remarks else "",
             date=date_obj
         )

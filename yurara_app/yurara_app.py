@@ -18,6 +18,7 @@ from .pages.offline_sales import offline_sales_page
 from .pages.sales_order import sales_order_page
 from .pages.presale import presale_page
 from .pages.platforms import platforms_page
+from .pages.consignment import consignment_page
 from .pages.schedule import schedule_page
 from .state.auth_state import AuthState
 from .state.app_state import AppState
@@ -34,6 +35,7 @@ from .state.sales_order_state import SalesOrderState
 from .state.presale_state import PresaleState
 from .state.product_state import ProductState
 from .state.platforms_state import PlatformsState
+from .state.consignment_state import ConsignmentState
 from .state.memo_state import MemoState
 from .state.schedule_state import ScheduleState
 
@@ -257,6 +259,7 @@ app.add_page(cost_page, route="/cost", title="成本核算 | Yurara Studio", on_
 app.add_page(sales_order_page, route="/sales-order", title="线上销售 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, SalesOrderState.load_orders_page, MemoState.load_memos])
 app.add_page(presale_page, route="/presale", title="预售管理 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, PresaleState.load_presale_page, MemoState.load_memos])
 app.add_page(offline_sales_page, route="/offline-sales", title="线下销售 | Yurara Studio", on_load=[AuthState.check_auth, OfflineSalesState.load_offline_page, MemoState.load_memos])
+app.add_page(consignment_page, route="/consignment", title="寄售管理 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, ConsignmentState.load_consignment_page, MemoState.load_memos])
 app.add_page(sales_page, route="/sales", title="销售额 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, SalesState.load_sales_data, MemoState.load_memos])
 app.add_page(platforms_page, route="/platforms", title="销售平台管理 | Yurara Studio", on_load=[AuthState.check_auth, AppState.load_exchange_rate, PlatformsState.load_platforms, MemoState.load_memos])
 app.add_page(inventory_page, route="/inventory", title="库存管理 | Yurara Studio", on_load=[AuthState.check_auth, InventoryState.load_inventory_page, MemoState.load_memos])

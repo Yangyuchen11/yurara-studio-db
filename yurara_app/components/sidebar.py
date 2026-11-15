@@ -31,6 +31,7 @@ NAV_ITEMS = [
             {"label": "线上销售管理", "icon": "shopping_cart", "href": "/sales-order"},
             {"label": "预售销售管理", "icon": "shopping_basket", "href": "/presale"},
             {"label": "线下销售管理", "icon": "store", "href": "/offline-sales"},
+            {"label": "寄售管理", "icon": "handshake", "href": "/consignment"},
             {"label": "销售额一览", "icon": "trending_up", "href": "/sales"},
             {"label": "销售平台管理", "icon": "globe", "href": "/platforms"},
         ]
