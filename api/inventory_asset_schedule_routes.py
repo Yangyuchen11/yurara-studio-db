@@ -202,6 +202,9 @@ def get_inventory_page(
     log_search: str = "",
     log_page: int = 1,
     log_page_size: int = 40,
+    include_logs: bool = Query(True),
+    include_consignments: bool = Query(True),
+    product_search: str = Query(""),
     username: str = Depends(verify_auth_token),
     db: Session = Depends(get_db_session),
 ):
@@ -210,10 +213,16 @@ def get_inventory_page(
     service = InventoryService(db)
     cost_service = CostService(db)
     products = service.get_all_products()
+    p_kw = product_search.strip().lower()
+    card_products = (
+        [p for p in products if p_kw in (p.name or "").lower()]
+        if p_kw
+        else products
+    )
 
     # 1. Product cards with barrel-principle stock overview
     product_cards = []
-    for p in products:
+    for p in card_products:
         wip_bal = round(float(service.get_wip_balance(p.id) or 0.0), 2)
         m_qty = float(p.marketable_quantity or 0.0)
         make_qty = m_qty if m_qty > 0 else float(p.total_quantity or 0.0)
@@ -335,94 +344,102 @@ def get_inventory_page(
         })
 
     # 3. Consignments
-    raw_cons = service.get_all_consignments()
     cons_list = []
-    for c in raw_cons:
-        date_str = c.date.strftime("%Y-%m-%d") if c.date else ""
-        rem_q = c.remaining_qty if c.remaining_qty is not None else (c.quantity or 0)
-        init_q = c.quantity or 0
-        if rem_q <= 0:
-            s_label = "已结算/归还"
-        elif rem_q < init_q:
-            s_label = f"部分售出(余{rem_q}/{init_q})"
-        else:
-            s_label = "寄售/借出中"
+    if include_consignments:
+        raw_cons = service.get_all_consignments()
+        for c in raw_cons:
+            date_str = c.date.strftime("%Y-%m-%d") if c.date else ""
+            rem_q = c.remaining_qty if c.remaining_qty is not None else (c.quantity or 0)
+            init_q = c.quantity or 0
+            if rem_q <= 0:
+                s_label = "已结算/归还"
+            elif rem_q < init_q:
+                s_label = f"部分售出(余{rem_q}/{init_q})"
+            else:
+                s_label = "寄售/借出中"
 
-        item_disp = f"{c.product_name or ''} - {c.variant or '通用'}" if c.product_name else (c.variant or "通用")
-        cons_list.append({
-            "id": c.id,
-            "recipient": c.shop_name or "",
-            "item_name": item_disp,
-            "quantity": init_q,
-            "unit_price": 0.0,
-            "currency": "CNY",
-            "total_value": 0.0,
-            "cny_equiv": 0.0,
-            "status": s_label,
-            "sent_date": date_str,
-            "note": c.remarks or "",
-        })
+            item_disp = f"{c.product_name or ''} - {c.variant or '通用'}" if c.product_name else (c.variant or "通用")
+            cons_list.append({
+                "id": c.id,
+                "recipient": c.shop_name or "",
+                "item_name": item_disp,
+                "quantity": init_q,
+                "unit_price": 0.0,
+                "currency": "CNY",
+                "total_value": 0.0,
+                "cny_equiv": 0.0,
+                "status": s_label,
+                "sent_date": date_str,
+                "note": c.remarks or "",
+            })
 
     # 4. Physical Inventory Logs with 7-dimension filter
-    whs_map = {w.id: w.name for w in whs}
-    raw_logs = service.get_recent_logs(product_name=None, limit=None)
-    all_reasons = sorted(list({l.reason for l in raw_logs if l.reason}))
+    if include_logs:
+        whs_map = {w.id: w.name for w in whs}
+        raw_logs = service.get_recent_logs(product_name=None, limit=None)
+        all_reasons = sorted(list({l.reason for l in raw_logs if l.reason}))
 
-    filtered_logs = []
-    q_log = log_search.strip().lower()
-    for l in raw_logs:
-        part_display = l.part_name if l.part_name else "整套"
-        wh_display = whs_map.get(l.warehouse_id, "默认仓")
-        date_str = l.date.strftime("%Y-%m-%d") if l.date else ""
+        filtered_logs = []
+        q_log = log_search.strip().lower()
+        for l in raw_logs:
+            part_display = l.part_name if l.part_name else "整套"
+            wh_display = whs_map.get(l.warehouse_id, "默认仓")
+            date_str = l.date.strftime("%Y-%m-%d") if l.date else ""
 
-        if log_product not in ("", "全部", "全部商品") and l.product_name != log_product:
-            continue
-        if log_variant not in ("", "全部", "全部款式") and l.variant != log_variant:
-            continue
-        if log_part not in ("", "全部", "全部规格"):
-            if log_part in ("整套", "仅成套") and part_display != "整套":
+            if log_product not in ("", "全部", "全部商品") and l.product_name != log_product:
                 continue
-            elif log_part == "仅散件" and part_display == "整套":
+            if log_variant not in ("", "全部", "全部款式") and l.variant != log_variant:
                 continue
-            elif log_part not in ("整套", "仅成套", "仅散件") and part_display != log_part:
+            if log_part not in ("", "全部", "全部规格"):
+                if log_part in ("整套", "仅成套") and part_display != "整套":
+                    continue
+                elif log_part == "仅散件" and part_display == "整套":
+                    continue
+                elif log_part not in ("整套", "仅成套", "仅散件") and part_display != log_part:
+                    continue
+            if log_warehouse not in ("", "全部", "全部仓库") and wh_display != log_warehouse:
                 continue
-        if log_warehouse not in ("", "全部", "全部仓库") and wh_display != log_warehouse:
-            continue
-        if log_reason not in ("", "全部", "全部类型") and l.reason != log_reason:
-            continue
-        if log_start_date and date_str < log_start_date:
-            continue
-        if log_end_date and date_str > log_end_date:
-            continue
-        if q_log:
-            if not (
-                q_log in date_str.lower()
-                or q_log in (l.note or "").lower()
-                or q_log in (l.product_name or "").lower()
-                or q_log in (l.variant or "").lower()
-                or q_log in part_display.lower()
-                or q_log in wh_display.lower()
-                or q_log in (l.reason or "").lower()
-            ):
+            if log_reason not in ("", "全部", "全部类型") and l.reason != log_reason:
                 continue
+            if log_start_date and date_str < log_start_date:
+                continue
+            if log_end_date and date_str > log_end_date:
+                continue
+            if q_log:
+                if not (
+                    q_log in date_str.lower()
+                    or q_log in (l.note or "").lower()
+                    or q_log in (l.product_name or "").lower()
+                    or q_log in (l.variant or "").lower()
+                    or q_log in part_display.lower()
+                    or q_log in wh_display.lower()
+                    or q_log in (l.reason or "").lower()
+                ):
+                    continue
 
-        filtered_logs.append({
-            "id": l.id,
-            "date_str": date_str,
-            "product_name": l.product_name or "",
-            "variant": l.variant or "",
-            "part_name": part_display,
-            "change_amount": int(l.change_amount or 0),
-            "reason": l.reason or "",
-            "warehouse_name": wh_display,
-            "note": l.note or "",
-        })
+            filtered_logs.append({
+                "id": l.id,
+                "date_str": date_str,
+                "product_name": l.product_name or "",
+                "variant": l.variant or "",
+                "part_name": part_display,
+                "change_amount": int(l.change_amount or 0),
+                "reason": l.reason or "",
+                "warehouse_name": wh_display,
+                "note": l.note or "",
+            })
 
-    total_logs = len(filtered_logs)
-    total_pages = max(1, math.ceil(total_logs / log_page_size))
-    p_idx = max(1, min(log_page, total_pages))
-    start_i = (p_idx - 1) * log_page_size
-    paginated_logs = filtered_logs[start_i: start_i + log_page_size]
+        total_logs = len(filtered_logs)
+        total_pages = max(1, math.ceil(total_logs / log_page_size))
+        p_idx = max(1, min(log_page, total_pages))
+        start_i = (p_idx - 1) * log_page_size
+        paginated_logs = filtered_logs[start_i: start_i + log_page_size]
+    else:
+        all_reasons = []
+        total_logs = 0
+        total_pages = 1
+        p_idx = 1
+        paginated_logs = []
 
     return {
         "product_cards": product_cards,
@@ -717,6 +734,7 @@ def list_fixed_assets(
     search_query: str = "",
     log_page: int = 1,
     log_page_size: int = 30,
+    include_logs: bool = Query(True),
     username: str = Depends(verify_auth_token),
     db: Session = Depends(get_db_session),
 ):
@@ -762,23 +780,29 @@ def list_fixed_assets(
             "url": getattr(a, "url", "") or "",
         })
 
-    all_logs = AssetService.get_asset_logs(db, limit=500)
-    total_logs = len(all_logs)
-    total_pages = max(1, math.ceil(total_logs / log_page_size))
-    p_idx = max(1, min(log_page, total_pages))
-    start_i = (p_idx - 1) * log_page_size
-    page_logs = all_logs[start_i: start_i + log_page_size]
+    if include_logs:
+        all_logs = AssetService.get_asset_logs(db, limit=500)
+        total_logs = len(all_logs)
+        total_pages = max(1, math.ceil(total_logs / log_page_size))
+        p_idx = max(1, min(log_page, total_pages))
+        start_i = (p_idx - 1) * log_page_size
+        page_logs = all_logs[start_i: start_i + log_page_size]
 
-    log_rows = [
-        {
-            "id": l.id,
-            "date": l.date.strftime("%Y-%m-%d") if l.date else "",
-            "asset_name": l.asset_name or "",
-            "change_qty": -abs(int(l.decrease_qty or 0)),
-            "note": l.reason or "",
-        }
-        for l in page_logs
-    ]
+        log_rows = [
+            {
+                "id": l.id,
+                "date": l.date.strftime("%Y-%m-%d") if l.date else "",
+                "asset_name": l.asset_name or "",
+                "change_qty": -abs(int(l.decrease_qty or 0)),
+                "note": l.reason or "",
+            }
+            for l in page_logs
+        ]
+    else:
+        total_logs = 0
+        total_pages = 1
+        p_idx = 1
+        log_rows = []
 
     return {
         "total_cny": round(remain_val_cny, 2),
@@ -875,6 +899,8 @@ def list_consumables(
     filter_category: str = "全部",
     log_page: int = 1,
     log_page_size: int = 30,
+    include_logs: bool = Query(True),
+    include_meta: bool = Query(True),
     username: str = Depends(verify_auth_token),
     db: Session = Depends(get_db_session),
 ):
@@ -927,30 +953,50 @@ def list_consumables(
             "url": getattr(i, "url", "") or "",
         })
 
-    all_logs = service.get_logs()
-    total_logs = len(all_logs)
-    total_pages = max(1, math.ceil(total_logs / log_page_size))
-    p_idx = max(1, min(log_page, total_pages))
-    start_i = (p_idx - 1) * log_page_size
-    page_logs = all_logs[start_i: start_i + log_page_size]
+    if include_logs:
+        all_logs = service.get_logs()
+        total_logs = len(all_logs)
+        total_pages = max(1, math.ceil(total_logs / log_page_size))
+        p_idx = max(1, min(log_page, total_pages))
+        start_i = (p_idx - 1) * log_page_size
+        page_logs = all_logs[start_i: start_i + log_page_size]
 
-    log_rows = [
-        {
-            "id": l.id,
-            "date": l.date.strftime("%Y-%m-%d") if l.date else "",
-            "item_name": l.item_name or "",
-            "change_qty": float(l.change_qty or 0),
-            "value_cny": round(float(l.value_cny or 0.0), 2),
-            "note": l.note or "",
-        }
-        for l in page_logs
-    ]
+        log_rows = [
+            {
+                "id": l.id,
+                "date": l.date.strftime("%Y-%m-%d") if l.date else "",
+                "item_name": l.item_name or "",
+                "change_qty": float(l.change_qty or 0),
+                "value_cny": round(float(l.value_cny or 0.0), 2),
+                "note": l.note or "",
+            }
+            for l in page_logs
+        ]
+    else:
+        total_logs = 0
+        total_pages = 1
+        p_idx = 1
+        log_rows = []
 
-    cash_accounts = db.query(CompanyBalanceItem).filter(
-        CompanyBalanceItem.name.like(f"{AssetPrefix.CASH}%"),
-        CompanyBalanceItem.category == BalanceCategory.ASSET,
-    ).all()
-    products = service.get_all_products()
+    if include_meta:
+        cash_accounts = db.query(CompanyBalanceItem).filter(
+            CompanyBalanceItem.name.like(f"{AssetPrefix.CASH}%"),
+            CompanyBalanceItem.category == BalanceCategory.ASSET,
+        ).all()
+        products = service.get_all_products()
+        products_payload = [{"id": p.id, "name": p.name} for p in products]
+        cash_accounts_payload = [
+            {
+                "id": a.id,
+                "name": a.name,
+                "currency": a.currency or "CNY",
+                "amount": round(float(a.amount or 0.0), 2),
+            }
+            for a in cash_accounts
+        ]
+    else:
+        products_payload = []
+        cash_accounts_payload = []
 
     return {
         "total_cny": round(total_remain_cny, 2),
@@ -964,16 +1010,8 @@ def list_consumables(
         ],
         "items": item_rows,
         "categories": all_cats,
-        "products": [{"id": p.id, "name": p.name} for p in products],
-        "cash_accounts": [
-            {
-                "id": a.id,
-                "name": a.name,
-                "currency": a.currency or "CNY",
-                "amount": round(float(a.amount or 0.0), 2),
-            }
-            for a in cash_accounts
-        ],
+        "products": products_payload,
+        "cash_accounts": cash_accounts_payload,
         "cost_categories": PRODUCT_COST_CATEGORIES,
         "logs": log_rows,
         "log_total_items": total_logs,

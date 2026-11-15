@@ -390,6 +390,7 @@ def list_online_orders(
     search_query: str = "",
     page_number: int = 1,
     page_size: int = 50,
+    include_meta: bool = Query(True),
     username: str = Depends(verify_auth_token),
     db: Session = Depends(get_db_session),
 ):
@@ -482,7 +483,7 @@ def list_online_orders(
             "completed": count_completed,
             "after_sale": count_after_sale,
         },
-        "meta": _get_sales_form_metadata(db),
+        "meta": _get_sales_form_metadata(db) if include_meta else None,
     }
 
 
@@ -883,6 +884,7 @@ def list_presale_orders(
     search_query: str = "",
     page_number: int = 1,
     page_size: int = 50,
+    include_meta: bool = Query(True),
     username: str = Depends(verify_auth_token),
     db: Session = Depends(get_db_session),
 ):
@@ -983,7 +985,7 @@ def list_presale_orders(
             "completed": count_completed,
             "after_sale": count_after_sale,
         },
-        "meta": _get_sales_form_metadata(db),
+        "meta": _get_sales_form_metadata(db) if include_meta else None,
     }
 
 
@@ -1491,6 +1493,7 @@ def _compile_engine_analytics(
     page_number: int,
     page_size: int,
     is_v2: bool,
+    include_logs: bool = True,
 ) -> Dict[str, Any]:
     if df is None or df.empty:
         return {
@@ -1611,26 +1614,32 @@ def _compile_engine_analytics(
                     c_item[c] = int(row[c])
                 chart_data.append(c_item)
 
-    df_sorted = df_p.sort_values(by=col_date, ascending=False) if (not df_p.empty and col_date in df_p.columns) else df_p
-    tot_items = len(df_sorted)
-    tot_pages = max(1, (tot_items + page_size - 1) // page_size)
-    pg = max(1, min(page_number, tot_pages))
-    start = (pg - 1) * page_size
-    df_page = df_sorted.iloc[start: start + page_size] if not df_sorted.empty else pd.DataFrame()
+    if include_logs:
+        df_sorted = df_p.sort_values(by=col_date, ascending=False) if (not df_p.empty and col_date in df_p.columns) else df_p
+        tot_items = len(df_sorted)
+        tot_pages = max(1, (tot_items + page_size - 1) // page_size)
+        pg = max(1, min(page_number, tot_pages))
+        start = (pg - 1) * page_size
+        df_page = df_sorted.iloc[start: start + page_size] if not df_sorted.empty else pd.DataFrame()
 
-    logs = []
-    for _, r in df_page.iterrows():
-        logs.append({
-            "date": str(r.get(col_date, "")),
-            "order_no": str(r.get("order_no", r.get("订单号", "-"))) if is_v2 else "-",
-            "product_name": str(r.get(col_prod, "")),
-            "variant": str(r.get(col_var, "")),
-            "quantity": int(r.get(col_qty, 0)),
-            "platform": str(r.get(col_plat, "")),
-            "currency": str(r.get(col_curr, "")),
-            "orig_sales": round(float(r.get(col_amt, 0.0)), 2),
-            "note": str(r.get("note", r.get("备注", ""))),
-        })
+        logs = []
+        for _, r in df_page.iterrows():
+            logs.append({
+                "date": str(r.get(col_date, "")),
+                "order_no": str(r.get("order_no", r.get("订单号", "-"))) if is_v2 else "-",
+                "product_name": str(r.get(col_prod, "")),
+                "variant": str(r.get(col_var, "")),
+                "quantity": int(r.get(col_qty, 0)),
+                "platform": str(r.get(col_plat, "")),
+                "currency": str(r.get(col_curr, "")),
+                "orig_sales": round(float(r.get(col_amt, 0.0)), 2),
+                "note": str(r.get("note", r.get("备注", ""))),
+            })
+    else:
+        tot_items = len(df_p) if not df_p.empty else 0
+        tot_pages = 1
+        pg = 1
+        logs = []
 
     return {
         "total_sets": total_sets,
@@ -1661,6 +1670,8 @@ def get_sales_overview(
     page_size: int = 20,
     v2_page_number: int = 1,
     v2_page_size: int = 20,
+    include_v1: bool = Query(True),
+    include_logs: bool = Query(True),
     username: str = Depends(verify_auth_token),
     db: Session = Depends(get_db_session),
 ):
@@ -1674,18 +1685,31 @@ def get_sales_overview(
         page_number=v2_page_number,
         page_size=v2_page_size,
         is_v2=True,
+        include_logs=include_logs,
     )
 
-    raw_v1 = SalesService.get_raw_sales_logs_v1(db)
-    df_v1 = SalesService.process_sales_data_v1(db, raw_v1) if raw_v1 else pd.DataFrame()
-    v1_data = _compile_engine_analytics(
-        df=df_v1,
-        rates_map=rates_map,
-        selected_product=selected_product,
-        page_number=page_number,
-        page_size=page_size,
-        is_v2=False,
-    )
+    if include_v1:
+        raw_v1 = SalesService.get_raw_sales_logs_v1(db)
+        df_v1 = SalesService.process_sales_data_v1(db, raw_v1) if raw_v1 else pd.DataFrame()
+        v1_data = _compile_engine_analytics(
+            df=df_v1,
+            rates_map=rates_map,
+            selected_product=selected_product,
+            page_number=page_number,
+            page_size=page_size,
+            is_v2=False,
+            include_logs=include_logs,
+        )
+    else:
+        v1_data = _compile_engine_analytics(
+            df=pd.DataFrame(),
+            rates_map=rates_map,
+            selected_product=selected_product,
+            page_number=page_number,
+            page_size=page_size,
+            is_v2=False,
+            include_logs=False,
+        )
 
     return {
         "v2": v2_data,

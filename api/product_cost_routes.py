@@ -105,6 +105,7 @@ class WipFixRequest(BaseModel):
 @router.get("/products")
 def list_products(
     include_images: bool = Query(False),
+    search: str = Query(""),
     username: str = Depends(verify_auth_token),
     db: Session = Depends(get_db_session),
 ):
@@ -126,6 +127,9 @@ def list_products(
 
     service = ProductService(db)
     prods = service.get_all_products(include_images=include_images)
+    kw = search.strip().lower()
+    if kw:
+        prods = [p for p in prods if kw in (p.name or "").lower()]
     result = []
 
     for p in prods:
