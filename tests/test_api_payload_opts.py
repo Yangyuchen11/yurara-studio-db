@@ -195,3 +195,26 @@ def test_assets_and_consumables_lightweight_flags(client: TestClient) -> None:
     assert cons_lite.json()["logs"] == []
     assert cons_lite.json()["cash_accounts"] == []
     assert cons_lite.json()["products"] == []
+
+
+def test_consignments_lightweight_flags(client: TestClient) -> None:
+    default_resp = client.get("/consignments")
+    assert default_resp.status_code == 200
+    default_data = default_resp.json()
+    assert len(default_data["items"]) == 1
+    assert len(default_data["warehouses"]) == 1
+    assert len(default_data["accounts"]) == 1
+    assert len(default_data["products"]) == 2
+
+    lite_resp = client.get(
+        "/consignments",
+        params={"include_meta": "false", "include_settlements": "false", "include_returns": "false"},
+    )
+    assert lite_resp.status_code == 200
+    lite_data = lite_resp.json()
+    assert len(lite_data["items"]) == 1
+    assert lite_data["warehouses"] == []
+    assert lite_data["accounts"] == []
+    assert lite_data["products"] == []
+    assert lite_data["settlements"] == []
+    assert lite_data["returns"] == []

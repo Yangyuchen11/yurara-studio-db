@@ -105,6 +105,9 @@ def get_consignment_page_data(
     shop_id: Optional[int] = Query(None),
     status: str = Query("全部"),
     search: str = Query(""),
+    include_meta: bool = Query(True),
+    include_settlements: bool = Query(True),
+    include_returns: bool = Query(True),
     username: str = Depends(verify_auth_token),
     db: Session = Depends(get_db_session),
 ):
@@ -142,89 +145,97 @@ def get_consignment_page_data(
             "remarks": c.remarks or "",
         })
 
-    raw_settlements = service.get_settlements(shop_id=shop_id)
     settlements_dto = []
     total_settled_cny = 0.0
-    for st in raw_settlements:
-        net_val = float(st.net_amount or 0.0)
-        total_settled_cny += to_cny(net_val, st.currency or "CNY", rates_map)
-        settlements_dto.append({
-            "id": st.id,
-            "settlement_no": st.settlement_no or "",
-            "shop_id": st.shop_id or 0,
-            "shop_name": st.shop_name or "",
-            "settlement_date": st.settlement_date.strftime("%Y-%m-%d") if st.settlement_date else "",
-            "currency": st.currency or "CNY",
-            "gross_amount": round(float(st.gross_amount or 0.0), 2),
-            "fee_rate": float(st.fee_rate or 0.0),
-            "fee_amount": round(float(st.fee_amount or 0.0), 2),
-            "net_amount": round(net_val, 2),
-            "account_id": st.account_id or 0,
-            "account_name": st.account_name or "",
-            "sales_order_id": st.sales_order_id or 0,
-            "notes": st.notes or "",
-            "total_sold_qty": sum(int(i.sold_qty or 0) for i in st.items),
-            "items": [
-                {
-                    "id": si.id,
-                    "consignment_item_id": si.consignment_item_id or 0,
-                    "product_name": si.product_name or "",
-                    "variant": si.variant or "",
-                    "part_name": si.part_name or "整套",
-                    "sold_qty": int(si.sold_qty or 0),
-                    "unit_price": round(float(si.unit_price or 0.0), 2),
-                    "gross_subtotal": round(float(si.gross_subtotal or 0.0), 2),
-                    "net_subtotal": round(float(si.net_subtotal or 0.0), 2),
-                }
-                for si in st.items
-            ],
-        })
+    if include_settlements:
+        raw_settlements = service.get_settlements(shop_id=shop_id)
+        for st in raw_settlements:
+            net_val = float(st.net_amount or 0.0)
+            total_settled_cny += to_cny(net_val, st.currency or "CNY", rates_map)
+            settlements_dto.append({
+                "id": st.id,
+                "settlement_no": st.settlement_no or "",
+                "shop_id": st.shop_id or 0,
+                "shop_name": st.shop_name or "",
+                "settlement_date": st.settlement_date.strftime("%Y-%m-%d") if st.settlement_date else "",
+                "currency": st.currency or "CNY",
+                "gross_amount": round(float(st.gross_amount or 0.0), 2),
+                "fee_rate": float(st.fee_rate or 0.0),
+                "fee_amount": round(float(st.fee_amount or 0.0), 2),
+                "net_amount": round(net_val, 2),
+                "account_id": st.account_id or 0,
+                "account_name": st.account_name or "",
+                "sales_order_id": st.sales_order_id or 0,
+                "notes": st.notes or "",
+                "total_sold_qty": sum(int(i.sold_qty or 0) for i in st.items),
+                "items": [
+                    {
+                        "id": si.id,
+                        "consignment_item_id": si.consignment_item_id or 0,
+                        "product_name": si.product_name or "",
+                        "variant": si.variant or "",
+                        "part_name": si.part_name or "整套",
+                        "sold_qty": int(si.sold_qty or 0),
+                        "unit_price": round(float(si.unit_price or 0.0), 2),
+                        "gross_subtotal": round(float(si.gross_subtotal or 0.0), 2),
+                        "net_subtotal": round(float(si.net_subtotal or 0.0), 2),
+                    }
+                    for si in st.items
+                ],
+            })
 
-    raw_returns = service.get_return_history()
-    returns_dto = [
-        {
-            "id": r.id,
-            "consignment_item_id": r.consignment_item_id or 0,
-            "shop_name": r.shop_name or "",
-            "product_name": r.product_name or "",
-            "variant": r.variant or "",
-            "part_name": r.part_name or "整套",
-            "warehouse_id": r.warehouse_id or 0,
-            "warehouse_name": r.warehouse_name or "",
-            "return_qty": int(r.return_qty or 0),
-            "return_date": r.return_date.strftime("%Y-%m-%d") if r.return_date else "",
-            "notes": r.notes or "",
-        }
-        for r in raw_returns
-    ]
+    returns_dto = []
+    if include_returns:
+        raw_returns = service.get_return_history()
+        returns_dto = [
+            {
+                "id": r.id,
+                "consignment_item_id": r.consignment_item_id or 0,
+                "shop_name": r.shop_name or "",
+                "product_name": r.product_name or "",
+                "variant": r.variant or "",
+                "part_name": r.part_name or "整套",
+                "warehouse_id": r.warehouse_id or 0,
+                "warehouse_name": r.warehouse_name or "",
+                "return_qty": int(r.return_qty or 0),
+                "return_date": r.return_date.strftime("%Y-%m-%d") if r.return_date else "",
+                "notes": r.notes or "",
+            }
+            for r in raw_returns
+        ]
 
-    warehouses = [
-        {"id": w.id, "name": w.name}
-        for w in db.query(Warehouse).order_by(Warehouse.id.asc()).all()
-    ]
-    accounts = [
-        {
-            "id": a.id,
-            "name": a.name,
-            "currency": a.currency or "CNY",
-            "amount": round(float(a.amount or 0.0), 2),
-        }
-        for a in db.query(CompanyBalanceItem).filter(
-            CompanyBalanceItem.category == BalanceCategory.ASSET,
-            CompanyBalanceItem.asset_type == "现金",
-        ).all()
-    ]
-    products = []
-    for p in db.query(Product).order_by(Product.id.desc()).all():
-        colors = []
-        for c in p.colors:
-            prices = [
-                {"platform": pr.platform or "", "currency": pr.currency or "CNY", "price": float(pr.price or 0.0)}
-                for pr in (c.prices or [])
-            ]
-            parts = ["整套"] + [pt.part_name for pt in (c.parts or [])]
-            colors.append({"color_name": c.color_name, "prices": prices, "parts": parts})
-        products.append({"id": p.id, "name": p.name, "colors": colors})
+    if include_meta:
+        warehouses = [
+            {"id": w.id, "name": w.name}
+            for w in db.query(Warehouse).order_by(Warehouse.id.asc()).all()
+        ]
+        accounts = [
+            {
+                "id": a.id,
+                "name": a.name,
+                "currency": a.currency or "CNY",
+                "amount": round(float(a.amount or 0.0), 2),
+            }
+            for a in db.query(CompanyBalanceItem).filter(
+                CompanyBalanceItem.category == BalanceCategory.ASSET,
+                CompanyBalanceItem.asset_type == "现金",
+            ).all()
+        ]
+        products = []
+        for p in db.query(Product).order_by(Product.id.desc()).all():
+            colors = []
+            for c in p.colors:
+                prices = [
+                    {"platform": pr.platform or "", "currency": pr.currency or "CNY", "price": float(pr.price or 0.0)}
+                    for pr in (c.prices or [])
+                ]
+                parts = ["整套"] + [pt.part_name for pt in (c.parts or [])]
+                colors.append({"color_name": c.color_name, "prices": prices, "parts": parts})
+            products.append({"id": p.id, "name": p.name, "colors": colors})
+    else:
+        warehouses = []
+        accounts = []
+        products = []
 
     return {
         "shops": shops,
